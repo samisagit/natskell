@@ -43,4 +43,4 @@ jobs:
     - name: Build
       run: cabal build --allow-newer=base --enable-tests --enable-benchmarks all
     - name: Run tests
-      run: cabal test --allow-newer=base all
+      run: cabal test --test-show-details=direct --allow-newer=base all
