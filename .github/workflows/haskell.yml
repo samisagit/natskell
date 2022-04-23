@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - "feature/*"
   pull_request:
     branches: 
       - main 
@@ -38,9 +37,10 @@ jobs:
 
     - name: Install dependencies
       run: |
+        sudo apt-get install -y hspec-discover
         cabal update --allow-newer=base
         cabal build --allow-newer=base --only-dependencies --enable-tests --enable-benchmarks
     - name: Build
       run: cabal build --allow-newer=base --enable-tests --enable-benchmarks all
     - name: Run tests
-      run: cabal test --allow-newer=base all
+      run: cabal test --test-show-details=direct --allow-newer=base all
