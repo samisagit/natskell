@@ -38,9 +38,9 @@ jobs:
 
     - name: Install dependencies
       run: |
-        cabal update
-        cabal build --only-dependencies --enable-tests --enable-benchmarks
+        cabal update --allow-newer=base
+        cabal build --allow-newer=base --only-dependencies --enable-tests --enable-benchmarks
     - name: Build
-      run: cabal build --enable-tests --enable-benchmarks all
+      run: cabal build --allow-newer=base --enable-tests --enable-benchmarks all
     - name: Run tests
-      run: cabal test all
+      run: cabal test --allow-newer=base all
