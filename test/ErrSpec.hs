@@ -15,9 +15,9 @@ manual = do
   describe "parser" $ do
     it "correctly parses -ERR" $ do
       do
-        let result = fmap fst ping
+        let result = fmap fst err
         result `shouldBe` Just Err
-        let left = fmap snd ping
+        let left = fmap snd err
         left `shouldBe` Just ""
   where
-    ping = runParser parser "-ERR\r\n"
+    err = runParser parser "-ERR 'Unknown Protocol Operation'\r\n"
