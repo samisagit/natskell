@@ -31,6 +31,8 @@ library
         Msg
         Ping
         Pong
+        Ok
+        Err
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
