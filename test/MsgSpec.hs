@@ -2,9 +2,9 @@
 
 module MsgSpec (spec) where
 
-import Msg
-import Parser
-import Test.Hspec
+import           Msg
+import           Parser
+import           Test.Hspec
 
 spec :: Spec
 spec = do
@@ -21,6 +21,8 @@ manual = do
         fmap replyTo result `shouldBe` Just (Just "BAR")
         fmap byteCount result `shouldBe` Just 17
         fmap payload result `shouldBe` Just (Just "some payload bits")
+        let left = fmap snd withReplyAndPayload
+        left `shouldBe` Just ""
     it "correctly parses MSG with reply-to " $ do
       do
         let result = fmap fst withReply
@@ -29,6 +31,8 @@ manual = do
         fmap replyTo result `shouldBe` Just (Just "BAR")
         fmap byteCount result `shouldBe` Just 0
         fmap payload result `shouldBe` Just Nothing
+        let left = fmap snd withReply
+        left `shouldBe` Just ""
     it "correctly parses MSG with payload" $ do
       do
         let result = fmap fst withPayload
@@ -37,6 +41,8 @@ manual = do
         fmap replyTo result `shouldBe` Just Nothing
         fmap byteCount result `shouldBe` Just 17
         fmap payload result `shouldBe` Just (Just "some payload bits")
+        let left = fmap snd withPayload
+        left `shouldBe` Just ""
     it "correctly parses minimal MSG" $ do
       do
         let result = fmap fst min
@@ -45,6 +51,8 @@ manual = do
         fmap replyTo result `shouldBe` Just Nothing
         fmap byteCount result `shouldBe` Just 0
         fmap payload result `shouldBe` Just Nothing
+        let left = fmap snd min
+        left `shouldBe` Just ""
     it "correctly parses MSG with multi line payload" $ do
       do
         let result = fmap fst withMultiLinePayload
@@ -53,6 +61,8 @@ manual = do
         fmap replyTo result `shouldBe` Just Nothing
         fmap byteCount result `shouldBe` Just 20
         fmap payload result `shouldBe` Just (Just "multi\r\nline\r\npayload")
+        let left = fmap snd withMultiLinePayload
+        left `shouldBe` Just ""
     it "correctly parses MSG with nested subjects" $ do
       do
         let result = fmap fst withNestedSubjects
@@ -61,6 +71,8 @@ manual = do
         fmap replyTo result `shouldBe` Just (Just "IN.*.BOX.>")
         fmap byteCount result `shouldBe` Just 0
         fmap payload result `shouldBe` Just Nothing
+        let left = fmap snd withNestedSubjects
+        left `shouldBe` Just ""
   where
     withReplyAndPayload = runParser parser "MSG FOO 13 BAR 17\r\nsome payload bits\r\n"
     withReply = runParser parser "MSG FOO 13 BAR 0\r\n"
