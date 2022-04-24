@@ -97,7 +97,7 @@ integer :: Parser [W8.Word8]
 integer = stringWithChars [W8._0 .. W8._9]
 
 take' :: Int -> Parser W8.Word8 -> Parser [W8.Word8]
-take' 1 p = (:) <$> p <*> string ""
+take' 0 _ = string ""
 take' n p = (:) <$> p <*> take' (n -1) p
 
 tokenParser :: Parser [W8.Word8]
