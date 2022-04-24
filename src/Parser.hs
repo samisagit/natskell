@@ -2,10 +2,10 @@
 
 module Parser where
 
-import Control.Applicative
-import qualified Data.ByteString as BS
+import           Control.Applicative
+import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as C
-import qualified Data.Word8 as W8
+import qualified Data.Word8            as W8
 
 newtype Parser a = Parser {runParser :: BS.ByteString -> Maybe (a, BS.ByteString)}
 
@@ -41,7 +41,7 @@ instance Alternative Parser where
   empty = fail ""
   (Parser x) <|> (Parser y) = Parser $ \s ->
     case x s of
-      Just x -> Just x
+      Just x  -> Just x
       Nothing -> y s
 
 char :: W8.Word8 -> Parser W8.Word8

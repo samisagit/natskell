@@ -2,17 +2,17 @@
 
 module Msg (Data, subject, sid, replyTo, byteCount, payload, parser) where
 
-import Control.Applicative
-import qualified Data.ByteString as BS
-import qualified Data.Word8 as W8
-import Parser
+import           Control.Applicative
+import qualified Data.ByteString     as BS
+import qualified Data.Word8          as W8
+import           Parser
 
 data Data = Data
-  { subject :: BS.ByteString,
-    sid :: Int,
-    replyTo :: Maybe BS.ByteString,
+  { subject   :: BS.ByteString,
+    sid       :: Int,
+    replyTo   :: Maybe BS.ByteString,
     byteCount :: Int,
-    payload :: Maybe BS.ByteString
+    payload   :: Maybe BS.ByteString
   }
 
 parser =
