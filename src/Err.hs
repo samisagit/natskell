@@ -42,8 +42,7 @@ reasonParser = unknownOpParser
   <|> slowConsumerParser
   <|> maxPayloadParser
   <|> invalidSubjParser
-  <|> subPermParser
-  <|> pubPermParser
+  <|> permViolationParser
 
 isFatal :: ByteString -> Bool
 isFatal err = (errPrefixInvalidSubject /= err) && not (errPrefixPerm `isPrefixOf` err)
@@ -61,12 +60,11 @@ maxConnsExParser = string "Maximum Connections Exceeded"
 slowConsumerParser = string "Slow Consumer"
 maxPayloadParser = string "Maximum Payload Violation"
 invalidSubjParser = string "Invalid Subject"
-subPermParser = do
-  string "Permissions Violation for Subscription to"
-  ss
-  asciis
-pubPermParser = do
-  string "Permissions Violation for Publish to"
-  ss
-  asciis
+
+-- permission parsers are tricky because rhe violation could be complete nonsense
+permViolationParser :: Parser [Word8]
+permViolationParser = do
+  pre <- string "Permissions Violation"
+  post <- asciisNotQuotes
+  return (pre ++ post)
 
