@@ -15,9 +15,9 @@ manual = do
   describe "parser" $ do
     it "correctly parses +OK" $ do
       do
-        let result = fmap fst ping
+        let result = fmap fst ok
         result `shouldBe` Just Ok
-        let left = fmap snd ping
+        let left = fmap snd ok
         left `shouldBe` Just ""
   where
-    ping = runParser parser "+OK\r\n"
+    ok = runParser parser "+OK\r\n"

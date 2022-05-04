@@ -93,6 +93,16 @@ ascii = Parser charP
 asciis :: Parser [W8.Word8]
 asciis = some ascii
 
+asciiNotQuote = Parser charP
+  where
+    charP bs
+      | BS.empty == bs = Nothing
+      | W8.isAscii (BS.head bs) && BS.head bs /= W8._quotesingle = Just (BS.head bs, BS.tail bs)
+      | otherwise = Nothing
+
+asciisNotQuotes :: Parser [W8.Word8]
+asciisNotQuotes = some asciiNotQuote
+
 integer :: Parser [W8.Word8]
 integer = stringWithChars [W8._0 .. W8._9]
 
@@ -112,3 +122,4 @@ subjectParser = do
 
 toInt :: BS.ByteString -> Int
 toInt bs = read (C.unpack bs) :: Int
+

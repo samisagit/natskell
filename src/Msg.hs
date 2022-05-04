@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Msg (Data, subject, sid, replyTo, byteCount, payload, parser) where
+module Msg where
 
 import           Control.Applicative
 import qualified Data.ByteString     as BS
@@ -13,7 +13,7 @@ data Data = Data
     replyTo   :: Maybe BS.ByteString,
     byteCount :: Int,
     payload   :: Maybe BS.ByteString
-  }
+  } deriving (Eq, Show)
 
 parser =
   withReplyAndPayloadparser
