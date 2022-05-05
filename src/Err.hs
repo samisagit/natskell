@@ -65,6 +65,6 @@ invalidSubjParser = string "Invalid Subject"
 permViolationParser :: Parser [Word8]
 permViolationParser = do
   pre <- string "Permissions Violation"
-  post <- asciisNotQuotes
+  post <- notQuotes
   return (pre ++ post)
 
