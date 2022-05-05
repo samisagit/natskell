@@ -25,7 +25,11 @@ cases = [
   ("-ERR 'Maximum Payload Violation'\r\n", Err "Maximum Payload Violation" True),
   ("-ERR 'Invalid Subject'\r\n", Err "Invalid Subject" False),
   ("-ERR 'Permissions Violation For Subscription To FOO.'\r\n", Err "Permissions Violation For Subscription To FOO." False),
-  ("-ERR 'Permissions Violation For Publish To FOO.'\r\n", Err "Permissions Violation For Publish To FOO." False)
+  ("-ERR 'Permissions Violation For Subscription To >>>.*'\r\n", Err "Permissions Violation For Subscription To >>>.*" False),
+  ("-ERR 'Permissions Violation For Subscription To nonsense*'\r\n", Err "Permissions Violation For Subscription To nonsense*" False),
+  ("-ERR 'Permissions Violation For Publish To FOO.'\r\n", Err "Permissions Violation For Publish To FOO." False),
+  ("-ERR 'Permissions Violation For Publish To >>>.*'\r\n", Err "Permissions Violation For Publish To >>>.*" False),
+  ("-ERR 'Permissions Violation For Publish To nonsense*'\r\n", Err "Permissions Violation For Publish To nonsense*" False)
   ]
 
 spec :: Spec
