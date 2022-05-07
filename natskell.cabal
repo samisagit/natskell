@@ -23,7 +23,8 @@ library
         base ^>=4.14.1.0,
         bytestring ^>=0.11.3.0,
         word8 ^>=0.1.3,
-    -- exposed-modules:  MyLib
+        aeson ^>=2.0.3.0,
+        text ^>=2.0,
 
     -- Modules included in this library but not exported.
     other-modules:
@@ -33,6 +34,7 @@ library
         Pong
         Ok
         Err
+        Info
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
@@ -45,7 +47,9 @@ test-suite natskell-test
      type:             exitcode-stdio-1.0
      hs-source-dirs:   test,src
      main-is:          Spec.hs
-     build-depends:    base ^>=4.14.1.0
-                       , hspec >= 2.7
-                       , bytestring ^>=0.11.3.0
-                       , word8 ^>=0.1.3
+     build-depends:    base ^>=4.14.1.0,
+                       hspec >= 2.7,
+                       bytestring ^>=0.11.3.0,
+                       word8 ^>=0.1.3,
+                       aeson ^>=2.0.3.0,
+                       text ^>=2.0,
