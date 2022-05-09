@@ -14,10 +14,12 @@ manual :: Spec
 manual = do
   describe "parser" $ do
     it "correctly parses PONG" $ do
-      do
-        let result = fmap fst pong
-        result `shouldBe` Just Pong
-        let left = fmap snd pong
-        left `shouldBe` Just ""
+      let result = fmap fst pong
+      result `shouldBe` Just Pong
+      let left = fmap snd pong
+      left `shouldBe` Just ""
+  describe "transformer" $ do
+    it "correctly transforms to 'PONG'" $ do
+      transform Pong `shouldBe` "PONG"
   where
     pong = runParser parser "PONG\r\n"
