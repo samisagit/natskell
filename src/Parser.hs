@@ -93,15 +93,16 @@ ascii = Parser charP
 asciis :: Parser [W8.Word8]
 asciis = some ascii
 
-notQuote = Parser charP
+not' :: W8.Word8 -> Parser W8.Word8
+not' c = Parser charP
   where
     charP bs
       | BS.empty == bs = Nothing
-      | BS.head bs /= W8._quotesingle = Just (BS.head bs, BS.tail bs)
+      | BS.head bs /= c = Just (BS.head bs, BS.tail bs)
       | otherwise = Nothing
 
-notQuotes :: Parser [W8.Word8]
-notQuotes = some notQuote
+til :: W8.Word8 -> Parser [W8.Word8]
+til = some . not'
 
 integer :: Parser [W8.Word8]
 integer = stringWithChars [W8._0 .. W8._9]
