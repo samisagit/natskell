@@ -7,4 +7,4 @@ coverage:
 
 .PHONY: test
 test:
-	cabal test all --test-show-details=direct
+	cabal test all
