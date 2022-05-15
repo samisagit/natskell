@@ -15,9 +15,9 @@ Natskell is still pre alpha, so there is no candidate at present.
 The API is not set in stone (yet). In the mean time the tests give a decent idea of what is currently possible.
 
 ## Contributing
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
+Pull requests are welcome. Please open an issue first to discuss what you would like to change.
 
-Please make sure to update tests as appropriate.
+Please make sure to add tests.
 
 ## License
 [MIT](https://choosealicense.com/licenses/mit/)
