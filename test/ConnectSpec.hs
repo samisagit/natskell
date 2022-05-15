@@ -17,8 +17,13 @@ spec = do
   manual
 
 boolCases = [True, False]
-maybeTextCases = [Just "some text", Nothing]
-maybeIntCases = [Just 1, Nothing]
+maybeUserCases = [Just "samisagit", Just "sam@google.com", Nothing]
+maybePassCases = [Just "dsalkj09898(*)(UHJHI&*&*)(910", Just "password",  Nothing]
+maybeNameCases = [Just "natskell-client",  Nothing]
+maybeVersionCases = [Just "0.0.0", Just "v1.0.1", Just "13.0.0+123", Nothing]
+maybeSigCases = [Just "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQSflKxwRJSMeKKF2QT4fwpMeJf36POk6yJVadQssw5c", Nothing]
+maybeJwtCases = [Just "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c", Nothing]
+maybeIntCases = [Just 1, Just 10, Nothing]
 maybeBoolCases = [Just True, Just False, Nothing]
 
 -- this relies on a deterministic order of JSON fields, which isn't ideal
@@ -27,14 +32,14 @@ manual = do
     forM_ boolCases $ \verbosity ->
       forM_ boolCases $ \pedanticity ->
         forM_ boolCases $ \tlsRequirement ->
-          forM_ maybeTextCases $ \authTokenOptions ->
-            forM_ maybeTextCases $ \userOptions ->
-              forM_ maybeTextCases $ \passOptions ->
-                forM_ maybeTextCases $ \nameOptions ->
+          forM_ maybeJwtCases $ \authTokenOptions ->
+            forM_ maybeUserCases $ \userOptions ->
+              forM_ maybePassCases $ \passOptions ->
+                forM_ maybeNameCases $ \nameOptions ->
                   forM_ maybeIntCases $ \protocolOptions ->
                     forM_ maybeBoolCases $ \echoOptions ->
-                      forM_ maybeTextCases $ \sigOptions ->
-                        forM_ maybeTextCases $ \jwtOptions -> do
+                      forM_ maybeSigCases $ \sigOptions ->
+                        forM_ maybeJwtCases $ \jwtOptions -> do
                           let d = Data verbosity pedanticity tlsRequirement authTokenOptions userOptions passOptions nameOptions "Haskell" 1 protocolOptions echoOptions sigOptions jwtOptions
                           it (printf "transforms %v successfully" (show d)) $ \f -> do
                             let transformed = transform d
