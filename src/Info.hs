@@ -4,8 +4,9 @@
 module Info where
 
 import           Data.Aeson
-import qualified Data.ByteString as BS
-import           Data.Text       (Text)
+import qualified Data.ByteString      as BS
+import qualified Data.ByteString.Lazy as LBS
+import           Data.Text            (Text)
 import           GHC.Generics
 import           Parser
 
@@ -35,5 +36,5 @@ parser = do
   ss
   rest <- asciis
   let packed = BS.pack rest
-  return (decode (BS.fromStrict packed))
+  return (decode . LBS.fromStrict $ packed)
 

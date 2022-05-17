@@ -5,8 +5,9 @@ module ConnectSpec (spec) where
 import           Connect
 import           Control.Monad
 import           Data.Aeson
-import qualified Data.ByteString    as BS
-import           Data.Text          (Text, pack)
+import qualified Data.ByteString      as BS
+import qualified Data.ByteString.Lazy as LBS
+import           Data.Text            (Text, pack)
 import           Data.Text.Encoding
 import           Parser
 import           Test.Hspec
@@ -61,7 +62,9 @@ manual = do
                                   collapseMaybeBoolField "verbose" (Just verbosity),
                                   collapseMaybeIntField "version" (Just 1)
                                   ]
-                            json `shouldBe` foldr BS.append "" ["{", expectedFields, "}"]
+                            let decoded = decode . LBS.fromStrict $ json :: Maybe Value
+                            let want = (decode . LBS.fromStrict $ foldr BS.append "" ["{", expectedFields, "}"]) :: Maybe Value
+                            decoded `shouldBe` want
 
 collapseMaybeStringField :: BS.ByteString -> Maybe Text -> BS.ByteString
 collapseMaybeStringField f v  = case v of

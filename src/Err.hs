@@ -12,9 +12,7 @@ data Err = Err {
   fatal  :: Bool
 } deriving (Show, Eq)
 
-errPrefixInvalidSubject :: ByteString
 errPrefixInvalidSubject = "Invalid Subject"
-errPrefixPerm :: ByteString
 errPrefixPerm = "Permissions Violation"
 
 parser :: Parser Err
@@ -61,7 +59,8 @@ slowConsumerParser = string "Slow Consumer"
 maxPayloadParser = string "Maximum Payload Violation"
 invalidSubjParser = string "Invalid Subject"
 
--- permission parsers are tricky because rhe violation could be complete nonsense
+-- permission parsers are tricky because the violation reason could be complete nonsense
+-- so we just consume until the single quote delimiter
 permViolationParser :: Parser [Word8]
 permViolationParser = do
   pre <- string "Permissions Violation"
