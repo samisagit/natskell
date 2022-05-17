@@ -4,8 +4,9 @@
 module Connect where
 
 import           Data.Aeson
-import qualified Data.ByteString as BS
-import           Data.Text       (Text)
+import qualified Data.ByteString      as BS
+import qualified Data.ByteString.Lazy as LBS
+import           Data.Text            (Text)
 import           GHC.Generics
 import           Parser
 
@@ -27,10 +28,6 @@ data Data = Data
   }
   deriving (Eq, Show, Generic)
 
-instance FromJSON Data where
-  parseJSON = genericParseJSON defaultOptions
-    {omitNothingFields = True}
-
 instance ToJSON Data where
   toJSON = genericToJSON defaultOptions
     {omitNothingFields = True}
@@ -38,4 +35,4 @@ instance ToJSON Data where
 transform :: Data -> BS.ByteString
 transform d = do
   let f = encode d
-  BS.append ("CONNECT " :: BS.ByteString) (BS.toStrict f)
+  BS.append ("CONNECT " :: BS.ByteString) (LBS.toStrict f)
