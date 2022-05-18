@@ -2,7 +2,14 @@ image:
   file: .gitpod.Dockerfile
 tasks:
   - init: |
+      source ~/.bashrc && source ~/.ghcup/env
       cabal update
-      stack build
+      stack build --system-ghc
+  - name: nvim
     command: |
-      stack test
+      source ~/.bashrc && source ~/.ghcup/env
+      nvim --headless +PlugInstall +qall
+github:
+  prebuilds:
+    master: true
+    branches: true
