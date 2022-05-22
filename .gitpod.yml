@@ -1,6 +1,10 @@
 image:
   file: .gitpod.Dockerfile
 tasks:
+  - before: |
+      mkdir -p ~/.ssh
+      echo "$PRIVATE_KEY" | tr -d '\r' > ~/.ssh/gitpod_rsa
+      chmod 600 ~/.ssh/gitpod_rsa
   - init: |
       source ~/.bashrc && source ~/.ghcup/env
       cabal update
