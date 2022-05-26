@@ -13,6 +13,7 @@ tasks:
     command: |
       source ~/.bashrc && source ~/.ghcup/env
       nvim --headless +PlugInstall +qall
+      export EDITOR=nvim
 github:
   prebuilds:
     master: true

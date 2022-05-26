@@ -16,3 +16,9 @@ COPY natskell.cabal .
 COPY stack.yaml .
 COPY stack.yaml.lock .
 RUN bash -c "source ~/.ghcup/env && source ~/.bashrc && stack build --dependencies-only --system-ghc"
+
+USER root
+
+RUN sudo echo "StreamLocalBindUnlink yes" > /etc/ssh/sshd_config
+
+USER gitpod
