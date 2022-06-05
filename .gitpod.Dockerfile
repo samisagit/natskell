@@ -1,21 +1,29 @@
-FROM gitpod/workspace-base
+FROM ubuntu
+
+SHELL ["/bin/bash", "-c"]
+RUN useradd -ms /bin/bash -u 33333 gitpod
 
 # Install packages we don't care about versions of
-RUN sudo apt-get update
-RUN sudo apt-get install -y tmux
+RUN apt-get update
+RUN apt-get install -y tmux curl zsh git build-essential curl libffi-dev libffi8ubuntu1 libgmp-dev libgmp10 libncurses-dev libncurses5 libtinfo5
 
-# Install zsh
+# Install ohmyzsh
 RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
 
 # Install recent neovim
-RUN curl -LO https://github.com/neovim/neovim/releases/download/v0.7.0/nvim-linux64.deb && sudo apt-get install ./nvim-linux64.deb
+RUN curl -LO https://github.com/neovim/neovim/releases/download/v0.7.0/nvim-linux64.deb && apt-get install ./nvim-linux64.deb
 
+# create root directories that stack uses
+RUN mkdir /.stack-work
+RUN chown gitpod /.stack-work
+
+USER gitpod
 # Install haskell stack
 RUN curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | BOOTSTRAP_HASKELL_NONINTERACTIVE=1 bash
 
-RUN bash -c "source ~/.ghcup/env && source ~/.bashrc && ghcup install stack"
-RUN bash -c "source ~/.ghcup/env && source ~/.bashrc && ghcup install hls"
-RUN bash -c "source ~/.ghcup/env && source ~/.bashrc && cabal update"
+RUN source ~/.ghcup/env && source ~/.bashrc && ghcup install stack
+RUN source ~/.ghcup/env && source ~/.bashrc && ghcup install hls
+RUN source ~/.ghcup/env && source ~/.bashrc && cabal update
 
 # Install project dependencies
 COPY natskell.cabal .
@@ -24,12 +32,14 @@ COPY stack.yaml.lock .
 RUN bash -c "source ~/.ghcup/env && source ~/.bashrc && stack build --dependencies-only --system-ghc"
 
 # Set up GPG forwarding requirements
-
-RUN mkdir ~/.gnupg
-RUN sudo mkdir /run/user/$(id -u gitpod)
-RUN sudo chown gitpod /run/user/$(id -u gitpod)
-RUN gpgconf --create-socketdir
-
 USER root
-RUN echo "StreamLocalBindUnlink yes" > /etc/ssh/sshd_config
+RUN echo "StreamLocalBindUnlink yes" >> /etc/ssh/sshd_config
+RUN echo "AllowTcpForwarding yes" >> /etc/ssh/sshd_config
+RUN echo "AllowStreamLocalForwarding yes" >> /etc/ssh/sshd_config
+RUN echo "LogLevel DEBUG3" >> /etc/ssh/sshd_config
+RUN echo "DenyUsers gitpod" >> /etc/ssh/sshd_config
+RUN echo "Here be a banner" >> /etc/motd
+
 USER gitpod
+RUN mkdir ~/.gnupg
+
