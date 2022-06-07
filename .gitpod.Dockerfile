@@ -38,6 +38,7 @@ COPY natskell.cabal .
 COPY stack.yaml .
 COPY stack.yaml.lock .
 RUN source ~/.ghcup/env && source ~/.bashrc && stack build --dependencies-only --system-ghc
+RUN echo "source ~/.ghcup/env" >> ~/.zshrc
 
 # Add trailing user command to ensure non root
 USER gitpod
