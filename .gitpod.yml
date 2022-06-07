@@ -9,6 +9,11 @@ tasks:
     command: |
       source ~/.bashrc && source ~/.ghcup/env
       nvim --headless +PlugInstall +qall
+  - name: git
+    command: |
+      git config --global commit.gpgsign true
+      git config --global gpg.program /usr/bin/krgpg
+      cd /workspace/natskell && git config remote.origin.url git@github.com:samisagit/natskell.git
 github:
   prebuilds:
     master: true

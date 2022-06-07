@@ -22,33 +22,21 @@ Please make sure to add tests.
 Please make sure all commits are signed.
 
 #### Working in Gitpod
-The development environment is set up for use with Gitpod, however there are some steps that should be taken to get started.
+The development environment is set up for use with [Gitpod](https://gitpod.io/), however there are some steps that should be taken to get started.
 
 Dependencies:
-1. GPG
-2. SSH client
+1. SSH client
 
 Local set up:
-
-1. Add an SSH private key to Gitpods env vars under the name `PRIVATE_KEY` and add the public key to your github profile. (As soon as another option is available we should change this, but for now it works).
-
-```
-ssh-keygen
-```
-2. Generate an ECDSA private key (SSH access into Gitpod workspaces relies on a private key existing locally of this type).
+1. Generate an ECDSA private key (SSH access into Gitpod workspaces relies on a private key existing locally of this type).
 
 ```
 ssh-keygen -t ECDSA
 ```
-3. Update `~/.gnupg/gpg-agent.conf` with
 
-```
-extra-socket ~/.gnupg/S.gpg-agent.extra
-```
-4. Reload your gpg agent with `gpg-connect-agent reloadagent /bye`
-5. Add/update `~/.ssh/config` with
-
-```
-Host *.gitpod.io
-RemoteForward /home/gitpod/.gnupg/S.gpg-agent ~/.gnupg/S.gpg-agent.extra
-```
+2. Install [Krypton](https://krypt.co/developers/) either on mobile or desktop
+3. Enable devloper mode in Krypton
+4. Once in an SSH session in Gitpod run `kr pair` and scan the QR code in Krypton (each time you open a new work space)
+5. Run `kr me` to output your SSH public key, add this to Github (First time only)
+6. Run `kr me pgp` to output your GPG public key, add this to Github (First time only)
+7. Start contributing
