@@ -1,11 +1,6 @@
 image:
   file: .gitpod.Dockerfile
 tasks:
-  - before: |
-      echo "$GPG_PUB" | tr -d '\r' > ~/.gnupg/pgp.pub
-      gpg --import ~/.gnupg/pgp.pub
-      mkdir -p ~/.ssh
-      echo "$PRIVATE_KEY" | tr -d '\r' > ~/.ssh/gitpod_rsa
   - init: |
       source ~/.bashrc && source ~/.ghcup/env
       cabal update
@@ -14,7 +9,6 @@ tasks:
     command: |
       source ~/.bashrc && source ~/.ghcup/env
       nvim --headless +PlugInstall +qall
-      export EDITOR=nvim
 github:
   prebuilds:
     master: true

@@ -3,12 +3,17 @@ FROM ubuntu
 SHELL ["/bin/bash", "-c"]
 RUN useradd -ms /bin/bash -u 33333 gitpod
 
+# Install requirements for adding PPAs
+RUN apt-get update
+RUN apt-get install gnupg software-properties-common -y
+
+# Add PPA for kr
+RUN apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C4A05888A1C4FA02E1566F859F2A29A569653940
+RUN add-apt-repository "deb http://kryptco.github.io/deb kryptco main"
+
 # Install packages we don't care about versions of
 RUN apt-get update
-RUN apt-get install -y tmux curl zsh git build-essential curl libffi-dev libffi8ubuntu1 libgmp-dev libgmp10 libncurses-dev libncurses5 libtinfo5
-
-# Install ohmyzsh
-RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+RUN apt-get install -y tmux curl zsh git build-essential curl libffi-dev libffi8ubuntu1 libgmp-dev libgmp10 libncurses-dev libncurses5 libtinfo5 dirmngr apt-transport-https kr
 
 # Install recent neovim
 RUN curl -LO https://github.com/neovim/neovim/releases/download/v0.7.0/nvim-linux64.deb && apt-get install ./nvim-linux64.deb
@@ -18,6 +23,9 @@ RUN mkdir /.stack-work
 RUN chown gitpod /.stack-work
 
 USER gitpod
+# Install ohmyzsh
+RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+
 # Install haskell stack
 RUN curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | BOOTSTRAP_HASKELL_NONINTERACTIVE=1 bash
 
@@ -29,17 +37,8 @@ RUN source ~/.ghcup/env && source ~/.bashrc && cabal update
 COPY natskell.cabal .
 COPY stack.yaml .
 COPY stack.yaml.lock .
-RUN bash -c "source ~/.ghcup/env && source ~/.bashrc && stack build --dependencies-only --system-ghc"
+RUN source ~/.ghcup/env && source ~/.bashrc && stack build --dependencies-only --system-ghc
 
-# Set up GPG forwarding requirements
-USER root
-RUN echo "StreamLocalBindUnlink yes" >> /etc/ssh/sshd_config
-RUN echo "AllowTcpForwarding yes" >> /etc/ssh/sshd_config
-RUN echo "AllowStreamLocalForwarding yes" >> /etc/ssh/sshd_config
-RUN echo "LogLevel DEBUG3" >> /etc/ssh/sshd_config
-RUN echo "DenyUsers gitpod" >> /etc/ssh/sshd_config
-RUN echo "Here be a banner" >> /etc/motd
-
+# Add trailing user command to ensure non root
 USER gitpod
-RUN mkdir ~/.gnupg
 
