@@ -25,6 +25,7 @@ RUN chown gitpod /.stack-work
 USER gitpod
 # Install ohmyzsh
 RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+RUN echo "export GPG_TTY=$(tty)" >> ~/.zshrc
 
 # Install haskell stack
 RUN curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | BOOTSTRAP_HASKELL_NONINTERACTIVE=1 bash
