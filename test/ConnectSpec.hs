@@ -4,6 +4,7 @@ module ConnectSpec (spec) where
 
 import           Connect
 import           Control.Concurrent
+import           Control.Exception
 import           Control.Monad
 import           Data.Aeson
 import qualified Data.ByteString      as BS
@@ -107,9 +108,11 @@ stopNATSContainer cid = do
          Left e  -> error $ show e
          Right _ -> return ()
 
-integration = do
-  describe "CONNECT" $ do
-    it "connects successfully" $ \f -> do
-      id <- runNATSContainer
-      stopNATSContainer id
+withNATSConnection :: (DC.ContainerID -> IO ()) -> IO ()
+withNATSConnection = bracket runNATSContainer stopNATSContainer
 
+integration = do
+  around withNATSConnection $ do
+    describe "CONNECT" $ do
+      it "connects successfully" $ \f -> do
+        1 `shouldBe` 1
