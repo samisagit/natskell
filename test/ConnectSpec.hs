@@ -3,12 +3,14 @@
 module ConnectSpec (spec) where
 
 import           Connect
+import           Control.Concurrent
 import           Control.Monad
 import           Data.Aeson
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as LBS
 import           Data.Text            (Text, pack)
 import           Data.Text.Encoding
+import qualified Docker.Client        as DC
 import           Parser
 import           Test.Hspec
 import           Text.Printf
@@ -16,6 +18,7 @@ import           Text.Printf
 spec :: Spec
 spec = do
   manual
+  integration
 
 boolCases = [True, False]
 maybeUserCases = [Just "samisagit", Just "sam@google.com", Nothing]
@@ -81,4 +84,32 @@ collapseMaybeIntField :: BS.ByteString -> Maybe Int -> BS.ByteString
 collapseMaybeIntField f v = case v of
   Nothing -> ""
   Just a  -> foldr BS.append "" ["\"", f, "\":", encodeUtf8 . pack . show $ a, ","]
+
+runNATSContainer :: IO DC.ContainerID
+runNATSContainer = do
+  h <- DC.unixHttpHandler "/var/run/docker.sock"
+  DC.runDockerT (DC.defaultClientOpts, h) $
+    do let pb = DC.PortBinding 4222 DC.TCP [DC.HostPort "0.0.0.0" 4222]
+       let createOpts = DC.addPortBinding pb $ DC.defaultCreateOpts "nats:latest"
+       cid <- DC.createContainer createOpts (Just "nats")
+       case cid of
+         Left err -> error $ show err
+         Right i -> do
+           _ <- DC.startContainer DC.defaultStartOpts i
+           return i
+
+stopNATSContainer :: DC.ContainerID -> IO ()
+stopNATSContainer cid = do
+  h <- DC.unixHttpHandler "/var/run/docker.sock"
+  DC.runDockerT (DC.defaultClientOpts, h) $
+    do r <- DC.stopContainer DC.DefaultTimeout cid
+       case r of
+         Left e  -> error $ show e
+         Right _ -> return ()
+
+integration = do
+  describe "CONNECT" $ do
+    it "connects successfully" $ \f -> do
+      id <- runNATSContainer
+      stopNATSContainer id
 

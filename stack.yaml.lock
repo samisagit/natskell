@@ -3,7 +3,14 @@
 # For more information, please see the documentation at:
 #   https://docs.haskellstack.org/en/stable/lock_files
 
-packages: []
+packages:
+- completed:
+    hackage: docker-0.7.0.0@sha256:b7ad0b4f5ba9975f43625c25b8e185dee4dc76e1dcff78c50f2b630a22c35e78,4044
+    pantry-tree:
+      size: 654
+      sha256: 46ffd587969ddcfd7823740cc8a38889c1b92e501626791d5f392896b0ea22b2
+  original:
+    hackage: docker-0.7.0.0
 snapshots:
 - completed:
     size: 590100
