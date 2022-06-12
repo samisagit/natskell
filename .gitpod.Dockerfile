@@ -1,7 +1,8 @@
-FROM ubuntu
+FROM gitpod/workspace-full
 
 SHELL ["/bin/bash", "-c"]
-RUN useradd -ms /bin/bash -u 33333 gitpod
+
+USER root
 
 # Install requirements for adding PPAs
 RUN apt-get update
@@ -13,7 +14,7 @@ RUN add-apt-repository "deb http://kryptco.github.io/deb kryptco main"
 
 # Install packages we don't care about versions of
 RUN apt-get update
-RUN apt-get install -y tmux curl zsh git build-essential curl libffi-dev libffi8ubuntu1 libgmp-dev libgmp10 libncurses-dev libncurses5 libtinfo5 dirmngr apt-transport-https kr
+RUN apt-get install -y tmux curl zsh git build-essential curl libffi-dev libgmp-dev libgmp10 libncurses-dev libncurses5 libtinfo5 dirmngr apt-transport-https kr
 
 # Install recent neovim
 RUN curl -LO https://github.com/neovim/neovim/releases/download/v0.7.0/nvim-linux64.deb && apt-get install ./nvim-linux64.deb
