@@ -31,7 +31,6 @@ maybeJwtCases = [Just "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3
 maybeIntCases = [Just 1, Just 10, Nothing]
 maybeBoolCases = [Just True, Just False, Nothing]
 
--- this relies on a deterministic order of JSON fields, which isn't ideal
 manual = do
   describe "transformer" $ do
     forM_ boolCases $ \verbosity ->
