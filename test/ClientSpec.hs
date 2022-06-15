@@ -11,12 +11,10 @@ spec = do
   integration
 
 withNATSConnection :: (DC.ContainerID -> IO ()) -> IO ()
-withNATSConnection = bracket runNATSContainer stopNATSContainer
+withNATSConnection = bracket startNATS stopNATS
 
 integration = do
   around withNATSConnection $ do
     describe "Client" $ do
       it "connects successfully" $ \_ -> do
-        -- TODO: work out a nice way to check NATS is ready in the
-        -- integration bracket
         connect $ Api "0.0.0.0" "4222"
