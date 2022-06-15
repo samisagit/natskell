@@ -19,7 +19,6 @@ import           Text.Printf
 spec :: Spec
 spec = do
   manual
-  integration
 
 boolCases = [True, False]
 maybeUserCases = [Just "samisagit", Just "sam@google.com", Nothing]
@@ -85,33 +84,3 @@ collapseMaybeIntField f v = case v of
   Nothing -> ""
   Just a  -> foldr BS.append "" ["\"", f, "\":", encodeUtf8 . pack . show $ a, ","]
 
-runNATSContainer :: IO DC.ContainerID
-runNATSContainer = do
-  h <- DC.unixHttpHandler "/var/run/docker.sock"
-  DC.runDockerT (DC.defaultClientOpts, h) $
-    do let pb = DC.PortBinding 4222 DC.TCP [DC.HostPort "0.0.0.0" 4222]
-       let createOpts = DC.addPortBinding pb $ DC.defaultCreateOpts "nats:latest"
-       cid <- DC.createContainer createOpts (Just "nats")
-       case cid of
-         Left err -> error $ show err
-         Right i -> do
-           _ <- DC.startContainer DC.defaultStartOpts i
-           return i
-
-stopNATSContainer :: DC.ContainerID -> IO ()
-stopNATSContainer cid = do
-  h <- DC.unixHttpHandler "/var/run/docker.sock"
-  DC.runDockerT (DC.defaultClientOpts, h) $
-    do r <- DC.stopContainer DC.DefaultTimeout cid
-       case r of
-         Left e  -> error $ show e
-         Right _ -> return ()
-
-withNATSConnection :: (DC.ContainerID -> IO ()) -> IO ()
-withNATSConnection = bracket runNATSContainer stopNATSContainer
-
-integration = do
-  around withNATSConnection $ do
-    describe "CONNECT" $ do
-      it "connects successfully" $ \f -> do
-        1 `shouldBe` 1
