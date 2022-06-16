@@ -47,3 +47,4 @@ RUN echo "source ~/.ghcup/env" >> ~/.zshrc
 # Add trailing user command to ensure non root
 USER gitpod
 
+ENV STACK_ROOT=/workspace/.stack
