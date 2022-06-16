@@ -46,11 +46,22 @@ ensureNATSIsListening retryCount = do
 ensureNATSIsResponding :: Int -> IO ()
 ensureNATSIsResponding retryCount = do
   result <- try(TCP.connect "0.0.0.0" "4222" $ \(sock, _) -> do
-    _ <- TCP.recv sock 1000
-    return ()
+    res <- TCP.recv sock 1000
+    TCP.closeSock sock
+    case res of
+      Just a  -> return ()
+      Nothing -> do
+        if retryCount == 0
+          then error $ "retried too many times (no response)"
+        else do
+          ensureNATSIsResponding $ retryCount-1
     ) :: IO (Either SomeException ())
   case result of
-    Left ex -> print $ show ex
+    Left ex -> do
+      if retryCount == 0
+        then error $ "retried too many times " ++ show ex
+      else do
+        ensureNATSIsResponding $ retryCount-1
     Right _ -> return ()
 
 startNATS :: IO DC.ContainerID
