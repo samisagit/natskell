@@ -61,7 +61,8 @@ test-suite natskell-test
                        text ^>= 1.2.3.1,
                        base-orphans ^>=0.8.6,
                        docker ^>=0.7.0.0,
-                       network-simple ^>= 0.4.5
+                       network-simple ^>= 0.4.5,
+                       QuickCheck ^>= 2.14.2
     other-modules:
         ParserSpec
         MsgSpec
@@ -74,6 +75,6 @@ test-suite natskell-test
         ConnectSpec
         SubSpec
         UnsubSpec
-        Integration
+        NatsWrappers
         ClientSpec
 

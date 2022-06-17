@@ -1,11 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Integration where
+module NatsWrappers where
 
 import           Control.Concurrent
 import           Control.Exception
 import qualified Docker.Client      as DC
 import qualified Network.Simple.TCP as TCP
+
+second = 1000000
 
 runNATSContainer :: IO DC.ContainerID
 runNATSContainer = do
@@ -30,21 +32,21 @@ ensureNATS id = do
 
 ensureNATSIsListening :: Int -> IO ()
 ensureNATSIsListening retryCount = do
-  result <- try(TCP.connect "0.0.0.0" "4222" $ \(sock, _) -> do
-    TCP.closeSock sock
-    ) :: IO (Either SomeException ())
+  result <- try(
+    TCP.connect "0.0.0.0" "4222" $ \(sock, _) -> do
+      return sock
+    ) :: IO (Either SomeException TCP.Socket)
   case result of
     Left ex -> do
-      print $ show ex
       if retryCount == 0
         then error $ "retried too many times " ++ show ex
       else do
-        threadDelay $ 1000000
+        threadDelay $ second `div` 2
         ensureNATSIsListening $ retryCount - 1
-    Right _ -> ensureNATSIsResponding retryCount
+    Right sock -> ensureNATSIsResponding sock retryCount
 
-ensureNATSIsResponding :: Int -> IO ()
-ensureNATSIsResponding retryCount = do
+ensureNATSIsResponding :: TCP.Socket -> Int -> IO ()
+ensureNATSIsResponding sock retryCount = do
   result <- try(TCP.connect "0.0.0.0" "4222" $ \(sock, _) -> do
     res <- TCP.recv sock 1000
     TCP.closeSock sock
@@ -54,14 +56,16 @@ ensureNATSIsResponding retryCount = do
         if retryCount == 0
           then error $ "retried too many times (no response)"
         else do
-          ensureNATSIsResponding $ retryCount-1
+          threadDelay $ second `div` 4
+          ensureNATSIsResponding sock $ retryCount-1
     ) :: IO (Either SomeException ())
   case result of
     Left ex -> do
       if retryCount == 0
         then error $ "retried too many times " ++ show ex
       else do
-        ensureNATSIsResponding $ retryCount-1
+        threadDelay $ second `div` 4
+        ensureNATSIsResponding sock $ retryCount-1
     Right _ -> return ()
 
 startNATS :: IO DC.ContainerID
