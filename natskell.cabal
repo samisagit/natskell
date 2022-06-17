@@ -115,19 +115,7 @@ test-suite fuzz-test
                        QuickCheck >= 2.14.2,
     other-modules:
         Lib.Parser
-        Parsers.Parsers
-        Transformers.Transformers
-        Types.Msg
-        Types.Ping
-        Types.Pong
-        Types.Ok
-        Types.Err
-        Types.Info
-        Types.Pub
-        Types.Connect
-        Types.Sub
-        Types.Unsub
-        Client
+        ParserSpec
 
 test-suite system-test
      default-language: Haskell2010
