@@ -17,6 +17,5 @@ withNATSConnection = bracket startNATS stopNATS
 sys = parallel $ do
   around withNATSConnection $ do
     describe "Client" $ do
-      describe "systest" $ do
-        it "connects successfully" $ \(_, host, port) -> do
-          connect host port 10
+      it "connects successfully" $ \(_, host, port) -> do
+        connect host port 10

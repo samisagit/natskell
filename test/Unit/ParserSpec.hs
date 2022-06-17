@@ -50,3 +50,4 @@ filterSameChar i os = filter f os
 
 word8ToString :: W8.Word8 -> String
 word8ToString w = show (BS.pack [w])
+
