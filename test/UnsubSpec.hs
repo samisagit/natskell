@@ -18,7 +18,7 @@ cases = [
   (Data "uuid" (Just 10), "UNSUB uuid 10", "with max messages")
   ]
 
-manual = do
+manual = parallel $ do
   forM_ cases $ \(input, expected, caseName) ->
     it (printf "correctly transforms %s" caseName) $ do
       transform input `shouldBe` expected

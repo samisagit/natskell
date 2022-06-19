@@ -11,7 +11,7 @@ spec = do
   manual
 
 manual :: Spec
-manual = do
+manual = parallel $ do
   describe "parser" $ do
     it "correctly parses PONG" $ do
       let result = fmap fst pong

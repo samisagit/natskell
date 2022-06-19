@@ -20,7 +20,7 @@ charCases = zip (map charToByteString ['\t'..'~']) [W8._tab..W8._tilde]
   where
     charToByteString = \c -> B.pack [c]
 
-char = do
+char = parallel $ do
    forM_ charCases $ \(input, expected) ->
     describe (printf "char %s" (word8ToString expected)) $ do
       it (printf "correctly parses %s" (show input)) $ do
