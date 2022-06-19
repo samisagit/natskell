@@ -4,7 +4,8 @@ tasks:
   - init: |
       source ~/.bashrc && source ~/.ghcup/env
       cabal update
-      stack build --system-ghc
+      make build-test
+      make build
   - name: nvim
     command: |
       source ~/.bashrc && source ~/.ghcup/env

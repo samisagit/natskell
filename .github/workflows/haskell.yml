@@ -13,7 +13,6 @@ permissions:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
@@ -40,6 +39,7 @@ jobs:
         sudo apt-get install -y hspec-discover
         cabal update --allow-newer=base
         cabal build --allow-newer=base --only-dependencies --enable-tests --enable-benchmarks
+        docker pull nats:latest
     - name: Build
       run: cabal build --allow-newer=base --enable-tests --enable-benchmarks all
     - name: Run tests
