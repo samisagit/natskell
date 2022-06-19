@@ -1,6 +1,6 @@
 # Natskell
 
-Natskell is a client library for [NATS](https://docs.nats.io/) written in haskell
+Naskell is a client library for [NATS](https://docs.nats.io/) written in haskell
 
 # Project
 
@@ -8,7 +8,7 @@ See roadmap [here](https://github.com/users/samisagit/projects/1)
 
 ## Installation
 
-Natskell is still pre alpha, so there is no candidate at present.
+Naskell is still pre alpha, so there is no candidate at present.
 
 ## Usage
 
