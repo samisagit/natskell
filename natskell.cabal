@@ -62,7 +62,8 @@ test-suite natskell-test
                        base-orphans ^>=0.8.6,
                        docker ^>=0.7.0.0,
                        network-simple ^>= 0.4.5,
-                       QuickCheck ^>= 2.14.2
+                       QuickCheck ^>= 2.14.2,
+                       HTTP ^>= 4000.4.1
     other-modules:
         ParserSpec
         MsgSpec
