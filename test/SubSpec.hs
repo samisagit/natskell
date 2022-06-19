@@ -18,7 +18,7 @@ cases = [
   (Data "SOME.SUBJ" (Just "QUEUE.GROUP.A") "uuid", "SUB SOME.SUBJ QUEUE.GROUP.A uuid", "with queue group")
   ]
 
-manual = do
+manual = parallel $ do
   forM_ cases $ \(input, expected, caseName) ->
     it (printf "correctly transforms %s" caseName) $ do
       transform input `shouldBe` expected

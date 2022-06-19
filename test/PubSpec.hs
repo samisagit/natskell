@@ -20,7 +20,7 @@ cases = [
   (Data "FOO.BAR" (Just "FOO.BAR.REPLY") (Just "Some payload bits"), "PUB FOO.BAR FOO.BAR.REPLY 17\r\nSome payload bits\r\n", "with max messages")
   ]
 
-manual = do
+manual = parallel $ do
   forM_ cases $ \(input, expected, caseName) ->
     it (printf "correctly transforms %s" caseName) $ do
       transform input `shouldBe` expected

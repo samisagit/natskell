@@ -19,7 +19,7 @@ cases = [
   ("MSG FOO.BAR.BAZ 13 IN.*.BOX.> 0\r\n", Data "FOO.BAR.BAZ" 13 (Just "IN.*.BOX.>") 0 Nothing)
   ]
 
-form = do
+form = parallel $ do
   describe "parser" $ do
     forM_ cases $ \(input, expected) ->
       it (printf "correctly parses %s" (show input)) $ do

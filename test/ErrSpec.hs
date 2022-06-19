@@ -36,7 +36,7 @@ spec :: Spec
 spec = do
   form
 
-form = do
+form = parallel $ do
   describe "parser" $ do
     forM_ cases $ \(input, expected) ->
       it (printf "correctly parses %s" (show input)) $ do

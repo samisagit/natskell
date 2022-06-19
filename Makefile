@@ -5,12 +5,12 @@ coverage:
 
 .PHONY: test
 test:
-	stack test --system-ghc
+	stack test --system-ghc --ta '-j 16' 
 
 .PHONY: build-test
 build-test:
-	stack test --system-ghc --no-run-tests
+	stack test --system-ghc --no-run-tests --ta '-j 16'
 
 .PHONY: build
 build:
-	stack build --system-ghc
+	stack build --system-ghc -j 16

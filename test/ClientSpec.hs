@@ -14,7 +14,7 @@ spec = do
 withNATSConnection :: ((DC.ContainerID, String, Int) -> IO ()) -> IO ()
 withNATSConnection = bracket startNATS stopNATS
 
-sys = do
+sys = parallel $ do
   around withNATSConnection $ do
     describe "Client" $ do
       describe "systest" $ do

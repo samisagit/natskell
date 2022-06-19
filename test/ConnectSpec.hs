@@ -30,7 +30,7 @@ maybeJwtCases = [Just "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3
 maybeIntCases = [Just 1, Just 10, Nothing]
 maybeBoolCases = [Just True, Just False, Nothing]
 
-manual = do
+manual = parallel $ do
   describe "transformer" $ do
     forM_ boolCases $ \verbosity ->
       forM_ boolCases $ \pedanticity ->

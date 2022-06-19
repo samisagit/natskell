@@ -33,7 +33,7 @@ cases = [
   )
   ]
 
-manual = do
+manual = parallel $ do
   describe "parser" $ do
     forM_ cases $ \(input, expected, name) ->
       it (printf "parses %s case successfully" name) $ do
