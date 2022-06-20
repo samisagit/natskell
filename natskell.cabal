@@ -27,8 +27,9 @@ library
         text ^>= 1.2.3.1,
         network-simple ^>= 0.4.5
 
-    -- Modules included in this library but not exported.
     exposed-modules:
+        Client
+    other-modules:
         Parser
         Msg
         Ping
@@ -40,17 +41,86 @@ library
         Connect
         Sub
         Unsub
-        Client
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
     hs-source-dirs:   src
     default-language: Haskell2010
 
-test-suite natskell-test
+test-suite unit-test
      default-language: Haskell2010
      type:             exitcode-stdio-1.0
-     hs-source-dirs:   test
+     hs-source-dirs:   src, test/Unit
+     main-is:          Spec.hs
+     build-depends:    base ^>=4.16.1.0,
+                       hspec >= 2.7,
+                       bytestring ^>=0.11.3.0,
+                       word8 ^>=0.1.3,
+                       aeson ^>=2.0.3.0,
+                       text ^>= 1.2.3.1,
+                       base-orphans ^>=0.8.6,
+                       docker ^>=0.7.0.0,
+                       network-simple ^>= 0.4.5,
+                       QuickCheck ^>= 2.14.2,
+    other-modules:
+        Client
+        Parser
+        Msg
+        Ping
+        Pong
+        Ok
+        Err
+        Info
+        Pub
+        Connect
+        Sub
+        Unsub
+        ParserSpec
+        MsgSpec
+        PingSpec
+        PongSpec
+        OkSpec
+        ErrSpec
+        InfoSpec
+        PubSpec
+        ConnectSpec
+        SubSpec
+        UnsubSpec
+
+test-suite fuzz-test
+     default-language: Haskell2010
+     type:             exitcode-stdio-1.0
+     hs-source-dirs:   src, test/Fuzz
+     main-is:          Spec.hs
+     build-depends:    base ^>=4.16.1.0,
+                       natskell,
+                       hspec >= 2.7,
+                       bytestring ^>=0.11.3.0,
+                       word8 ^>=0.1.3,
+                       aeson ^>=2.0.3.0,
+                       text ^>= 1.2.3.1,
+                       base-orphans ^>=0.8.6,
+                       docker ^>=0.7.0.0,
+                       network-simple ^>= 0.4.5,
+                       QuickCheck ^>= 2.14.2,
+    other-modules:
+        Client
+        Parser
+        Msg
+        Ping
+        Pong
+        Ok
+        Err
+        Info
+        Pub
+        Connect
+        Sub
+        Unsub
+
+test-suite system-test
+     default-language: Haskell2010
+     type:             exitcode-stdio-1.0
+     hs-source-dirs:   test/System
      main-is:          Spec.hs
      build-depends:    base ^>=4.16.1.0,
                        natskell,
@@ -65,17 +135,6 @@ test-suite natskell-test
                        QuickCheck ^>= 2.14.2,
                        HTTP ^>= 4000.4.1
     other-modules:
-        ParserSpec
-        MsgSpec
-        PingSpec
-        PongSpec
-        OkSpec
-        ErrSpec
-        InfoSpec
-        PubSpec
-        ConnectSpec
-        SubSpec
-        UnsubSpec
         NatsWrappers
         ClientSpec
 

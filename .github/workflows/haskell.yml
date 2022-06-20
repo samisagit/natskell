@@ -37,10 +37,8 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get install -y hspec-discover
-        cabal update --allow-newer=base
-        cabal build --allow-newer=base --only-dependencies --enable-tests --enable-benchmarks
-        docker pull nats:latest
+        cabal update
     - name: Build
-      run: cabal build --allow-newer=base --enable-tests --enable-benchmarks all
+      run: make build
     - name: Run tests
-      run: cabal test --test-show-details=direct --allow-newer=base all
+      run: make test
