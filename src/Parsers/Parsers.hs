@@ -4,6 +4,7 @@
 module Parsers where
 
 import           Control.Applicative
+import qualified Control.Monad.Fail   as Fail
 import           Data.Aeson
 import           Data.ByteString
 import qualified Data.ByteString.Lazy as BSL
@@ -16,16 +17,29 @@ import           Types.Ok
 import           Types.Ping
 import           Types.Pong
 
-data Generic = ParsedPing Ping | ParsedPong Pong -- see if just Ping | Pong works
+-- TODO do we need the wrapping type
+data ParsedMessage = ParsedPing Ping
+  | ParsedPong Pong
+  | ParsedOk Ok
+  | ParsedErr Err
+  | ParsedInfo Info
+  | ParsedMsg Msg
 
-genericParse :: ByteString -> IO ()
-genericParse a = case (runParser (oparser <|> iparser) a) of
-  Just (p, _) -> case p of
-    ParsedPing a -> print "parsed a ping"
-    ParsedPong a -> print "parsed a pong"
-  Nothing     -> return ()
+genericParse :: ByteString -> Maybe ParsedMessage
+genericParse a = case (result) of
+  Just (p, _) -> return p
+  Nothing     -> Nothing
+  where
+    result = runParser (
+      pongParser
+      <|> pingParser
+      <|> msgParser
+      <|> infoParser
+      <|> errParser
+      <|> okParser
+      ) a
 
-errParser :: Parser Err
+errParser :: Parser ParsedMessage
 errParser = do
   string "-ERR"
   ss
@@ -34,7 +48,7 @@ errParser = do
   char _quotesingle
   string "\r\n"
   let packedReason = pack reason
-  return (Err packedReason (isFatal packedReason))
+  return (ParsedErr $ Err packedReason (isFatal packedReason))
 
 errPrefixInvalidSubject = "Invalid Subject"
 errPrefixPerm = "Permissions Violation"
@@ -80,13 +94,15 @@ permViolationParser = do
   post <- til _quotesingle
   return (pre ++ post)
 
-infoParser :: Parser (Maybe Info)
+infoParser :: Parser ParsedMessage
 infoParser = do
   string "INFO"
   ss
   rest <- asciis
   let packed = pack rest
-  return (decode . BSL.fromStrict $ packed)
+  case (decode . BSL.fromStrict $ packed) of
+    Just a  -> return (ParsedInfo a)
+    Nothing -> Fail.fail "decode failed" -- TODO: check this works
 
 msgParser =
   msgWithReplyAndPayloadparser
@@ -94,7 +110,7 @@ msgParser =
     <|> msgWithReplyparser
     <|> msgMinParser
 
-msgWithReplyAndPayloadparser :: Parser Data
+msgWithReplyAndPayloadparser :: Parser ParsedMessage
 msgWithReplyAndPayloadparser = do
   string "MSG"
   ss
@@ -110,7 +126,7 @@ msgWithReplyAndPayloadparser = do
   payload <- take' countInt ascii
   string "\r\n"
   return
-    ( Data
+    (ParsedMsg $ Msg
         (pack subj)
         (toInt . pack $ sid)
         (Just (pack reply))
@@ -118,7 +134,7 @@ msgWithReplyAndPayloadparser = do
         (Just (pack payload))
     )
 
-msgWithPayloadparser :: Parser Data
+msgWithPayloadparser :: Parser ParsedMessage
 msgWithPayloadparser = do
   string "MSG"
   ss
@@ -132,7 +148,7 @@ msgWithPayloadparser = do
   payload <- take' countInt ascii
   string "\r\n"
   return
-    ( Data
+    (ParsedMsg $ Msg
         (pack subj)
         (toInt . pack $ sid)
         Nothing
@@ -140,7 +156,7 @@ msgWithPayloadparser = do
         (Just (pack payload))
     )
 
-msgWithReplyparser :: Parser Data
+msgWithReplyparser :: Parser ParsedMessage
 msgWithReplyparser = do
   string "MSG"
   ss
@@ -153,7 +169,7 @@ msgWithReplyparser = do
   count <- integer
   string "\r\n"
   return
-    ( Data
+    (ParsedMsg $ Msg
         (pack subj)
         (toInt . pack $ sid)
         (Just (pack reply))
@@ -161,7 +177,7 @@ msgWithReplyparser = do
         Nothing
     )
 
-msgMinParser :: Parser Data
+msgMinParser :: Parser ParsedMessage
 msgMinParser = do
   string "MSG"
   ss
@@ -172,7 +188,7 @@ msgMinParser = do
   count <- integer
   string "\r\n"
   return
-    ( Data
+    (ParsedMsg $ Msg
         (pack subj)
         (toInt . pack $ sid)
         Nothing
@@ -180,19 +196,19 @@ msgMinParser = do
         Nothing
     )
 
-okParser :: Parser Ok
+okParser :: Parser ParsedMessage
 okParser = do
   string "+OK\r\n"
-  return Ok
+  return (ParsedOk Ok)
 
 
-pingParser :: Parser Ping
+pingParser :: Parser ParsedMessage
 pingParser = do
   string "PING\r\n"
-  return Ping
+  return (ParsedPing Ping)
 
-pongParser :: Parser Pong
+pongParser :: Parser ParsedMessage
 pongParser = do
   string "PONG\r\n"
-  return Pong
+  return (ParsedPong Pong)
 
