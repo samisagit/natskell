@@ -2,7 +2,7 @@ module Types.Msg where
 
 import           Data.ByteString
 
-data Data = Data
+data Msg = Msg
   { subject   :: ByteString,
     sid       :: Int,
     replyTo   :: Maybe ByteString,
