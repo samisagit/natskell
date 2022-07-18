@@ -6,8 +6,8 @@ import           Control.Concurrent
 import           Control.Exception
 import qualified Data.ByteString    as BS
 import qualified Info               as I
+import           Lib.Parser
 import qualified Network.Simple.TCP as TCP
-import           Parser
 
 connect :: String -> Int -> Int -> IO ()
 connect host port retryCount = do

@@ -1,16 +1,12 @@
-{-# LANGUAGE DeriveGeneric     #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveGeneric #-}
 
-module Connect where
+module Types.Connect where
 
 import           Data.Aeson
-import qualified Data.ByteString      as BS
-import qualified Data.ByteString.Lazy as LBS
-import           Data.Text            (Text)
+import           Data.Text
 import           GHC.Generics
-import           Parser
 
-data Data = Data
+data Connect = Connect
   {
     verbose      :: Bool,
     pedantic     :: Bool,
@@ -27,12 +23,7 @@ data Data = Data
     jwt          :: Maybe Text
   }
   deriving (Eq, Show, Generic)
-
-instance ToJSON Data where
+instance ToJSON Connect where
   toJSON = genericToJSON defaultOptions
     {omitNothingFields = True}
 
-transform :: Data -> BS.ByteString
-transform d = do
-  let f = encode d
-  BS.append ("CONNECT " :: BS.ByteString) (LBS.toStrict f)

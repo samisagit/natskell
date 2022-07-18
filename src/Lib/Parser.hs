@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Parser where
+module Lib.Parser where
 
 import           Control.Applicative
 import qualified Data.ByteString       as BS
