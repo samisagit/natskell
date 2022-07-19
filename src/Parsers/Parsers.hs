@@ -1,14 +1,17 @@
 {-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Parsers where
+module Parsers.Parsers where
 
 import           Control.Applicative
 import qualified Control.Monad.Fail   as Fail
 import           Data.Aeson
 import           Data.ByteString
 import qualified Data.ByteString.Lazy as BSL
+import qualified Data.Text            as T
+import qualified Data.Text.Encoding   as TE
 import           Data.Word8
+import           Debug.Trace
 import           Lib.Parser
 import           Types.Err
 import           Types.Info
@@ -99,10 +102,9 @@ infoParser = do
   string "INFO"
   ss
   rest <- asciis
-  let packed = pack rest
-  case (decode . BSL.fromStrict $ packed) of
-    Just a  -> return (ParsedInfo a)
-    Nothing -> Fail.fail "decode failed" -- TODO: check this works
+  case (eitherDecode . BSL.fromStrict $ pack rest) of
+    Right a -> return (ParsedInfo a)
+    Left e  -> Fail.fail "decode failed"
 
 msgParser =
   msgWithReplyAndPayloadparser

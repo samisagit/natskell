@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Transformers where
+module Transformers.Transformers where
 
 import           Data.Aeson
 import qualified Data.ByteString      as BS

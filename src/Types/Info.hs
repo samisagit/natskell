@@ -15,10 +15,10 @@ data Info = Info
     max_payload   :: Int,
     proto         :: Int,
     client_id     :: Maybe Int,
-    auth_required :: Bool,
-    tls_required  :: Bool,
+    auth_required :: Maybe Bool,
+    tls_required  :: Maybe Bool,
     connect_urls  :: Maybe [String],
-    ldm           :: Bool
+    ldm           :: Maybe Bool
   }
   deriving (Eq, Show, Generic)
 

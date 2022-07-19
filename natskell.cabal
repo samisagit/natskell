@@ -30,21 +30,27 @@ library
     exposed-modules:
         Client
     other-modules:
-        Parser
-        Msg
-        Ping
-        Pong
-        Ok
-        Err
-        Info
-        Pub
-        Connect
-        Sub
-        Unsub
+        Lib.Parser
+        Parsers.Parsers
+        Transformers.Transformers
+        Types.Msg
+        Types.Ping
+        Types.Pong
+        Types.Ok
+        Types.Err
+        Types.Info
+        Types.Pub
+        Types.Connect
+        Types.Sub
+        Types.Unsub
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
-    hs-source-dirs:   src
+    hs-source-dirs:
+      src
+      src/Types
+      src/Parsers
+      src/Transformers
     default-language: Haskell2010
 
 test-suite unit-test
