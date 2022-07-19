@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Parsers.Parsers where
@@ -27,9 +26,10 @@ data ParsedMessage = ParsedPing Ping
   | ParsedErr Err
   | ParsedInfo Info
   | ParsedMsg Msg
+  deriving (Show, Eq)
 
 genericParse :: ByteString -> Maybe ParsedMessage
-genericParse a = case (result) of
+genericParse a = case result of
   Just (p, _) -> return p
   Nothing     -> Nothing
   where
@@ -102,7 +102,7 @@ infoParser = do
   string "INFO"
   ss
   rest <- asciis
-  case (eitherDecode . BSL.fromStrict $ pack rest) of
+  case eitherDecode . BSL.fromStrict $ pack rest of
     Right a -> return (ParsedInfo a)
     Left e  -> Fail.fail "decode failed"
 

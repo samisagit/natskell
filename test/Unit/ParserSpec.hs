@@ -7,7 +7,7 @@ import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as B
 import           Data.Char
 import qualified Data.Word8            as W8
-import qualified Parser
+import qualified Lib.Parser            as Parser
 import           Test.Hspec
 import           Text.Printf
 
@@ -18,7 +18,7 @@ spec = do
 charCases :: [(BS.ByteString, W8.Word8)]
 charCases = zip (map charToByteString ['\t'..'~']) [W8._tab..W8._tilde]
   where
-    charToByteString = \c -> B.pack [c]
+    charToByteString c = B.pack [c]
 
 char = parallel $ do
    forM_ charCases $ \(input, expected) ->
@@ -46,7 +46,7 @@ char = parallel $ do
 filterSameChar :: BS.ByteString -> [(BS.ByteString, W8.Word8)] -> [(BS.ByteString, W8.Word8)]
 filterSameChar i [] = []
 filterSameChar i os = filter f os
-  where f = \item -> fst item /= i
+  where f item = fst item /= i
 
 word8ToString :: W8.Word8 -> String
 word8ToString w = show (BS.pack [w])

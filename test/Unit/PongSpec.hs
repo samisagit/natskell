@@ -2,9 +2,11 @@
 
 module PongSpec (spec) where
 
-import           Parser
-import           Pong
+import           Lib.Parser
+import           Parsers.Parsers
 import           Test.Hspec
+import           Transformers.Transformers
+import           Types.Pong
 
 spec :: Spec
 spec = do
@@ -15,11 +17,15 @@ manual = parallel $ do
   describe "parser" $ do
     it "correctly parses PONG" $ do
       let result = fmap fst pong
-      result `shouldBe` Just Pong
-      let left = fmap snd pong
-      left `shouldBe` Just ""
+      let rest = fmap snd pong
+      case result of
+        Just (ParsedPong a) -> a `shouldBe` Pong
+        Nothing             -> error "parser did not return PONG type"
+      case rest of
+        Just "" -> return ()
+        _       -> error "parser did not consume all tokens"
   describe "transformer" $ do
     it "correctly transforms to 'PONG'" $ do
-      transform Pong `shouldBe` "PONG"
+      transform Pong `shouldBe` "PONG\r\n"
   where
-    pong = runParser parser "PONG\r\n"
+    pong = runParser pongParser "PONG\r\n"

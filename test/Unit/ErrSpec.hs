@@ -4,10 +4,11 @@ module ErrSpec (spec) where
 
 import           Control.Monad
 import           Data.ByteString
-import           Err
-import           Parser
+import           Lib.Parser
+import           Parsers.Parsers
 import           Test.Hspec
 import           Text.Printf
+import           Types.Err
 
 cases :: [(ByteString, Err)]
 cases = [
@@ -40,9 +41,12 @@ form = parallel $ do
   describe "parser" $ do
     forM_ cases $ \(input, expected) ->
       it (printf "correctly parses %s" (show input)) $ do
-        let output = runParser parser input
+        let output = runParser errParser input
         let result = fmap fst output
-        result `shouldBe` Just expected
-        let left = fmap snd output
-        left `shouldBe` Just ""
-
+        let rest = fmap snd output
+        case result of
+          Just (ParsedErr a) -> a `shouldBe` expected
+          Nothing            -> error "parser did not return ERR type"
+        case rest of
+          Just "" -> return ()
+          _       -> error "parser did not consume all tokens"

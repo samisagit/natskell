@@ -22,7 +22,7 @@ instance Transformer Ping where
   transform _ = "PING\r\n"
 
 instance Transformer Pong where
-  transform _ = "PING\r\n"
+  transform _ = "PONG\r\n"
 
 instance Transformer Connect where
   transform c = do

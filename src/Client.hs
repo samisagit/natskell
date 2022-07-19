@@ -31,10 +31,10 @@ connect host port retryCount = do
                 ParsedInfo a -> return ()
                 _            -> error $ "response incorrect: " ++ show a
             Nothing -> do
-                error $ "parser failed to read a valid message"
+                error "parser failed to read a valid message"
         Nothing -> do
           if retryCount < 1
-            then error $ "retry count exceeded, no message recieved"
+            then error "retry count exceeded, no message recieved"
           else do
             threadDelay 1000000
             connect host port $ retryCount - 1

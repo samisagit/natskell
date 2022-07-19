@@ -2,19 +2,20 @@
 
 module ConnectSpec (spec) where
 
-import           Connect
 import           Control.Concurrent
 import           Control.Exception
 import           Control.Monad
 import           Data.Aeson
-import qualified Data.ByteString      as BS
-import qualified Data.ByteString.Lazy as LBS
-import           Data.Text            (Text, pack)
+import qualified Data.ByteString           as BS
+import qualified Data.ByteString.Lazy      as LBS
+import           Data.Text                 (Text, pack)
 import           Data.Text.Encoding
-import qualified Docker.Client        as DC
-import           Parser
+import qualified Docker.Client             as DC
+import           Parsers.Parsers
 import           Test.Hspec
 import           Text.Printf
+import           Transformers.Transformers
+import           Types.Connect
 
 spec :: Spec
 spec = do
@@ -43,7 +44,7 @@ manual = parallel $ do
                     forM_ maybeBoolCases $ \echoOptions ->
                       forM_ maybeSigCases $ \sigOptions ->
                         forM_ maybeJwtCases $ \jwtOptions -> do
-                          let d = Data verbosity pedanticity tlsRequirement authTokenOptions userOptions passOptions nameOptions "Haskell" 1 protocolOptions echoOptions sigOptions jwtOptions
+                          let d = Connect verbosity pedanticity tlsRequirement authTokenOptions userOptions passOptions nameOptions "Haskell" 1 protocolOptions echoOptions sigOptions jwtOptions
                           it (printf "transforms %v successfully" (show d)) $ \f -> do
                             let transformed = transform d
                             let proto = BS.take 7 transformed
