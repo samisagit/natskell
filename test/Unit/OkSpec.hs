@@ -2,9 +2,10 @@
 
 module OkSpec (spec) where
 
-import           Ok
-import           Parser
+import           Lib.Parser
+import           Parsers.Parsers
 import           Test.Hspec
+import           Types.Ok
 
 spec :: Spec
 spec = do
@@ -12,11 +13,18 @@ spec = do
 
 manual :: Spec
 manual = parallel $ do
-  describe "parser" $ do
+  describe "specific parser" $ do
     it "correctly parses +OK" $ do
-      let result = fmap fst ok
-      result `shouldBe` Just Ok
-      let left = fmap snd ok
-      left `shouldBe` Just ""
-  where
-    ok = runParser parser "+OK\r\n"
+      let output = runParser okParser "+OK\r\n"
+      let result = fmap fst output
+      let rest = fmap snd output
+      case result of
+        Just (ParsedOk a) -> a `shouldBe` Ok
+        Nothing           -> error "parser did not return OK type"
+      case rest of
+        Just "" -> return ()
+        _       -> error "parser did not consume all tokens"
+  describe "specific parser" $ do
+    it "correctly parses +OK" $ do
+      let output = genericParse "+OK\r\n"
+      output `shouldBe` Just (ParsedOk Ok)

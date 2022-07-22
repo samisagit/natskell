@@ -6,16 +6,17 @@ import           Control.Monad
 import           Data.ByteString
 import           Test.Hspec
 import           Text.Printf
-import           Unsub
+import           Transformers.Transformers
+import           Types.Unsub
 
 spec :: Spec
 spec = do
   manual
 
-cases :: [(Data, ByteString, String)]
+cases :: [(Unsub, ByteString, String)]
 cases = [
-  (Data "uuid" Nothing, "UNSUB uuid", "without max messages"),
-  (Data "uuid" (Just 10), "UNSUB uuid 10", "with max messages")
+  (Unsub "uuid" Nothing, "UNSUB uuid", "without max messages"),
+  (Unsub "uuid" (Just 10), "UNSUB uuid 10", "with max messages")
   ]
 
 manual = parallel $ do

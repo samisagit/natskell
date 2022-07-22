@@ -5,9 +5,8 @@ module Client where
 import           Control.Concurrent
 import           Control.Exception
 import qualified Data.ByteString    as BS
-import qualified Info               as I
 import qualified Network.Simple.TCP as TCP
-import           Parser
+import           Parsers.Parsers
 
 connect :: String -> Int -> Int -> IO ()
 connect host port retryCount = do
@@ -23,16 +22,19 @@ connect host port retryCount = do
         print e
         threadDelay 1000000
         connect host port $ retryCount - 1
-    Right info -> do
-      case info of
+    Right bs -> do
+      case bs of
         Just a -> do
-          let result = fmap fst $ runParser I.parser a
-          case result of
-            Just a  -> return ()
-            Nothing -> error $ "response incorrect: " ++ show a
+          case genericParse a of
+            Just result ->
+              case result of
+                ParsedInfo a -> return ()
+                _            -> error $ "response incorrect: " ++ show a
+            Nothing -> do
+                error "parser failed to read a valid message"
         Nothing -> do
           if retryCount < 1
-            then error $ "retry count exceeded, no response"
+            then error "retry count exceeded, no message recieved"
           else do
             threadDelay 1000000
             connect host port $ retryCount - 1

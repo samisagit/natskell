@@ -24,7 +24,7 @@ runNATSContainer = do
       let hpb = DC.HostPort "0.0.0.0" 0
       let pbb = DC.PortBinding 8222 DC.TCP [hpb]
 
-      let createOpts = DC.addPortBinding pba $ DC.addPortBinding pbb $ DC.defaultCreateOpts "nats:latest"
+      let createOpts = DC.addPortBinding pba . DC.addPortBinding pbb $ DC.defaultCreateOpts "nats:latest"
       cid <- DC.createContainer createOpts Nothing
       case cid of
         Left err -> error $ show err
@@ -41,15 +41,15 @@ runNATSContainer = do
 ensureNATS :: (DC.ContainerID, DCT.ContainerDetails) -> IO (DC.ContainerID, String, Int)
 ensureNATS (id, d) = do
   ensureNATSIsListening hostPortB 10
-  return (id, (Text.unpack $ DCT.hostIp hostPortA), (fromIntegral $ DCT.hostPost hostPortA))
+  return (id, Text.unpack $ DCT.hostIp hostPortA, fromIntegral $ DCT.hostPost hostPortA)
   where
-    networkPortA = (DCT.networkSettingsPorts $ DCT.networkSettings d) !! 2
-    networkPortB = (DCT.networkSettingsPorts $ DCT.networkSettings d) !! 0
+    networkPortA = DCT.networkSettingsPorts ( DCT.networkSettings d) !! 2
+    networkPortB = head . DCT.networkSettingsPorts $ DCT.networkSettings d
     hostPortA = head $ DCT.hostPorts networkPortA
     hostPortB = head $ DCT.hostPorts networkPortB
 
 callNATSHealth hp retryCount = do
-  res <- HTTP.simpleHTTP (HTTP.getRequest $ "http://" ++ (Text.unpack $ DC.hostIp hp) ++ ":" ++  (show $ DC.hostPost hp))
+  res <- HTTP.simpleHTTP (HTTP.getRequest $ "http://" ++ Text.unpack (DC.hostIp hp) ++ ":" ++  show (DC.hostPost hp))
   case res of
     Left e -> do
       if retryCount == 0
