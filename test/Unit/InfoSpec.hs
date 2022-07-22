@@ -35,7 +35,7 @@ cases = [
   ]
 
 manual = parallel $ do
-  describe "parser" $ do
+  describe "specific parser" $ do
     forM_ cases $ \(input, expected, name) ->
       it (printf "parses %s case successfully" name) $ do
         let output = runParser infoParser input
@@ -47,4 +47,8 @@ manual = parallel $ do
         case rest of
           Just "" -> return ()
           _       -> error "parser did not consume all tokens"
-
+  describe "generic parser" $ do
+    forM_ cases $ \(input, expected, name) ->
+      it (printf "parses %s case successfully" name) $ do
+        let output = genericParse input
+        output `shouldBe` Just (ParsedInfo expected)

@@ -38,7 +38,7 @@ spec = do
   form
 
 form = parallel $ do
-  describe "parser" $ do
+  describe "specific parser" $ do
     forM_ cases $ \(input, expected) ->
       it (printf "correctly parses %s" (show input)) $ do
         let output = runParser errParser input
@@ -50,3 +50,8 @@ form = parallel $ do
         case rest of
           Just "" -> return ()
           _       -> error "parser did not consume all tokens"
+  describe "generic parser" $ do
+    forM_ cases $ \(input, expected) ->
+      it (printf "correctly parses %s" (show input)) $ do
+        let output = genericParse input
+        output `shouldBe` Just (ParsedErr expected)

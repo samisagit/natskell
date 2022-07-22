@@ -13,7 +13,7 @@ spec = do
 
 manual :: Spec
 manual = parallel $ do
-  describe "parser" $ do
+  describe "specific parser" $ do
     it "correctly parses +OK" $ do
       let output = runParser okParser "+OK\r\n"
       let result = fmap fst output
@@ -24,3 +24,7 @@ manual = parallel $ do
       case rest of
         Just "" -> return ()
         _       -> error "parser did not consume all tokens"
+  describe "specific parser" $ do
+    it "correctly parses +OK" $ do
+      let output = genericParse "+OK\r\n"
+      output `shouldBe` Just (ParsedOk Ok)
