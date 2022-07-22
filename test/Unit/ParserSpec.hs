@@ -16,7 +16,7 @@ spec = do
   char
 
 charCases :: [(BS.ByteString, W8.Word8)]
-charCases = zip (map charToByteString ['\t'..'~']) [W8._tab..W8._tilde]
+charCases = zip (map charToByteString [(minBound::Char)..(maxBound::Char)]) [(minBound::W8.Word8)..(maxBound::W8.Word8)]
   where
     charToByteString c = B.pack [c]
 
