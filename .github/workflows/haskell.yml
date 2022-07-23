@@ -40,5 +40,9 @@ jobs:
         cabal update
     - name: Build
       run: make build
+    - name: Run linter
+      run: |
+        stack install hlint --system-ghc
+        make lint.out
     - name: Run tests
       run: make test

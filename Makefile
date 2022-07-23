@@ -3,28 +3,27 @@ coverage:
 	stack test --system-ghc --coverage
 	xdg-open `stack path --local-hpc-root`/index.html
 
-.PHONY: unit-test
-unit-test:
-	stack test  natskell:unit-test --system-ghc --ta '-j 16' 
+unit-test.out: $(wildcard src/*) $(wildcard test/Unit/*)
+	stack test  natskell:unit-test --system-ghc --ta '-j 16 --format=failed-examples'
+	touch unit-test.out
 
-.PHONY: fuzz-test
-fuzz-test:
-	stack test  natskell:fuzz-test --system-ghc --ta '-j 16' 
+fuzz-test.out: $(wildcard src/*) $(wildcard test/Fuzz/*)
+	stack test  natskell:fuzz-test --system-ghc --ta '-j 16 --format=failed-examples'
+	touch fuzz-test.out
 
-.PHONY: system-test
-system-test:
+system-test.out: $(wildcard src/*) $(wildcard test/System/*) 
 	docker pull nats:latest
-	stack test natskell:system-test --system-ghc --ta '-j 16'
+	stack test natskell:system-test --system-ghc --ta '-j 16 --format=failed-examples'
+	touch system-test.out
 
-.PHONY: test
-test:
-	docker pull nats:latest
-	stack test --system-ghc --ta '-j 16'
+test: unit-test.out fuzz-test.out system-test.out
 
-.PHONY: build-test
+lint.out: $(wildcard src/*) $(wildcard test/*) 
+	hlint --git
+	touch lint.out
+
 build-test:
-	stack test --system-ghc --no-run-tests --ta '-j 16'
+	stack test --fast --system-ghc --no-run-tests --ta '-j 16'
 
-.PHONY: build
 build:
-	stack build --system-ghc -j 16
+	stack build --fast --system-ghc -j 16
