@@ -31,8 +31,8 @@ RUN echo "export GPG_TTY=$(tty)" >> ~/.zshrc
 # Install haskell stack
 RUN curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | BOOTSTRAP_HASKELL_NONINTERACTIVE=1 bash
 
-RUN source ~/.ghcup/env && source ~/.bashrc && ghcup install ghc 9.2.3
-RUN source ~/.ghcup/env && source ~/.bashrc && ghcup set ghc 9.2.3
+RUN source ~/.ghcup/env && source ~/.bashrc && ghcup install ghc 9.2.2
+RUN source ~/.ghcup/env && source ~/.bashrc && ghcup set ghc 9.2.2
 RUN source ~/.ghcup/env && source ~/.bashrc && ghcup install stack
 RUN source ~/.ghcup/env && source ~/.bashrc && ghcup install hls
 RUN source ~/.ghcup/env && source ~/.bashrc && cabal update
