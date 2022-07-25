@@ -21,6 +21,7 @@ charCases = zip (map charToByteString [(minBound::Char)..(maxBound::Char)]) [(mi
     charToByteString c = B.pack [c]
 
 char = parallel $ do
+  describe "generated" $ do
    forM_ charCases $ \(input, expected) ->
     describe (printf "char %s" (word8ToString expected)) $ do
       it (printf "correctly parses %s" (show input)) $ do
