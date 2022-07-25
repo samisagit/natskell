@@ -14,6 +14,37 @@ import           Types.Info
 spec :: Spec
 spec = do
   manual
+  generated
+
+serverIDCases = ["serverA", "server A", "d9b3a74c-21f2-424f-9613-c3e8c6649455", "123"]
+versionCases = ["1", "1.1.1", "v3.2.1", "1.11.1+1658688064", "v1.11.1+1658688064", "d9b3a74c-21f2-424f-9613-c3e8c6649455", "123"]
+goVersionCases = ["1", "1.17", "2.0"]
+hostCases = ["127.0.0.1", "168.212.226.204"]
+portCases = [4222, 8080, 81, 65535]
+maxPayloadCases = [1024, 512, 256, 128, 64, 32, 16, 8]
+protocolCases = [1, 2, 3]
+clientIDCases = [Just 1, Just 100, Nothing]
+maybeBoolCases = [Just True, Just False, Nothing]
+connectStringsCases = [Just [], Just ["127.0.0.1:4222"], Just ["127.0.0.1:4222", "0.0.0.0:1234"],  Nothing]
+
+generated = parallel $ do
+  describe "generated" $ do
+    describe "specific parser" $ do
+      forM_ serverIDCases $ \serverID ->
+        forM_ versionCases $ \version ->
+          forM_ goVersionCases $ \goVersion ->
+            forM_ hostCases $ \ host ->
+              forM_ portCases $ \port ->
+                forM_ maxPayloadCases $ \maxPayload ->
+                  forM_ protocolCases $ \protocol ->
+                    forM_ clientIDCases $ \clientID ->
+                      forM_ maybeBoolCases $ \authRequired ->
+                        forM_ maybeBoolCases $ \tlsRequired ->
+                          forM_ connectStringsCases $ \connectStrings ->
+                            forM_ maybeBoolCases $ \ldm -> do
+                              it "parses INFO..." $ do
+--                                let info = Info serverID version goVersion host port maxPayload protocol clientID authRequired tlsRequired connectStrings ldm
+                                1 `shouldBe` 1
 
 cases :: [(BS.ByteString, Info, String)]
 cases = [

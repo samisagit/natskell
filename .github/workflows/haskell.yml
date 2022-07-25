@@ -45,4 +45,6 @@ jobs:
         stack install hlint --system-ghc
         make lint.out
     - name: Run tests
-      run: make test
+      run: |
+        make test
+        make generated-unit-test

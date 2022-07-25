@@ -19,7 +19,7 @@ import           Types.Connect
 
 spec :: Spec
 spec = do
-  manual
+  generated
 
 boolCases = [True, False]
 maybeUserCases = [Just "samisagit", Just "sam@google.com", Nothing]
@@ -31,43 +31,44 @@ maybeJwtCases = [Just "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3
 maybeIntCases = [Just 1, Just 10, Nothing]
 maybeBoolCases = [Just True, Just False, Nothing]
 
-manual = parallel $ do
-  describe "transformer" $ do
-    forM_ boolCases $ \verbosity ->
-      forM_ boolCases $ \pedanticity ->
-        forM_ boolCases $ \tlsRequirement ->
-          forM_ maybeJwtCases $ \authTokenOptions ->
-            forM_ maybeUserCases $ \userOptions ->
-              forM_ maybePassCases $ \passOptions ->
-                forM_ maybeNameCases $ \nameOptions ->
-                  forM_ maybeIntCases $ \protocolOptions ->
-                    forM_ maybeBoolCases $ \echoOptions ->
-                      forM_ maybeSigCases $ \sigOptions ->
-                        forM_ maybeJwtCases $ \jwtOptions -> do
-                          let d = Connect verbosity pedanticity tlsRequirement authTokenOptions userOptions passOptions nameOptions "Haskell" 1 protocolOptions echoOptions sigOptions jwtOptions
-                          it (printf "transforms %v successfully" (show d)) $ \f -> do
-                            let transformed = transform d
-                            let proto = BS.take 7 transformed
-                            let json = BS.drop 8 transformed
-                            proto `shouldBe` "CONNECT"
-                            let expectedFields = BS.init $ foldr BS.append "" [
-                                  collapseMaybeStringField "auth_token" authTokenOptions,
-                                  collapseMaybeBoolField "echo" echoOptions,
-                                  collapseMaybeStringField "jwt" jwtOptions,
-                                  collapseMaybeStringField "lang" (Just "Haskell"),
-                                  collapseMaybeStringField "name" nameOptions,
-                                  collapseMaybeStringField "pass" passOptions,
-                                  collapseMaybeBoolField "pedantic" (Just pedanticity),
-                                  collapseMaybeIntField "protocol" protocolOptions,
-                                  collapseMaybeStringField "sig" sigOptions,
-                                  collapseMaybeBoolField "tls_required" (Just tlsRequirement),
-                                  collapseMaybeStringField "user" userOptions,
-                                  collapseMaybeBoolField "verbose" (Just verbosity),
-                                  collapseMaybeIntField "version" (Just 1)
-                                  ]
-                            let decoded = decode . LBS.fromStrict $ json :: Maybe Value
-                            let want = (decode . LBS.fromStrict $ foldr BS.append "" ["{", expectedFields, "}"]) :: Maybe Value
-                            decoded `shouldBe` want
+generated = parallel $ do
+  describe "generated" $ do
+    describe "transformer" $ do
+      forM_ boolCases $ \verbosity ->
+        forM_ boolCases $ \pedanticity ->
+          forM_ boolCases $ \tlsRequirement ->
+            forM_ maybeJwtCases $ \authTokenOptions ->
+              forM_ maybeUserCases $ \userOptions ->
+                forM_ maybePassCases $ \passOptions ->
+                  forM_ maybeNameCases $ \nameOptions ->
+                    forM_ maybeIntCases $ \protocolOptions ->
+                      forM_ maybeBoolCases $ \echoOptions ->
+                        forM_ maybeSigCases $ \sigOptions ->
+                          forM_ maybeJwtCases $ \jwtOptions -> do
+                            let d = Connect verbosity pedanticity tlsRequirement authTokenOptions userOptions passOptions nameOptions "Haskell" 1 protocolOptions echoOptions sigOptions jwtOptions
+                            it (printf "transforms %v successfully" (show d)) $ \f -> do
+                              let transformed = transform d
+                              let proto = BS.take 7 transformed
+                              let json = BS.drop 8 transformed
+                              proto `shouldBe` "CONNECT"
+                              let expectedFields = BS.init $ foldr BS.append "" [
+                                    collapseMaybeStringField "auth_token" authTokenOptions,
+                                    collapseMaybeBoolField "echo" echoOptions,
+                                    collapseMaybeStringField "jwt" jwtOptions,
+                                    collapseMaybeStringField "lang" (Just "Haskell"),
+                                    collapseMaybeStringField "name" nameOptions,
+                                    collapseMaybeStringField "pass" passOptions,
+                                    collapseMaybeBoolField "pedantic" (Just pedanticity),
+                                    collapseMaybeIntField "protocol" protocolOptions,
+                                    collapseMaybeStringField "sig" sigOptions,
+                                    collapseMaybeBoolField "tls_required" (Just tlsRequirement),
+                                    collapseMaybeStringField "user" userOptions,
+                                    collapseMaybeBoolField "verbose" (Just verbosity),
+                                    collapseMaybeIntField "version" (Just 1)
+                                    ]
+                              let decoded = decode . LBS.fromStrict $ json :: Maybe Value
+                              let want = (decode . LBS.fromStrict $ foldr BS.append "" ["{", expectedFields, "}"]) :: Maybe Value
+                              decoded `shouldBe` want
 
 collapseMaybeStringField :: BS.ByteString -> Maybe Text -> BS.ByteString
 collapseMaybeStringField f v  = case v of
