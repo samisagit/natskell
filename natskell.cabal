@@ -96,6 +96,7 @@ test-suite unit-test
         ConnectSpec
         SubSpec
         UnsubSpec
+        Fixtures
 
 test-suite fuzz-test
      default-language: Haskell2010
