@@ -6,7 +6,7 @@ coverage:
 generated-unit-test: /tmp/generated-unit-test.out
 
 /tmp/generated-unit-test.out: $(wildcard src/*) $(wildcard test/Unit/*)
-	stack test  natskell:unit-test --system-ghc --ta '-j 16 --format=failed-examples --match=generated'
+	stack test  natskell:unit-test --system-ghc --ta '-j 16 --format=failed-examples --match=generated --fail-fast'
 	touch /tmp/generated-unit-test.out
 
 unit-test: /tmp/unit-test.out

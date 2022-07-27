@@ -4,7 +4,9 @@ module InfoSpec (spec) where
 
 import           Control.Monad
 import           Data.Aeson
-import qualified Data.ByteString as BS
+import qualified Data.ByteString    as BS
+import           Data.Text          (Text, pack)
+import           Data.Text.Encoding
 import           Lib.Parser
 import           Parsers.Parsers
 import           Test.Hspec
@@ -16,12 +18,12 @@ spec = do
   manual
   generated
 
-serverIDCases = ["serverA", "server A", "d9b3a74c-21f2-424f-9613-c3e8c6649455", "123"]
-versionCases = ["1", "1.1.1", "v3.2.1", "1.11.1+1658688064", "v1.11.1+1658688064", "d9b3a74c-21f2-424f-9613-c3e8c6649455", "123"]
-goVersionCases = ["1", "1.17", "2.0"]
-hostCases = ["127.0.0.1", "168.212.226.204"]
-portCases = [4222, 8080, 81, 65535]
-maxPayloadCases = [1024, 512, 256, 128, 64, 32, 16, 8]
+serverIDCases = ["d9b3a74c-21f2-424f-9613-c3e8c6649455", "123"]
+versionCases = ["v3.2.1", "v1.11.1+1658688064"]
+goVersionCases = ["1.17"]
+hostCases = ["168.212.226.204"]
+portCases = [4222]
+maxPayloadCases = [1024]
 protocolCases = [1, 2, 3]
 clientIDCases = [Just 1, Just 100, Nothing]
 maybeBoolCases = [Just True, Just False, Nothing]
@@ -29,7 +31,7 @@ connectStringsCases = [Just [], Just ["127.0.0.1:4222"], Just ["127.0.0.1:4222",
 
 generated = parallel $ do
   describe "generated" $ do
-    describe "specific parser" $ do
+    describe "generic parser" $ do
       forM_ serverIDCases $ \serverID ->
         forM_ versionCases $ \version ->
           forM_ goVersionCases $ \goVersion ->
@@ -42,9 +44,25 @@ generated = parallel $ do
                         forM_ maybeBoolCases $ \tlsRequired ->
                           forM_ connectStringsCases $ \connectStrings ->
                             forM_ maybeBoolCases $ \ldm -> do
-                              it "parses INFO..." $ do
---                                let info = Info serverID version goVersion host port maxPayload protocol clientID authRequired tlsRequired connectStrings ldm
-                                1 `shouldBe` 1
+                              let inputFields = BS.init $ foldr BS.append "" [
+                                   collapseMaybeStringField "server_id" (Just serverID),
+                                   collapseMaybeStringField "version" (Just version),
+                                   collapseMaybeStringField "go" (Just goVersion),
+                                   collapseMaybeStringField "host" (Just host),
+                                   collapseMaybeIntField "port" (Just port),
+                                   collapseMaybeIntField "max_payload" (Just maxPayload),
+                                   collapseMaybeIntField "proto" (Just protocol),
+                                   collapseMaybeIntField "client_id" clientID,
+                                   collapseMaybeBoolField "auth_required" authRequired,
+                                   collapseMaybeBoolField "tls_required" tlsRequired,
+                                   collapseMaybeStringListField "connect_urls" connectStrings,
+                                   collapseMaybeBoolField "ldm" ldm
+                                   ]
+                              let input = foldr BS.append "" ["INFO {", inputFields, "}\r\n"]
+                              it (printf "parses %s successfully" (show input)) $ \f -> do
+                                let expected = Info serverID version goVersion host port maxPayload protocol clientID authRequired tlsRequired connectStrings ldm
+                                let output = genericParse input
+                                output `shouldBe` Just (ParsedInfo expected)
 
 cases :: [(BS.ByteString, Info, String)]
 cases = [
@@ -83,3 +101,28 @@ manual = parallel $ do
       it (printf "parses %s case successfully" name) $ do
         let output = genericParse input
         output `shouldBe` Just (ParsedInfo expected)
+
+collapseMaybeStringField :: BS.ByteString -> Maybe Text -> BS.ByteString
+collapseMaybeStringField f v  = case v of
+  Nothing -> ""
+  Just a  -> foldr BS.append "" ["\"", f, "\":", "\"", encodeUtf8 a, "\","]
+
+collapseMaybeBoolField :: BS.ByteString -> Maybe Bool -> BS.ByteString
+collapseMaybeBoolField f v  = case v of
+  Nothing    -> ""
+  Just True  -> foldr BS.append "" ["\"", f, "\":", "true,"]
+  Just False -> foldr BS.append "" ["\"", f, "\":", "false,"]
+
+collapseMaybeIntField :: BS.ByteString -> Maybe Int -> BS.ByteString
+collapseMaybeIntField f v = case v of
+  Nothing -> ""
+  Just a  -> foldr BS.append "" ["\"", f, "\":", encodeUtf8 . pack . show $ a, ","]
+
+collapseMaybeStringListField :: BS.ByteString -> Maybe [String] -> BS.ByteString
+collapseMaybeStringListField f v  = case v of
+  Nothing -> ""
+  Just [] -> foldr BS.append "" ["\"", f, "\"", ":[],"]
+  Just a  -> foldr BS.append "" ["\"", f, "\"", ":[", encodeUtf8 . pack $ formattedItems, "]", ","]
+    where
+      formattedItems = init $ concatMap (printf "\"%s\",") a :: String
+
