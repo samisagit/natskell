@@ -3,14 +3,17 @@
 module ErrSpec (spec) where
 
 import           Control.Monad
-import           Data.ByteString
+import qualified Data.ByteString    as BS
+import qualified Data.Text          as T
+import           Data.Text.Encoding (encodeUtf8)
+import           Fixtures
 import           Lib.Parser
 import           Parsers.Parsers
 import           Test.Hspec
 import           Text.Printf
 import           Types.Err
 
-cases :: [(ByteString, Err)]
+cases :: [(BS.ByteString, Err)]
 cases = [
   ("-ERR 'Unknown Protocol Operation'\r\n", Err "Unknown Protocol Operation" True),
   ("-ERR 'Attempted To Connect To Route Port'\r\n", Err "Attempted To Connect To Route Port" True),
@@ -26,18 +29,15 @@ cases = [
   ("-ERR 'Maximum Payload Violation'\r\n", Err "Maximum Payload Violation" True),
   ("-ERR 'Invalid Subject'\r\n", Err "Invalid Subject" False),
   ("-ERR 'Permissions Violation For Subscription To FOO.'\r\n", Err "Permissions Violation For Subscription To FOO." False),
-  ("-ERR 'Permissions Violation For Subscription To >>>.*'\r\n", Err "Permissions Violation For Subscription To >>>.*" False),
-  ("-ERR 'Permissions Violation For Subscription To nonsense*'\r\n", Err "Permissions Violation For Subscription To nonsense*" False),
-  ("-ERR 'Permissions Violation For Publish To FOO.'\r\n", Err "Permissions Violation For Publish To FOO." False),
-  ("-ERR 'Permissions Violation For Publish To >>>.*'\r\n", Err "Permissions Violation For Publish To >>>.*" False),
-  ("-ERR 'Permissions Violation For Publish To nonsense*'\r\n", Err "Permissions Violation For Publish To nonsense*" False)
+  ("-ERR 'Permissions Violation For Publish To FOO.'\r\n", Err "Permissions Violation For Publish To FOO." False)
   ]
 
 spec :: Spec
 spec = do
-  form
+  explicit
+  generated
 
-form = parallel $ do
+explicit = parallel $ do
   describe "specific parser" $ do
     forM_ cases $ \(input, expected) ->
       it (printf "correctly parses %s" (show input)) $ do
@@ -55,3 +55,18 @@ form = parallel $ do
       it (printf "correctly parses %s" (show input)) $ do
         let output = genericParse input
         output `shouldBe` Just (ParsedErr expected)
+
+generated = parallel $ do
+  describe "generated" $ do
+    describe "generic parser" $ do
+      forM_ invalidSubjectCases $ \subject -> do
+        let subInput = encodeUtf8 . T.pack $ "-ERR 'Permissions Violation For Subscription To " ++ subject ++ "'\r\n"
+        let subExpected = Err (BS.init . BS.init . BS.init . BS.drop 6 $ subInput) False
+        it (printf "correctly parses %s" (show subInput)) $ do
+          let output = genericParse subInput
+          output `shouldBe` Just (ParsedErr subExpected)
+        let subInput = encodeUtf8 . T.pack $ "-ERR 'Permissions Violation For Publish To " ++ subject ++ "'\r\n"
+        let subExpected = Err (BS.init . BS.init . BS.init . BS.drop 6 $ subInput) False
+        it (printf "correctly parses %s" (show subInput)) $ do
+          let output = genericParse subInput
+          output `shouldBe` Just (ParsedErr subExpected)

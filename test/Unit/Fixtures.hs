@@ -23,6 +23,8 @@ maxPayloadCases = [1024]
 protocolCases = [1,2,3]
 clientIDCases = [1, 100]
 connectStringCases = [[], ["127.0.0.1"], ["127.0.0.1:4222", "0.0.0.0:4222"]]
+subjectCases = ["FOO", "FOO.BAR", "FOO.BAR.>", ">", "foo.bar", "123.456", "FOO.*.BAR", "FOO.*.BAR.*.>"]
+invalidSubjectCases = [" FOO", "FOO>BAR", "FOO ", "F OO", "FOO.**"]
 
 maybeify :: [a] -> [Maybe a]
 maybeify xs = Nothing : fmap Just xs
