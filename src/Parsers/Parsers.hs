@@ -118,7 +118,7 @@ msgWithReplyAndPayloadparser = do
   ss
   subj <- subjectParser
   ss
-  sid <- integer
+  sid <- alphaNumerics
   ss
   reply <- subjectParser
   ss
@@ -130,7 +130,7 @@ msgWithReplyAndPayloadparser = do
   return
     (ParsedMsg $ Msg
         (pack subj)
-        (toInt . pack $ sid)
+        (pack sid)
         (Just (pack reply))
         countInt
         (Just (pack payload))
@@ -142,7 +142,7 @@ msgWithPayloadparser = do
   ss
   subj <- subjectParser
   ss
-  sid <- integer
+  sid <- alphaNumerics
   ss
   count <- integer
   string "\r\n"
@@ -152,7 +152,7 @@ msgWithPayloadparser = do
   return
     (ParsedMsg $ Msg
         (pack subj)
-        (toInt . pack $ sid)
+        (pack sid)
         Nothing
         countInt
         (Just (pack payload))
@@ -164,7 +164,7 @@ msgWithReplyparser = do
   ss
   subj <- subjectParser
   ss
-  sid <- integer
+  sid <- alphaNumerics
   ss
   reply <- subjectParser
   ss
@@ -173,7 +173,7 @@ msgWithReplyparser = do
   return
     (ParsedMsg $ Msg
         (pack subj)
-        (toInt . pack $ sid)
+        (pack sid)
         (Just (pack reply))
         (toInt . pack $ count)
         Nothing
@@ -185,14 +185,14 @@ msgMinParser = do
   ss
   subj <- subjectParser
   ss
-  sid <- integer
+  sid <- alphaNumerics
   ss
   count <- integer
   string "\r\n"
   return
     (ParsedMsg $ Msg
         (pack subj)
-        (toInt . pack $ sid)
+        (pack sid)
         Nothing
         (toInt . pack $ count)
         Nothing

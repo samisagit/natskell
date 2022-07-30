@@ -4,7 +4,10 @@ module InfoSpec (spec) where
 
 import           Control.Monad
 import           Data.Aeson
-import qualified Data.ByteString as BS
+import qualified Data.ByteString    as BS
+import           Data.Text          (Text, pack)
+import           Data.Text.Encoding
+import           Fixtures
 import           Lib.Parser
 import           Parsers.Parsers
 import           Test.Hspec
@@ -14,6 +17,42 @@ import           Types.Info
 spec :: Spec
 spec = do
   manual
+  generated
+
+generated = parallel $ do
+  describe "generated" $ do
+    describe "generic parser" $ do
+      forM_ serverIDCases $ \serverID ->
+        forM_ versionCases $ \version ->
+          forM_ goVersionCases $ \goVersion ->
+            forM_ hostCases $ \ host ->
+              forM_ portCases $ \port ->
+                forM_ maxPayloadCases $ \maxPayload ->
+                  forM_ protocolCases $ \protocol ->
+                    forM_ clientIDCases $ \clientID ->
+                      forM_ (maybeify boolCases) $ \authRequired ->
+                        forM_ (maybeify boolCases) $ \tlsRequired ->
+                          forM_ (maybeify connectStringCases) $ \connectStrings ->
+                            forM_ (maybeify boolCases )$ \ldm -> do
+                              let inputFields = BS.init $ foldr BS.append "" [
+--                                   collapseMaybeStringField "server_id" (Just $ pack serverID),
+--                                   collapseMaybeStringField "version" (Just $ pack version),
+--                                   collapseMaybeStringField "go" (Just $ pack goVersion),
+--                                   collapseMaybeStringField "host" (Just $ pack host),
+--                                   collapseMaybeIntField "port" (Just $ fromIntegral port),
+--                                   collapseMaybeIntField "max_payload" (Just $ fromIntegral maxPayload),
+--                                   collapseMaybeIntField "proto" (Just $ fromIntegral protocol),
+--                                   collapseMaybeIntField "client_id" $ Just $ fromIntegral clientID,
+--                                   collapseMaybeBoolField "auth_required" authRequired,
+--                                   collapseMaybeBoolField "tls_required" tlsRequired,
+--                                   collapseMaybeStringListField "connect_urls" connectStrings,
+--                                   collapseMaybeBoolField "ldm" ldm
+                                   ]
+                              let input = foldr BS.append "" ["INFO {", inputFields, "}\r\n"]
+                              it (printf "parses %s successfully" (show input)) $ \f -> do
+                                let expected = Info serverID version goVersion host port maxPayload protocol (Just clientID) authRequired tlsRequired connectStrings ldm
+                                let output = genericParse input
+                                output `shouldBe` Just (ParsedInfo expected)
 
 cases :: [(BS.ByteString, Info, String)]
 cases = [
@@ -52,3 +91,4 @@ manual = parallel $ do
       it (printf "parses %s case successfully" name) $ do
         let output = genericParse input
         output `shouldBe` Just (ParsedInfo expected)
+
