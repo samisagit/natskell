@@ -35,22 +35,22 @@ generated = parallel $ do
                           forM_ (maybeify connectStringCases) $ \connectStrings ->
                             forM_ (maybeify boolCases )$ \ldm -> do
                               let inputFields = BS.init $ foldr BS.append "" [
-                                   collapseMaybeStringField "server_id" (Just $ pack serverID),
-                                   collapseMaybeStringField "version" (Just $ pack version),
-                                   collapseMaybeStringField "go" (Just $ pack goVersion),
-                                   collapseMaybeStringField "host" (Just $ pack host),
-                                   collapseMaybeIntField "port" (Just $ fromIntegral port),
-                                   collapseMaybeIntField "max_payload" (Just $ fromIntegral maxPayload),
-                                   collapseMaybeIntField "proto" (Just $ fromIntegral protocol),
-                                   collapseMaybeIntField "client_id" $ Just $ fromIntegral clientID,
-                                   collapseMaybeBoolField "auth_required" authRequired,
-                                   collapseMaybeBoolField "tls_required" tlsRequired,
-                                   collapseMaybeStringListField "connect_urls" connectStrings,
-                                   collapseMaybeBoolField "ldm" ldm
+--                                   collapseMaybeStringField "server_id" (Just $ pack serverID),
+--                                   collapseMaybeStringField "version" (Just $ pack version),
+--                                   collapseMaybeStringField "go" (Just $ pack goVersion),
+--                                   collapseMaybeStringField "host" (Just $ pack host),
+--                                   collapseMaybeIntField "port" (Just $ fromIntegral port),
+--                                   collapseMaybeIntField "max_payload" (Just $ fromIntegral maxPayload),
+--                                   collapseMaybeIntField "proto" (Just $ fromIntegral protocol),
+--                                   collapseMaybeIntField "client_id" $ Just $ fromIntegral clientID,
+--                                   collapseMaybeBoolField "auth_required" authRequired,
+--                                   collapseMaybeBoolField "tls_required" tlsRequired,
+--                                   collapseMaybeStringListField "connect_urls" connectStrings,
+--                                   collapseMaybeBoolField "ldm" ldm
                                    ]
                               let input = foldr BS.append "" ["INFO {", inputFields, "}\r\n"]
                               it (printf "parses %s successfully" (show input)) $ \f -> do
-                                let expected = Info (pack serverID) (pack version) (pack goVersion) (pack host) (fromIntegral port) (fromIntegral maxPayload) (fromIntegral protocol) (Just $ fromIntegral clientID) authRequired tlsRequired connectStrings ldm
+                                let expected = Info serverID version goVersion host port maxPayload protocol (Just clientID) authRequired tlsRequired connectStrings ldm
                                 let output = genericParse input
                                 output `shouldBe` Just (ParsedInfo expected)
 
