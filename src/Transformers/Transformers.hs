@@ -47,8 +47,8 @@ instance Transformer Pub.Pub where
 instance Transformer Sub.Sub where
   transform d = do
     case Sub.queueGroup d of
-       Just a  -> packStr' (printf "SUB %s %s %s" subj a id)
-       Nothing -> packStr' (printf "SUB %s %s" subj id)
+       Just a  -> foldr BS.append "" ["SUB ", subj, " ", a, " ", id]
+       Nothing -> foldr BS.append "" ["SUB ", subj, " ", id]
     where
       subj = Sub.subject d
       qg = Sub.queueGroup d
@@ -57,8 +57,8 @@ instance Transformer Sub.Sub where
 instance Transformer Unsub.Unsub where
   transform d = do
     case mm of
-       Just a  -> packStr' (printf "UNSUB %s %u" id a)
-       Nothing -> packStr' (printf "UNSUB %s" id)
+       Just a  -> foldr BS.append "" ["UNSUB ", id, " ", packInt a]
+       Nothing -> foldr BS.append "" ["UNSUB ", id]
     where
       id = Unsub.sid d
       mm = Unsub.maxMsg d
@@ -74,3 +74,4 @@ lengthNothing = maybe 0 BS.length
 packStr' :: String -> BS.ByteString
 packStr' = encodeUtf8 . Text.pack
 
+packInt = packStr' . show

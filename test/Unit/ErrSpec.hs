@@ -60,13 +60,11 @@ generated = parallel $ do
   describe "generated" $ do
     describe "generic parser" $ do
       forM_ invalidSubjectCases $ \subject -> do
-        let subInput = encodeUtf8 . T.pack $ "-ERR 'Permissions Violation For Subscription To " ++ subject ++ "'\r\n"
+        let subInput = foldr BS.append "-ERR 'Permissions Violation For Subscription To " [subject, "'\r\n"]
         let subExpected = Err (BS.init . BS.init . BS.init . BS.drop 6 $ subInput) False
         it (printf "correctly parses %s" (show subInput)) $ do
           let output = genericParse subInput
           output `shouldBe` Just (ParsedErr subExpected)
-        let subInput = encodeUtf8 . T.pack $ "-ERR 'Permissions Violation For Publish To " ++ subject ++ "'\r\n"
-        let subExpected = Err (BS.init . BS.init . BS.init . BS.drop 6 $ subInput) False
         it (printf "correctly parses %s" (show subInput)) $ do
           let output = genericParse subInput
           output `shouldBe` Just (ParsedErr subExpected)

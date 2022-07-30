@@ -37,6 +37,7 @@ lint: /tmp/lint.out
 
 PHONY clean:
 clean:
+	rm -f /tmp/generated-unit-test.out
 	rm -f /tmp/unit-test.out
 	rm -f /tmp/system-test.out
 	rm -f /tmp/fuzz-test.out

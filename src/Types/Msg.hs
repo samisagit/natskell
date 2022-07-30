@@ -4,7 +4,7 @@ import           Data.ByteString
 
 data Msg = Msg
   { subject   :: ByteString,
-    sid       :: Int,
+    sid       :: ByteString,
     replyTo   :: Maybe ByteString,
     byteCount :: Int,
     payload   :: Maybe ByteString
