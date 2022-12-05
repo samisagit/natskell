@@ -4,6 +4,7 @@ module NatsWrappers where
 
 import           Control.Concurrent
 import           Control.Exception
+import qualified Data.Conduit.Binary as Con
 import qualified Data.Text
 import qualified Data.Text           as Text
 import qualified Docker.Client       as DC
@@ -13,8 +14,24 @@ import qualified Network.Simple.TCP  as TCP
 
 second = 1000000
 
-runNATSContainer :: IO (DC.ContainerID, DCT.ContainerDetails)
-runNATSContainer = do
+ensureImage :: String -> String -> IO ()
+ensureImage image tag = do
+  h <- DC.unixHttpHandler "/var/run/docker.sock"
+  DC.runDockerT (DC.defaultClientOpts, h) $
+    do
+      out <-DC.pullImage img tg sink
+      case out of
+        Left err -> error $ show err
+        Right n  -> return ()
+
+  where
+    img = Text.pack image
+    tg  = Text.pack tag
+    sink = Con.sinkLbs
+
+runNATSContainer :: String -> IO (DC.ContainerID, DCT.ContainerDetails)
+runNATSContainer tag = do
+  ensureImage "nats" tag
   h <- DC.unixHttpHandler "/var/run/docker.sock"
   DC.runDockerT (DC.defaultClientOpts, h) $
     do
@@ -24,7 +41,7 @@ runNATSContainer = do
       let hpb = DC.HostPort "0.0.0.0" 0
       let pbb = DC.PortBinding 8222 DC.TCP [hpb]
 
-      let createOpts = DC.addPortBinding pba . DC.addPortBinding pbb $ DC.defaultCreateOpts "nats:latest"
+      let createOpts = (DC.addPortBinding pba . DC.addPortBinding pbb) . DC.defaultCreateOpts . Text.append "nats:" $ Text.pack tag
       cid <- DC.createContainer createOpts Nothing
       case cid of
         Left err -> error $ show err
@@ -79,9 +96,10 @@ ensureNATSIsListening hp retryCount = do
           threadDelay $ second `div` 2
           ensureNATSIsListening hp $ retryCount - 1
 
-startNATS :: IO (DC.ContainerID, String, Int)
-startNATS = do
-  (id, d) <- runNATSContainer
+
+startNATS :: String -> IO (DC.ContainerID, String, Int)
+startNATS tag = do
+  (id, d) <- runNATSContainer tag
   ensureNATS (id, d)
 
 stopNATS :: (DC.ContainerID, String, Int) -> IO ()
