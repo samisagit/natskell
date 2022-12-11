@@ -21,22 +21,13 @@ Please make sure to add tests.
 
 Please make sure all commits are signed.
 
-#### Working in Gitpod
-The development environment is set up for use with [Gitpod](https://gitpod.io/), however there are some steps that should be taken to get started.
-
-Dependencies:
-1. SSH client
-
-Local set up:
-1. Generate an ECDSA private key (SSH access into Gitpod workspaces relies on a private key existing locally of this type).
+### Nix
+The project has a `shell.nix` that by default sets up a useful environment to develop in, including ghc, stack, hls and hlint.
 
 ```
-ssh-keygen -t ECDSA
+nix-shell # downloads the dependencies (or reads the cache) and adds them to your path temporarily
 ```
 
-2. Install [Krypton](https://krypt.co/developers/) either on mobile or desktop
-3. Enable devloper mode in Krypton
-4. Once in an SSH session in Gitpod run `kr pair` and scan the QR code in Krypton (each time you open a new work space)
-5. Run `kr me` to output your SSH public key, add this to Github (First time only)
-6. Run `kr me pgp` to output your GPG public key, add this to Github (First time only)
-7. Start contributing
+See [here](https://nixos.org/manual/nix/stable/command-ref/nix-shell.html) for more details and [here](https://nixos.org/download.html) to install
+
+

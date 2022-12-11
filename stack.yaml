@@ -7,10 +7,12 @@
 # Resolver to choose a 'specific' stackage snapshot or a compiler version.
 # A snapshot resolver dictates the compiler version and the set of packages
 # to be used for project dependencies. For example:
-#
-# resolver: lts-12.26
-resolver: nightly-2022-06-06
-# resolver: ghc-7.10.2
+# e.g.
+# resolver: lts-20.3
+# resolver:  nightly-2022-12-07
+# resolver: ghc-9.2.3
+
+resolver: nightly-2022-11-12
 #
 # The location of a snapshot can be provided as a file or url. Stack assumes
 # a snapshot provided as a file might change, whereas a url resource does not.
@@ -47,7 +49,7 @@ packages:
 # extra-package-dbs: []
 
 # Control whether we use the GHC we find on the path
-system-ghc: true
+# system-ghc: true
 #
 # Require a specific version of stack, using version ranges
 # require-stack-version: -any # Default
@@ -63,3 +65,9 @@ system-ghc: true
 #
 # Allow a newer minor version of GHC than the snapshot specifies
 # compiler-check: newer-minor
+# system-ghc: true
+ghc-options:
+  '$everything': -haddock
+#nix:
+    #  enable: true
+    #  packages: [zlib.dev, zlib.out]

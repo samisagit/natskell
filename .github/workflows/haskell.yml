@@ -12,37 +12,15 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  lint:
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v3
-    - uses: actions/setup-haskell@v1
-      with:
-        ghc-version: '9.2.3'
-        cabal-version: '3.0'
-
-    - name: Cache
-      uses: actions/cache@v3
-      env:
-        cache-name: cache-cabal
-      with:
-        path: ~/.cabal
-        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/cabal.project') }}
-        restore-keys: |
-          ${{ runner.os }}-build-${{ env.cache-name }}-
-          ${{ runner.os }}-build-
-          ${{ runner.os }}-
-
-    - name: Install dependencies
-      run: |
-        sudo apt-get install -y hspec-discover
-        cabal update
-    - name: Build
-      run: make build
-    - name: Run linter
-      run: |
-        stack install hlint --system-ghc
-        make lint.out
-    - name: Run tests
-      run: make test
+    - uses: cachix/install-nix-action@v15
+    - run: nix-shell --arg hls false --run "make lint.out"
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: cachix/install-nix-action@v15
+    - run: nix-shell --arg hls false --run "make test"
