@@ -68,7 +68,7 @@ packages:
 # system-ghc: true
 ghc-options:
   '$everything': -haddock
-#nix:
-    #  enable: true
-    #  packages: [zlib.dev, zlib.out]
+nix:
+  enable: true
+  packages: [zlib.dev, zlib.out]
 

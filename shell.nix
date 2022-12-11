@@ -4,7 +4,7 @@ let
   ghc = if hls then pkgs.haskell.packages.${compiler}.ghcWithPackages (ps: with ps; [haskell-language-server]) else pkgs.haskell.packages.${compiler}.ghc;
 in
 pkgs.mkShell {
-  buildInputs = [ ghc pkgs.zlib pkgs.stack pkgs.hlint ];
+  buildInputs = [ ghc pkgs.zlib pkgs.stack pkgs.hlint pkgs.stylish-haskell ];
   shellHook = "eval $(egrep ^export ${ghc}/bin/ghc)";
   NIX_PATH = "nixpkgs=" + pkgs.path;
 }
