@@ -2,6 +2,7 @@ module ClientSpec (spec) where
 
 import           Client
 import           Control.Exception
+import           Control.Monad
 import qualified Docker.Client      as DC
 import           NatsWrappers
 import qualified Network.Simple.TCP as TCP
@@ -11,12 +12,16 @@ spec :: Spec
 spec = do
   sys
 
-withNATSConnection :: ((DC.ContainerID, String, Int) -> IO ()) -> IO ()
-withNATSConnection = bracket startNATS stopNATS
+withNATSConnection :: String -> ((DC.ContainerID, String, Int) -> IO ()) -> IO ()
+withNATSConnection tag = bracket (startNATS tag) stopNATS
+
+versions :: [String]
+versions = ["latest", "2.9.8", "2.9.6"]
 
 sys = parallel $ do
-  around withNATSConnection $ do
-    describe "Client" $ do
-      describe "systest" $ do
-        it "connects successfully" $ \(_, host, port) -> do
-          connect host port 10
+  describe "Client" $ do
+    describe "systest" $ do
+      forM_ versions $ \version ->
+        around (withNATSConnection version) $ do
+          it "connects successfully" $ \(_, host, port) -> do
+            connect host port 10

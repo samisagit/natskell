@@ -12,7 +12,6 @@ fuzz-test.out: $(wildcard src/*) $(wildcard test/Fuzz/*)
 	touch fuzz-test.out
 
 system-test.out: $(wildcard src/*) $(wildcard test/System/*) 
-	docker pull nats:latest
 	stack test natskell:system-test --system-ghc --ta '-j 16 --format=failed-examples'
 	touch system-test.out
 
