@@ -31,3 +31,31 @@ nix-shell # downloads the dependencies (or reads the cache) and adds them to you
 See [here](https://nixos.org/manual/nix/stable/command-ref/nix-shell.html) for more details and [here](https://nixos.org/download.html) to install
 
 Fair warning - compiling the LSP is _not_ a short process (an hour and 15 minutes on an i7-1165G7), but you need haskell-language-server compiled by the same GHC that is used in stack. You can disable the LSP compilation with `--arg hls false` and install the relevant precompiled LSP yourself if this causes an issue.
+
+For a more persistent env try putting the below in your nix config
+
+```
+{
+  packageOverrides = pkgs: with pkgs; {
+    myGHC = pkgs.haskell.packages.ghc92.ghcWithPackages (ps: with ps; [
+      haskell-language-server
+      hlint
+      stylish-haskell
+    ]);
+    myHaskellPackages = pkgs.buildEnv {
+      name = "my-haskell-packages";
+      paths = [
+        zlib
+        stack
+      ];
+    };
+  };
+}
+```
+
+and running
+
+```bash
+nix-env -iA nixpkgs.myGHC
+nix-env -iA nixpkgs.myHaskellPackages
+```
