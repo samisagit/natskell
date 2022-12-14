@@ -3,9 +3,7 @@
 module ErrSpec (spec) where
 
 import           Control.Monad
-import qualified Data.ByteString    as BS
-import qualified Data.Text          as T
-import           Data.Text.Encoding (encodeUtf8)
+import qualified Data.ByteString as BS
 import           Fixtures
 import           Lib.Parser
 import           Parsers.Parsers

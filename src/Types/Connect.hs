@@ -5,7 +5,6 @@ module Types.Connect where
 import           Control.Monad
 import           Data.Aeson
 import qualified Data.ByteString        as BS
-import qualified Data.ByteString.Base64 as B64
 import qualified Data.Text              as T
 import qualified Data.Text.Encoding     as E
 import           GHC.Generics

@@ -7,10 +7,7 @@ import qualified Control.Monad.Fail   as Fail
 import           Data.Aeson
 import           Data.ByteString
 import qualified Data.ByteString.Lazy as BSL
-import qualified Data.Text            as T
-import qualified Data.Text.Encoding   as TE
 import           Data.Word8
-import           Debug.Trace
 import           Lib.Parser
 import           Types.Err
 import           Types.Info

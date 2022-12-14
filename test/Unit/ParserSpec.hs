@@ -5,7 +5,6 @@ module ParserSpec (spec) where
 import           Control.Monad
 import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as B
-import           Data.Char
 import qualified Data.Word8            as W8
 import qualified Lib.Parser            as Parser
 import           Test.Hspec

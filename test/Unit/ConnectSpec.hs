@@ -2,17 +2,10 @@
 
 module ConnectSpec (spec) where
 
-import           Control.Concurrent
-import           Control.Exception
 import           Control.Monad
 import           Data.Aeson
 import qualified Data.ByteString           as BS
 import qualified Data.ByteString.Lazy      as LBS
-import           Data.Text                 (Text, pack)
-import           Data.Text.Encoding
-import qualified Docker.Client             as DC
-import           Fixtures
-import           Parsers.Parsers
 import           Test.Hspec
 import           Text.Printf
 import           Transformers.Transformers

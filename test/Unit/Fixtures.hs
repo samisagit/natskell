@@ -2,11 +2,7 @@
 
 module Fixtures where
 
-import qualified Data.ByteString    as BS
-import           Data.Text          (Text, pack)
-import qualified Data.Text          as T
-import           Data.Text.Encoding
-import           Text.Printf
+import qualified Data.ByteString as BS
 
 versionCases :: [BS.ByteString]
 versionCases = ["0.0.0", "v1.0.1", "13.0.0+123"]
@@ -45,6 +41,10 @@ protocolCases :: [Int]
 protocolCases = [1,2,3]
 clientIDCases :: [Int]
 clientIDCases = [1, 100]
+
+sidCases :: [BS.ByteString]
+sidCases = ["1", "100", "abc", "abc123"]
+
 connectStringCases :: [[BS.ByteString]]
 connectStringCases = [[], ["127.0.0.1"], ["127.0.0.1:4222", "0.0.0.0:4222"]]
 
@@ -55,7 +55,7 @@ invalidSubjectCases :: [BS.ByteString]
 invalidSubjectCases = [" FOO", "FOO>BAR", "FOO ", "F OO", "FOO.**"]
 
 payloadCases :: [(Int, Maybe BS.ByteString)]
-payloadCases = [(12, Just "some payload"), (23, Just "some\r\nmulti line payload"), (41, Just ".*some payload ** with specials chars > *"), (0, Nothing)]
+payloadCases = [(12, Just "some payload"), (24, Just "some\r\nmulti line payload"), (41, Just ".*some payload ** with specials chars > *"), (0, Nothing)]
 
 maybeify :: [a] -> [Maybe a]
 maybeify xs = Nothing : fmap Just xs

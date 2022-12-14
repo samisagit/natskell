@@ -3,9 +3,8 @@ module ClientSpec (spec) where
 import           Client
 import           Control.Exception
 import           Control.Monad
-import qualified Docker.Client      as DC
+import qualified Docker.Client     as DC
 import           NatsWrappers
-import qualified Network.Simple.TCP as TCP
 import           Test.Hspec
 
 spec :: Spec

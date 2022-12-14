@@ -2,8 +2,6 @@
 
 module MsgSpec (spec) where
 
-import           ASCII              as A
-import           ASCII.Char         as AC
 import           Control.Monad
 import qualified Data.ByteString    as BS
 import qualified Data.Text          as T
@@ -19,6 +17,7 @@ import           Types.Msg
 spec :: Spec
 spec = do
   explicit
+  applicative
 
 cases :: [(BS.ByteString, Msg)]
 cases = [
@@ -48,14 +47,41 @@ explicit = parallel $ do
         let output = genericParse input
         output `shouldBe` Just (ParsedMsg expected)
 
---applicative = parallel $ do
---  describe "applicative" $ do
---    it "generates correct messages" $ do
---      let msgs = map uncurry (Msg
---            <$> subjectCases
---            <*> map fromIntegral clientIDCases
---            <*> maybeify subjectCases)
---            <*> payloadCases -- because byteCount and payload are in valid pairs we needed to uncurry this
---      let proto = map buildProtoManually msgs
---      map genericParse proto `shouldBe` map (Just . ParsedMsg) msgs
+applicative = parallel $ do
+  describe "generated" $ do
+    describe "MSG parser" $ do
+      let msgs = map uncurry (Msg
+            <$> subjectCases
+            <*> sidCases
+            <*> maybeify subjectCases)
+            <*> payloadCases -- because byteCount and payload are in valid pairs we needed to uncurry this
+      let proto = map buildProtoInput msgs
+      let pairs = zip proto msgs
+
+      forM_ pairs $ \(input, want) -> do
+        it (printf "correctly parses %s" (show input)) $ do
+          let output = genericParse input
+          output `shouldBe` Just (ParsedMsg want)
+
+buildProtoInput :: Msg -> BS.ByteString
+buildProtoInput m = foldr BS.append "" [
+  "MSG",
+  " ",
+  subject m,
+  " ",
+  sid m,
+  " ",
+  collapseNothing (replyTo m) " ",
+  packStr' (printf "%v" (byteCount m)),
+  "\r\n",
+  collapseNothing (payload m) "\r\n"
+  ]
+
+collapseNothing :: Maybe BS.ByteString -> BS.ByteString -> BS.ByteString
+collapseNothing mbs suffix = case mbs of
+  Just a  -> BS.append a suffix
+  Nothing -> ""
+
+packStr' :: String -> BS.ByteString
+packStr' = encodeUtf8 . T.pack
 

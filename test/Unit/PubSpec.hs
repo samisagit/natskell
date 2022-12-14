@@ -6,7 +6,6 @@ import           ASCII                     as A
 import           ASCII.Char                as AC
 import           Control.Monad
 import qualified Data.ByteString           as BS
-import           Data.Maybe
 import qualified Data.Text                 as T
 import           Data.Text.Encoding        (encodeUtf8)
 import           Fixtures

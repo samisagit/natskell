@@ -67,7 +67,7 @@ packages:
 # compiler-check: newer-minor
 # system-ghc: true
 ghc-options:
-  '$everything': -haddock
+  '$everything': -haddock -fwarn-unused-imports
 nix:
   enable: true
   packages: [zlib.dev, zlib.out]

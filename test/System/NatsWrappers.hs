@@ -5,12 +5,10 @@ module NatsWrappers where
 import           Control.Concurrent
 import           Control.Exception
 import qualified Data.Conduit.Binary as Con
-import qualified Data.Text
 import qualified Data.Text           as Text
 import qualified Docker.Client       as DC
 import qualified Docker.Client.Types as DCT
 import qualified Network.HTTP        as HTTP
-import qualified Network.Simple.TCP  as TCP
 
 second = 1000000
 
