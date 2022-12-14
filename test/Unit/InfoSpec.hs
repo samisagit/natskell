@@ -2,9 +2,11 @@
 
 module InfoSpec (spec) where
 
-import           Control.Exception
 import           Control.Monad
-import qualified Data.ByteString   as BS
+import qualified Data.ByteString    as BS
+import qualified Data.Text          as T
+import           Data.Text.Encoding (encodeUtf8)
+import           Fixtures
 import           Lib.Parser
 import           Parsers.Parsers
 import           Test.Hspec
@@ -14,43 +16,7 @@ import           Types.Info
 spec :: Spec
 spec = do
   manual
---  generated
---
---generated = parallel $ do
---  describe "generated" $ do
---    describe "generic parser" $ do
---      forM_ serverIDCases $ \serverID ->
---        forM_ versionCases $ \version ->
---          forM_ goVersionCases $ \goVersion ->
---            forM_ hostCases $ \ host ->
---              forM_ portCases $ \port ->
---                forM_ maxPayloadCases $ \maxPayload ->
---                  forM_ protocolCases $ \protocol ->
---                    forM_ clientIDCases $ \clientID ->
---                      forM_ (maybeify boolCases) $ \authRequired ->
---                        forM_ (maybeify boolCases) $ \tlsRequired ->
---                          forM_ (maybeify connectStringCases) $ \connectStrings ->
---                            forM_ (maybeify boolCases )$ \ldm -> do
---                              let inputFields = BS.init $ foldr BS.append "" [
-----                                   collapseMaybeStringField "server_id" (Just $ pack serverID),
-----                                   collapseMaybeStringField "version" (Just $ pack version),
-----                                   collapseMaybeStringField "go" (Just $ pack goVersion),
-----                                   collapseMaybeStringField "host" (Just $ pack host),
-----                                   collapseMaybeIntField "port" (Just $ fromIntegral port),
-----                                   collapseMaybeIntField "max_payload" (Just $ fromIntegral maxPayload),
-----                                   collapseMaybeIntField "proto" (Just $ fromIntegral protocol),
-----                                   collapseMaybeIntField "client_id" $ Just $ fromIntegral clientID,
-----                                   collapseMaybeBoolField "auth_required" authRequired,
-----                                   collapseMaybeBoolField "tls_required" tlsRequired,
-----                                   collapseMaybeStringListField "connect_urls" connectStrings,
-----                                   collapseMaybeBoolField "ldm" ldm
---                                   ]
---                              let input = foldr BS.append "" ["INFO {", inputFields, "}\r\n"]
---                              it (printf "parses %s successfully" (show input)) $ \f -> do
---                                let expected = Info serverID version goVersion host port maxPayload protocol (Just clientID) authRequired tlsRequired connectStrings ldm
---                                let output = genericParse input
---                                output `shouldBe` Just (ParsedInfo expected)
-
+  applicative
 cases :: [(BS.ByteString, Info, String)]
 cases = [
   (
@@ -74,10 +40,6 @@ manual = parallel $ do
   describe "specific parser" $ do
     forM_ cases $ \(input, expected, name) ->
       it (printf "parses %s case successfully" name) $ do
-        output' <- try (evaluate (runParser infoParser input)) :: IO (Either SomeException (Maybe (ParsedMessage, BS.ByteString)))
-        case output' of
-          Left ex -> error $ show ex
-          Right m -> return ()
         let output = runParser infoParser input
         let result = fmap fst output
         let rest = fmap snd output
@@ -92,3 +54,87 @@ manual = parallel $ do
       it (printf "parses %s case successfully" name) $ do
         let output = genericParse input
         output `shouldBe` Just (ParsedInfo expected)
+
+applicative = parallel $ do
+  describe "generated" $ do
+    let infos = Info
+          <$> serverIDCases
+          <*> versionCases
+          <*> goVersionCases
+          <*> hostCases
+          <*> portCases
+          <*> maxPayloadCases
+          <*> protocolCases
+          <*> maybeify clientIDCases
+          <*> maybeify boolCases
+          <*> maybeify boolCases
+          <*> maybeify connectStringCases
+          <*> maybeify boolCases
+    let proto = map buildProtoInput infos
+    let pairs = zip proto infos
+    forM_ pairs $ \(input, want) -> do
+      it (printf "correctly parses %s" (show input)) $ do
+        let output = genericParse input
+        output `shouldBe` Just (ParsedInfo want)
+
+buildProtoInput :: Info -> BS.ByteString
+buildProtoInput m = foldr BS.append "" [
+  "INFO",
+  " ",
+  "{",
+  newField "server_id" (Just . quote $ server_id m),
+  ",",
+  newField "version" (Just . quote $ version m),
+  ",",
+  newField "go" (Just . quote $ go m),
+  ",",
+  newField "host" (Just . quote $ host m),
+  ",",
+  newField "port" (Just . packStr' . show . port $ m),
+  ",",
+  newField "max_payload" (Just . packStr' . show . max_payload $ m),
+  ",",
+  newField "proto" (Just . packStr' . show . proto $ m),
+  maybeComma (client_id m),
+  newField "client_id" (fmap (packStr' . show) . client_id $ m),
+  maybeComma (auth_required m),
+  newField "auth_required" (fmap boolToJSON . auth_required $ m),
+  maybeComma (tls_required m),
+  newField "tls_required" (fmap boolToJSON . tls_required $ m),
+  maybeComma (connect_urls m),
+  newField "connect_urls" (fmap arrayToJSON . connect_urls $ m),
+  maybeComma (ldm m),
+  newField "ldm" (fmap boolToJSON . ldm $ m),
+  "}",
+  "\r\n"
+  ]
+
+newField :: BS.ByteString -> Maybe BS.ByteString -> BS.ByteString
+newField k v = case v of
+  Nothing -> ""
+  Just a  -> foldr BS.append "" [quote k, ":", a]
+
+quote :: BS.ByteString -> BS.ByteString
+quote bs = foldr BS.append "" ["\"", bs, "\""]
+
+packStr' :: String -> BS.ByteString
+packStr' = encodeUtf8 . T.pack
+
+boolToJSON :: Bool -> BS.ByteString
+boolToJSON b
+  | b  = "true"
+  | not b = "false"
+
+commaSep :: [BS.ByteString] -> BS.ByteString
+commaSep []     = ""
+commaSep [x]    = foldr BS.append "" [quote x, commaSep []]
+commaSep (x:xs) = foldr BS.append "" [quote x, ",", commaSep xs]
+
+arrayToJSON :: [BS.ByteString] -> BS.ByteString
+arrayToJSON bs = foldr BS.append "" ["[", commaSep bs, "]"]
+
+maybeComma :: Maybe a -> BS.ByteString
+maybeComma m = case m of
+  Nothing -> ""
+  Just _  -> ","
+
