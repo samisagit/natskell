@@ -56,15 +56,19 @@ explicit = parallel $ do
         let output = genericParse input
         output `shouldBe` Just (ParsedErr expected)
 
+
 generated = parallel $ do
   describe "generated" $ do
     describe "generic parser" $ do
       forM_ invalidSubjectCases $ \subject -> do
-        let subInput = foldr BS.append "-ERR 'Permissions Violation For Subscription To " [subject, "'\r\n"]
+        let subInput = foldr BS.append "" ["-ERR 'Permissions Violation For Subscription To ", subject, "'\r\n"]
         let subExpected = Err (BS.init . BS.init . BS.init . BS.drop 6 $ subInput) False
         it (printf "correctly parses %s" (show subInput)) $ do
           let output = genericParse subInput
           output `shouldBe` Just (ParsedErr subExpected)
-        it (printf "correctly parses %s" (show subInput)) $ do
-          let output = genericParse subInput
-          output `shouldBe` Just (ParsedErr subExpected)
+      forM_ invalidSubjectCases $ \subject -> do
+        let pubInput = foldr BS.append "" ["-ERR 'Permissions Violation For Publish To ", subject, "'\r\n"]
+        let pubExpected = Err (BS.init . BS.init . BS.init . BS.drop 6 $ pubInput) False
+        it (printf "correctly parses %s" (show pubInput)) $ do
+          let output = genericParse pubInput
+          output `shouldBe` Just (ParsedErr pubExpected)
