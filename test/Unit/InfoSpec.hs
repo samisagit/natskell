@@ -7,7 +7,6 @@ import qualified Data.ByteString    as BS
 import qualified Data.Text          as T
 import           Data.Text.Encoding (encodeUtf8)
 import           Fixtures
-import           Lib.Parser
 import           Parsers.Parsers
 import           Test.Hspec
 import           Text.Printf
@@ -15,49 +14,28 @@ import           Types.Info
 
 spec :: Spec
 spec = do
-  manual
-  applicative
-cases :: [(BS.ByteString, Info, String)]
-cases = [
+  cases
+
+explicitCases :: [(BS.ByteString, Info)]
+explicitCases = [
   (
     "INFO {\"server_id\": \"some-server\", \"version\": \"semver\", \"go\": \"1.13\", \"host\": \"127.0.0.1\", \"port\": 4222, \"max_payload\": 1024, \"proto\": 3, \"client_id\": 1, \"auth_required\": true, \"tls_required\": true, \"connect_urls\": [\"https://127.0.0.1:4222\"], \"ldm\": true}\r\n",
-    Info "some-server" "semver" "1.13" "127.0.0.1" 4222 1024 3 (Just 1) (Just True) (Just True) (Just ["https://127.0.0.1:4222"]) (Just True),
-    "fully populated"
+    Info "some-server" "semver" "1.13" "127.0.0.1" 4222 1024 3 (Just 1) (Just True) (Just True) (Just ["https://127.0.0.1:4222"]) (Just True)
   ),
   (
     "INFO {\"server_id\": \"some-server\", \"version\": \"semver\", \"go\": \"1.13\", \"host\": \"127.0.0.1\", \"port\": 4222, \"max_payload\": 1024, \"proto\": 3}\r\n",
-    Info "some-server" "semver" "1.13" "127.0.0.1" 4222 1024 3 Nothing Nothing Nothing Nothing Nothing,
-    "minimal"
+    Info "some-server" "semver" "1.13" "127.0.0.1" 4222 1024 3 Nothing Nothing Nothing Nothing Nothing
   ),
   (
     "INFO {\"server_id\": \"some-server\", \"version\": \"semver\", \"go\": \"1.13\", \"host\": \"127.0.0.1\", \"port\": 4222, \"max_payload\": 1024, \"proto\": 3, \"client_id\": 1, \"auth_required\": true, \"tls_required\": true, \"connect_urls\": [\"https://127.0.0.1:4222\", \"https://192.168.9.7:4222\"], \"ldm\": true}\r\n",
-    Info "some-server" "semver" "1.13" "127.0.0.1" 4222 1024 3 (Just 1) (Just True) (Just True) (Just ["https://127.0.0.1:4222", "https://192.168.9.7:4222"]) (Just True),
-    "multi connect urls"
+    Info "some-server" "semver" "1.13" "127.0.0.1" 4222 1024 3 (Just 1) (Just True) (Just True) (Just ["https://127.0.0.1:4222", "https://192.168.9.7:4222"]) (Just True)
   )
   ]
 
-manual = parallel $ do
-  describe "specific parser" $ do
-    forM_ cases $ \(input, expected, name) ->
-      it (printf "parses %s case successfully" name) $ do
-        let output = runParser infoParser input
-        let result = fmap fst output
-        let rest = fmap snd output
-        case result of
-          Just (ParsedInfo a) -> a `shouldBe` expected
-          Nothing             -> error "parser did not return INFO type"
-        case rest of
-          Just "" -> return ()
-          _       -> error "parser did not consume all tokens"
-  describe "generic parser" $ do
-    forM_ cases $ \(input, expected, name) ->
-      it (printf "parses %s case successfully" name) $ do
-        let output = genericParse input
-        output `shouldBe` Just (ParsedInfo expected)
-
-applicative = parallel $ do
-  describe "generated" $ do
-    let infos = Info
+generatedCases :: [(BS.ByteString, Info)]
+generatedCases = zip (map buildProtoInput infos) infos
+  where
+    infos = Info
           <$> serverIDCases
           <*> versionCases
           <*> goVersionCases
@@ -70,10 +48,16 @@ applicative = parallel $ do
           <*> maybeify boolCases
           <*> maybeify connectStringCases
           <*> maybeify boolCases
-    let proto = map buildProtoInput infos
-    let pairs = zip proto infos
-    forM_ pairs $ \(input, want) -> do
-      it (printf "correctly parses %s" (show input)) $ do
+
+
+cases = parallel $ do
+  describe "generic parser" $ do
+    forM_ explicitCases $ \(input, want) ->
+      it (printf "correctly parses explicit case %s" (show input)) $ do
+        let output = genericParse input
+        output `shouldBe` Just (ParsedInfo want)
+    forM_ generatedCases $ \(input, want) ->
+      it (printf "correctly parses generated case %s" (show input)) $ do
         let output = genericParse input
         output `shouldBe` Just (ParsedInfo want)
 

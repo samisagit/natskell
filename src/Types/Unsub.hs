@@ -6,4 +6,4 @@ data Unsub = Unsub
   { sid    :: BS.ByteString,
     maxMsg :: Maybe Int
   }
-
+  deriving (Eq, Show)

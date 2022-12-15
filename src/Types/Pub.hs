@@ -7,4 +7,5 @@ data Pub = Pub
     replyTo :: Maybe ByteString,
     payload :: Maybe ByteString
   }
+  deriving (Eq, Show)
 

@@ -2,33 +2,31 @@
 
 module PingSpec (spec) where
 
-import           Lib.Parser
+import           Control.Monad
+import qualified Data.ByteString           as BS
 import           Parsers.Parsers
 import           Test.Hspec
+import           Text.Printf
 import           Transformers.Transformers
 import           Types.Ping
 
 spec :: Spec
 spec = do
-  manual
+  cases
 
-manual :: Spec
-manual = parallel $ do
-  describe "specific parser" $ do
-    it "correctly parses PING" $ do
-      let output = runParser pingParser "PING\r\n"
-      let result = fmap fst output
-      let rest = fmap snd output
-      case result of
-        Just (ParsedPing a) -> a `shouldBe` Ping
-        Nothing             -> error "parser did not return PING type"
-      case rest of
-        Just "" -> return ()
-        _       -> error "parser did not consume all tokens"
-  describe "specific parser" $ do
-    it "correctly parses PING" $ do
-      let output = genericParse "PING\r\n"
-      output `shouldBe` Just (ParsedPing Ping)
-  describe "transformer" $ do
-    it "correctly transforms to 'PING'" $ do
-      transform Ping `shouldBe` "PING\r\n"
+explicitParserCases :: [(BS.ByteString, Ping)]
+explicitParserCases = [("PING\r\n", Ping)]
+
+explicitTransformerCases :: [(Ping, BS.ByteString)]
+explicitTransformerCases = map (\(a,b) -> (b,a)) explicitParserCases
+
+cases = parallel $ do
+  describe "generic parser" $ do
+    forM_ explicitParserCases $ \(input, want) -> do
+      it (printf "correctly parses explicit case %s" (show input)) $ do
+        let output = genericParse input
+        output `shouldBe` Just (ParsedPing want)
+  describe "PING transformer" $ do
+    forM_ explicitTransformerCases $ \(input, want) -> do
+      it (printf"correctly transforms %s" (show input)) $ do
+        transform input `shouldBe` want

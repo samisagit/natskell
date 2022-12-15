@@ -7,3 +7,4 @@ data Sub = Sub
     queueGroup :: Maybe BS.ByteString,
     sid        :: BS.ByteString
   }
+  deriving (Eq, Show)
