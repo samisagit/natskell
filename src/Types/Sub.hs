@@ -1,7 +1,10 @@
 module Types.Sub where
 
+import qualified Data.ByteString as BS
+
 data Sub = Sub
-  { subject    :: String,
-    queueGroup :: Maybe String,
-    sid        :: String
+  { subject    :: BS.ByteString,
+    queueGroup :: Maybe BS.ByteString,
+    sid        :: BS.ByteString
   }
+  deriving (Eq, Show)

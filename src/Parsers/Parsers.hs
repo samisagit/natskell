@@ -7,10 +7,7 @@ import qualified Control.Monad.Fail   as Fail
 import           Data.Aeson
 import           Data.ByteString
 import qualified Data.ByteString.Lazy as BSL
-import qualified Data.Text            as T
-import qualified Data.Text.Encoding   as TE
 import           Data.Word8
-import           Debug.Trace
 import           Lib.Parser
 import           Types.Err
 import           Types.Info
@@ -102,6 +99,10 @@ infoParser = do
   string "INFO"
   ss
   rest <- asciis
+  -- TODO: there might be one of these, but asciis will have consumed it.
+  -- A more generic JSON parser would be handy
+  -- string "\r\n"
+
   case eitherDecode . BSL.fromStrict $ pack rest of
     Right a -> return (ParsedInfo a)
     Left e  -> Fail.fail "decode failed"
@@ -118,7 +119,7 @@ msgWithReplyAndPayloadparser = do
   ss
   subj <- subjectParser
   ss
-  sid <- integer
+  sid <- alphaNumerics
   ss
   reply <- subjectParser
   ss
@@ -130,7 +131,7 @@ msgWithReplyAndPayloadparser = do
   return
     (ParsedMsg $ Msg
         (pack subj)
-        (toInt . pack $ sid)
+        (pack sid)
         (Just (pack reply))
         countInt
         (Just (pack payload))
@@ -142,7 +143,7 @@ msgWithPayloadparser = do
   ss
   subj <- subjectParser
   ss
-  sid <- integer
+  sid <- alphaNumerics
   ss
   count <- integer
   string "\r\n"
@@ -152,7 +153,7 @@ msgWithPayloadparser = do
   return
     (ParsedMsg $ Msg
         (pack subj)
-        (toInt . pack $ sid)
+        (pack sid)
         Nothing
         countInt
         (Just (pack payload))
@@ -164,7 +165,7 @@ msgWithReplyparser = do
   ss
   subj <- subjectParser
   ss
-  sid <- integer
+  sid <- alphaNumerics
   ss
   reply <- subjectParser
   ss
@@ -173,7 +174,7 @@ msgWithReplyparser = do
   return
     (ParsedMsg $ Msg
         (pack subj)
-        (toInt . pack $ sid)
+        (pack sid)
         (Just (pack reply))
         (toInt . pack $ count)
         Nothing
@@ -185,14 +186,14 @@ msgMinParser = do
   ss
   subj <- subjectParser
   ss
-  sid <- integer
+  sid <- alphaNumerics
   ss
   count <- integer
   string "\r\n"
   return
     (ParsedMsg $ Msg
         (pack subj)
-        (toInt . pack $ sid)
+        (pack sid)
         Nothing
         (toInt . pack $ count)
         Nothing

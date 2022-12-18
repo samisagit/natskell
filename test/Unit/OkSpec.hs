@@ -2,29 +2,23 @@
 
 module OkSpec (spec) where
 
-import           Lib.Parser
+import           Control.Monad
+import qualified Data.ByteString as BS
 import           Parsers.Parsers
 import           Test.Hspec
+import           Text.Printf
 import           Types.Ok
 
 spec :: Spec
 spec = do
-  manual
+  cases
 
-manual :: Spec
-manual = parallel $ do
-  describe "specific parser" $ do
-    it "correctly parses +OK" $ do
-      let output = runParser okParser "+OK\r\n"
-      let result = fmap fst output
-      let rest = fmap snd output
-      case result of
-        Just (ParsedOk a) -> a `shouldBe` Ok
-        Nothing           -> error "parser did not return OK type"
-      case rest of
-        Just "" -> return ()
-        _       -> error "parser did not consume all tokens"
-  describe "specific parser" $ do
-    it "correctly parses +OK" $ do
-      let output = genericParse "+OK\r\n"
-      output `shouldBe` Just (ParsedOk Ok)
+explicitCases :: [(BS.ByteString, Ok)]
+explicitCases = [("+OK\r\n", Ok)]
+
+cases = parallel $ do
+  describe "generic parser" $ do
+      forM_ explicitCases $ \(input, want) ->
+        it (printf "correctly parses explicit case %s" (show input)) $ do
+          let output = genericParse input
+          output `shouldBe` Just (ParsedOk want)

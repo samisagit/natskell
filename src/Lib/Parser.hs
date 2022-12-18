@@ -104,6 +104,9 @@ not' c = Parser charP
 til :: W8.Word8 -> Parser [W8.Word8]
 til = some . not'
 
+find' :: W8.Word8 -> Parser [W8.Word8]
+find' c = (++) <$> til c <*> string (BS.pack [c])
+
 integer :: Parser [W8.Word8]
 integer = stringWithChars [W8._0 .. W8._9]
 
@@ -114,12 +117,19 @@ take' n p = (:) <$> p <*> take' (n -1) p
 tokenParser :: Parser [W8.Word8]
 tokenParser = alphaNumerics <|> string "*"
 
-subjectParser :: Parser [W8.Word8]
-subjectParser = do
+wireTapParser :: Parser [W8.Word8]
+wireTapParser = do
+  string ">"
+
+specificSubjectParser :: Parser [W8.Word8]
+specificSubjectParser = do
   head <- tokenParser
   rest <- ((++) <$> string "." <*> subjectParser) <|> (string ".>" <|> string "")
-
   return (head ++ rest)
+
+subjectParser :: Parser [W8.Word8]
+subjectParser = do
+  wireTapParser <|> specificSubjectParser
 
 toInt :: BS.ByteString -> Int
 toInt bs = read (C.unpack bs) :: Int

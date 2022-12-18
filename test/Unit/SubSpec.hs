@@ -11,15 +11,16 @@ import           Types.Sub
 
 spec :: Spec
 spec = do
-  manual
+  cases
 
-cases :: [(Sub, ByteString, String)]
-cases = [
-  (Sub "SOME.SUBJ" Nothing "uuid", "SUB SOME.SUBJ uuid", "without queue group"),
-  (Sub "SOME.SUBJ" (Just "QUEUE.GROUP.A") "uuid", "SUB SOME.SUBJ QUEUE.GROUP.A uuid", "with queue group")
+explicitCases :: [(Sub, ByteString)]
+explicitCases = [
+  (Sub "SOME.SUBJ" Nothing "uuid", "SUB SOME.SUBJ uuid"),
+  (Sub "SOME.SUBJ" (Just "QUEUE.GROUP.A") "uuid", "SUB SOME.SUBJ QUEUE.GROUP.A uuid")
   ]
 
-manual = parallel $ do
-  forM_ cases $ \(input, expected, caseName) ->
-    it (printf "correctly transforms %s" caseName) $ do
-      transform input `shouldBe` expected
+cases = parallel $ do
+  describe "SUB transformer" $ do
+    forM_ explicitCases $ \(input, want) ->
+      it (printf "correctly transforms %s" (show input)) $ do
+        transform input `shouldBe` want

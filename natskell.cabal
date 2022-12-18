@@ -25,7 +25,8 @@ library
         word8 >=0.1.3,
         aeson >=2.0.3.0,
         text >= 1.2.3.1,
-        network-simple >= 0.4.5
+        network-simple >= 0.4.5,
+        base64-bytestring >= 1.2.1.0
 
     build-tool-depends: hspec-discover:hspec-discover
 
@@ -70,6 +71,8 @@ test-suite unit-test
                        docker >=0.7.0.0,
                        network-simple >= 0.4.5,
                        QuickCheck >= 2.14.2,
+                       base64-bytestring >= 1.2.1.0,
+                       ascii >=1.2.3.0
     other-modules:
         Lib.Parser
         Parsers.Parsers
@@ -96,6 +99,7 @@ test-suite unit-test
         ConnectSpec
         SubSpec
         UnsubSpec
+        Fixtures
 
 test-suite fuzz-test
      default-language: Haskell2010
@@ -113,6 +117,7 @@ test-suite fuzz-test
                        docker >=0.7.0.0,
                        network-simple >= 0.4.5,
                        QuickCheck >= 2.14.2,
+                       base64-bytestring >= 1.2.1.0
     other-modules:
         Lib.Parser
         ParserSpec

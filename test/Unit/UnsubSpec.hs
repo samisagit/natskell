@@ -11,15 +11,16 @@ import           Types.Unsub
 
 spec :: Spec
 spec = do
-  manual
+  cases
 
-cases :: [(Unsub, ByteString, String)]
-cases = [
-  (Unsub "uuid" Nothing, "UNSUB uuid", "without max messages"),
-  (Unsub "uuid" (Just 10), "UNSUB uuid 10", "with max messages")
+explicitCases :: [(Unsub, ByteString)]
+explicitCases = [
+  (Unsub "uuid" Nothing, "UNSUB uuid"),
+  (Unsub "uuid" (Just 10), "UNSUB uuid 10")
   ]
 
-manual = parallel $ do
-  forM_ cases $ \(input, expected, caseName) ->
-    it (printf "correctly transforms %s" caseName) $ do
-      transform input `shouldBe` expected
+cases = parallel $ do
+  describe "UNSUB transformer" $ do
+    forM_ explicitCases $ \(input, want) ->
+      it (printf "correctly transforms %s" (show input)) $ do
+        transform input `shouldBe` want

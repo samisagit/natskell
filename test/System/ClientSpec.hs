@@ -3,9 +3,8 @@ module ClientSpec (spec) where
 import           Client
 import           Control.Exception
 import           Control.Monad
-import qualified Docker.Client      as DC
+import qualified Docker.Client     as DC
 import           NatsWrappers
-import qualified Network.Simple.TCP as TCP
 import           Test.Hspec
 
 spec :: Spec
@@ -19,9 +18,8 @@ versions :: [String]
 versions = ["latest", "2.9.8", "2.9.6"]
 
 sys = parallel $ do
-  describe "Client" $ do
-    describe "systest" $ do
-      forM_ versions $ \version ->
-        around (withNATSConnection version) $ do
-          it "connects successfully" $ \(_, host, port) -> do
-            connect host port 10
+  describe "client" $ do
+    forM_ versions $ \version ->
+      around (withNATSConnection version) $ do
+        it "connects successfully" $ \(_, host, port) -> do
+          connect host port 10
