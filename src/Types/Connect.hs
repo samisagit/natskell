@@ -4,9 +4,9 @@ module Types.Connect where
 
 import           Control.Monad
 import           Data.Aeson
-import qualified Data.ByteString        as BS
-import qualified Data.Text              as T
-import qualified Data.Text.Encoding     as E
+import qualified Data.ByteString    as BS
+import qualified Data.Text          as T
+import qualified Data.Text.Encoding as E
 import           GHC.Generics
 
 data Connect = Connect
@@ -19,7 +19,7 @@ data Connect = Connect
     pass         :: Maybe BS.ByteString,
     name         :: Maybe BS.ByteString,
     lang         :: BS.ByteString,
-    version      :: Int,
+    version      :: BS.ByteString,
     protocol     :: Maybe Int,
     echo         :: Maybe Bool,
     sig          :: Maybe BS.ByteString,

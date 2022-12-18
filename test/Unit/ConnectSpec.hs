@@ -18,12 +18,16 @@ spec = do
 explicitCases :: [(Connect, BS.ByteString)]
 explicitCases = [
   (
-    Connect False False False Nothing Nothing Nothing Nothing "Haskell" 1 Nothing Nothing Nothing Nothing,
-    "CONNECT {\"verbose\": false, \"pedantic\": false, \"tls_required\": false, \"lang\": \"Haskell\", \"version\": 1}"
+    Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" Nothing Nothing Nothing Nothing,
+    "CONNECT {\"verbose\": false, \"pedantic\": false, \"tls_required\": false, \"lang\": \"Haskell\", \"version\": \"1\"}"
     ),
   (
-    Connect True True True (Just "token") (Just "user") (Just "pass") (Just "name") "Haskell" 1 (Just 3) (Just True) (Just "sig") (Just "jwt"),
-    "CONNECT {\"verbose\": true, \"pedantic\": true, \"tls_required\": true, \"auth_token\": \"token\", \"user\": \"user\", \"pass\": \"pass\", \"name\": \"name\", \"lang\": \"Haskell\", \"version\": 1, \"protocol\": 3, \"echo\": true, \"sig\": \"sig\", \"jwt\": \"jwt\"}"
+    Connect True True True (Just "token") (Just "user") (Just "pass") (Just "name") "Haskell" "1" (Just 3) (Just True) (Just "sig") (Just "jwt"),
+    "CONNECT {\"verbose\": true, \"pedantic\": true, \"tls_required\": true, \"auth_token\": \"token\", \"user\": \"user\", \"pass\": \"pass\", \"name\": \"name\", \"lang\": \"Haskell\", \"version\": \"1\", \"protocol\": 3, \"echo\": true, \"sig\": \"sig\", \"jwt\": \"jwt\"}"
+    ),
+  (
+    Connect True True True (Just "token") (Just "user") (Just "pass") (Just "name") "Haskell" "1.0.0" (Just 3) (Just True) (Just "sig") (Just "jwt"),
+    "CONNECT {\"verbose\": true, \"pedantic\": true, \"tls_required\": true, \"auth_token\": \"token\", \"user\": \"user\", \"pass\": \"pass\", \"name\": \"name\", \"lang\": \"Haskell\", \"version\": \"1.0.0\", \"protocol\": 3, \"echo\": true, \"sig\": \"sig\", \"jwt\": \"jwt\"}"
     )
   ]
 
