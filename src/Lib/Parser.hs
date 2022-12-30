@@ -131,6 +131,43 @@ subjectParser :: Parser [W8.Word8]
 subjectParser = do
   wireTapParser <|> specificSubjectParser
 
+headersParser :: Int -> Parser [(BS.ByteString, BS.ByteString)]
+headersParser 0 = do
+  return []
+headersParser n = do
+  pre <- string "NATS/"
+  version <- til W8._cr
+  suf <- string "\r\n"
+  headerPairsParser (n - sum (map (BS.length . BS.pack) [pre, version, suf]))
+
+
+headerPairsParser :: Int -> Parser [(BS.ByteString, BS.ByteString)]
+headerPairsParser 0 = do
+  return []
+headerPairsParser n = do
+  (key, value, count) <- headerPairParser
+  rest <- headerPairsParser (n - count)
+  return ((key, value) : rest)
+
+headerPairParser :: Parser (BS.ByteString, BS.ByteString, Int)
+headerPairParser = do
+  key <- til W8._colon
+  char W8._colon
+  value <- til W8._cr
+  string "\r\n"
+  return (toUnspacedBS key, toUnspacedBS value, bslength key + 1 + bslength value + 2)
+    where
+      toUnspacedBS = BS.pack . stripSpace
+      bslength = fromIntegral . BS.length . BS.pack
+
+stripSpace :: [W8.Word8] -> [W8.Word8]
+stripSpace [] = []
+stripSpace xs = Prelude.takeWhile isNotSpace . Prelude.dropWhile isSpace $ xs
+  where
+    isSpace = (==) W8._space
+    isNotSpace = (/=) W8._space
+
+
 toInt :: BS.ByteString -> Int
 toInt bs = read (C.unpack bs) :: Int
 

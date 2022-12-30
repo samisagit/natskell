@@ -57,6 +57,9 @@ invalidSubjectCases = [" FOO", "FOO>BAR", "FOO ", "F OO", "FOO.**"]
 payloadCases :: [(Int, Maybe BS.ByteString)]
 payloadCases = [(12, Just "some payload"), (24, Just "some\r\nmulti line payload"), (41, Just ".*some payload ** with specials chars > *"), (0, Nothing)]
 
+headerCases :: [[(BS.ByteString, BS.ByteString)]]
+headerCases = [[("header", "abc")], [("header", "abc"), ("HEADER", "123")]]
+
 maybeify :: [a] -> [Maybe a]
 maybeify xs = Nothing : fmap Just xs
 

@@ -13,6 +13,7 @@ import           Text.Printf
 spec :: Spec
 spec = do
   char
+  headers
 
 charCases :: [(BS.ByteString, W8.Word8)]
 charCases = zip (map charToByteString [(minBound::Char)..(maxBound::Char)]) [(minBound::W8.Word8)..(maxBound::W8.Word8)]
@@ -42,6 +43,24 @@ char = parallel $ do
            result `shouldBe` Nothing
            let left = fmap snd output
            left `shouldBe` Nothing
+
+headerCases :: [(BS.ByteString, [(BS.ByteString, BS.ByteString)])]
+headerCases = [
+  ("NATS/1.0\r\nKEY: VALUE\r\n", [("KEY", "VALUE")]),
+  ("NATS/1.0\r\nKEY:VALUE\r\n", [("KEY", "VALUE")]),
+  ("NATS/1.0\r\n  KEY  : VALUE  \r\n", [("KEY", "VALUE")]),
+  ("NATS/1.0\r\nKEY: VALUE\r\nOTHER: STUFF\r\n", [("KEY", "VALUE"), ("OTHER", "STUFF")]),
+  ("NATS/1.0\r\n", []),
+  ("NATS/2.2\r\n", [])
+  ]
+
+headers = parallel $ do
+  describe "headers" $ do
+    forM_ headerCases $ \(input, want) ->
+      it (printf "correctly parses explicit case %s" (show input)) $ do
+        let output = Parser.runParser (Parser.headersParser (fromIntegral . BS.length $ input)) input
+        let result = fmap fst output
+        result `shouldBe` Just want
 
 filterSameChar :: BS.ByteString -> [(BS.ByteString, W8.Word8)] -> [(BS.ByteString, W8.Word8)]
 filterSameChar i [] = []

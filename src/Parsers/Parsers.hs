@@ -112,6 +112,10 @@ msgParser =
     <|> msgWithPayloadparser
     <|> msgWithReplyparser
     <|> msgMinParser
+    <|> hmsgWithReplyAndPayloadParser
+    <|> hmsgWithPayloadParser
+    <|> hmsgWithReplyParser
+    <|> hmsgMinParser
 
 msgWithReplyAndPayloadparser :: Parser ParsedMessage
 msgWithReplyAndPayloadparser = do
@@ -135,6 +139,7 @@ msgWithReplyAndPayloadparser = do
         (Just (pack reply))
         countInt
         (Just (pack payload))
+        Nothing
     )
 
 msgWithPayloadparser :: Parser ParsedMessage
@@ -157,6 +162,7 @@ msgWithPayloadparser = do
         Nothing
         countInt
         (Just (pack payload))
+        Nothing
     )
 
 msgWithReplyparser :: Parser ParsedMessage
@@ -178,6 +184,7 @@ msgWithReplyparser = do
         (Just (pack reply))
         (toInt . pack $ count)
         Nothing
+        Nothing
     )
 
 msgMinParser :: Parser ParsedMessage
@@ -197,6 +204,115 @@ msgMinParser = do
         Nothing
         (toInt . pack $ count)
         Nothing
+        Nothing
+    )
+
+hmsgWithReplyAndPayloadParser = do
+  string "HMSG"
+  ss
+  subj <- subjectParser
+  ss
+  sid <- alphaNumerics
+  ss
+  reply <- subjectParser
+  ss
+  hcount <- integer
+  ss
+  tcount <- integer
+  string "\r\n"
+  let hcountInt = toInt . pack $ hcount
+  let pcountInt = (toInt . pack $ tcount) - (toInt . pack $ hcount)
+  headers <- headersParser (hcountInt - 2) -- ignore the last line break
+  string "\r\n"
+  payload <- take' pcountInt ascii
+  string "\r\n"
+  return
+    (ParsedMsg $ Msg
+        (pack subj)
+        (pack sid)
+        (Just . pack $ reply)
+        ((toInt . pack $ tcount) - (toInt . pack $ hcount))
+        (Just . pack $ payload)
+        (Just headers)
+    )
+
+hmsgWithPayloadParser = do
+  string "HMSG"
+  ss
+  subj <- subjectParser
+  ss
+  sid <- alphaNumerics
+  ss
+  hcount <- integer
+  ss
+  tcount <- integer
+  string "\r\n"
+  let hcountInt = toInt . pack $ hcount
+  let pcountInt = (toInt . pack $ tcount) - (toInt . pack $ hcount)
+  headers <- headersParser (hcountInt - 2) -- ignore the last line break
+  string "\r\n"
+  payload <- take' pcountInt ascii
+  string "\r\n"
+  return
+    (ParsedMsg $ Msg
+        (pack subj)
+        (pack sid)
+        Nothing
+        pcountInt
+        (Just . pack $ payload)
+        (Just headers)
+    )
+
+hmsgWithReplyParser = do
+  string "HMSG"
+  ss
+  subj <- subjectParser
+  ss
+  sid <- alphaNumerics
+  ss
+  reply <- subjectParser
+  ss
+  hcount <- integer
+  ss
+  tcount <- integer
+  string "\r\n"
+  let hcountInt = toInt . pack $ hcount
+  let pcountInt = (toInt . pack $ tcount) - (toInt . pack $ hcount)
+  headers <- headersParser (hcountInt - 2) -- ignore the last line break
+  string "\r\n"
+  return
+    (ParsedMsg $ Msg
+        (pack subj)
+        (pack sid)
+        (Just . pack $ reply)
+        ((toInt . pack $ tcount) - (toInt . pack $ hcount))
+        Nothing
+        (Just headers)
+    )
+
+hmsgMinParser = do
+  string "HMSG"
+  ss
+  subj <- subjectParser
+  ss
+  sid <- alphaNumerics
+  ss
+  hcount <- integer
+  ss
+  tcount <- integer
+  string "\r\n"
+  let hcountInt = toInt . pack $ hcount
+  let pcountInt = (toInt . pack $ tcount) - (toInt . pack $ hcount)
+  headers <- headersParser (hcountInt - 2) -- ignore the last line break
+  string "\r\n"
+  return
+    (ParsedMsg $ Msg
+        (pack subj)
+        (pack sid)
+        Nothing
+        ((toInt . pack $ tcount) - (toInt . pack $ hcount))
+        Nothing
+        (Just headers)
     )
 
 okParser :: Parser ParsedMessage
