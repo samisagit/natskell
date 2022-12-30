@@ -137,7 +137,6 @@ msgWithReplyAndPayloadparser = do
         (pack subj)
         (pack sid)
         (Just (pack reply))
-        countInt
         (Just (pack payload))
         Nothing
     )
@@ -160,7 +159,6 @@ msgWithPayloadparser = do
         (pack subj)
         (pack sid)
         Nothing
-        countInt
         (Just (pack payload))
         Nothing
     )
@@ -182,7 +180,6 @@ msgWithReplyparser = do
         (pack subj)
         (pack sid)
         (Just (pack reply))
-        (toInt . pack $ count)
         Nothing
         Nothing
     )
@@ -202,7 +199,6 @@ msgMinParser = do
         (pack subj)
         (pack sid)
         Nothing
-        (toInt . pack $ count)
         Nothing
         Nothing
     )
@@ -231,7 +227,6 @@ hmsgWithReplyAndPayloadParser = do
         (pack subj)
         (pack sid)
         (Just . pack $ reply)
-        ((toInt . pack $ tcount) - (toInt . pack $ hcount))
         (Just . pack $ payload)
         (Just headers)
     )
@@ -258,7 +253,6 @@ hmsgWithPayloadParser = do
         (pack subj)
         (pack sid)
         Nothing
-        pcountInt
         (Just . pack $ payload)
         (Just headers)
     )
@@ -285,7 +279,6 @@ hmsgWithReplyParser = do
         (pack subj)
         (pack sid)
         (Just . pack $ reply)
-        ((toInt . pack $ tcount) - (toInt . pack $ hcount))
         Nothing
         (Just headers)
     )
@@ -310,7 +303,6 @@ hmsgMinParser = do
         (pack subj)
         (pack sid)
         Nothing
-        ((toInt . pack $ tcount) - (toInt . pack $ hcount))
         Nothing
         (Just headers)
     )
