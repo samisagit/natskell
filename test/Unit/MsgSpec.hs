@@ -19,24 +19,24 @@ spec = do
 
 explicitCases :: [(BS.ByteString, Msg)]
 explicitCases = [
-  ("MSG FOO 13 BAR 17\r\nsome payload bits\r\n", Msg "FOO" "13" (Just "BAR") 17 (Just "some payload bits") Nothing),
-  ("MSG FOO 13 BAR 0\r\n", Msg "FOO" "13" (Just "BAR") 0 Nothing Nothing),
-  ("MSG FOO 13 17\r\nsome payload bits\r\n", Msg "FOO" "13" Nothing 17 (Just"some payload bits") Nothing),
-  ("MSG FOO 13 0\r\n", Msg "FOO" "13" Nothing 0 Nothing Nothing),
-  ("MSG FOO 13 20\r\nmulti\r\nline\r\npayload\r\n", Msg "FOO" "13" Nothing 20 (Just "multi\r\nline\r\npayload") Nothing),
-  ("MSG FOO.BAR.BAZ 13 IN.*.BOX.> 0\r\n", Msg "FOO.BAR.BAZ" "13" (Just "IN.*.BOX.>") 0 Nothing Nothing),
-  ("HMSG FOO 13 BAR 24 41\r\nNATS/1.0\r\nKEY: VALUE\r\n\r\nsome payload bits\r\n", Msg "FOO" "13" (Just "BAR") 17 (Just "some payload bits") (Just [("KEY", "VALUE")])),
-  ("HMSG FOO 13 24 44\r\nNATS/1.0\r\nKEY: VALUE\r\n\r\nmulti\r\nline\r\npayload\r\n", Msg "FOO" "13" Nothing 20 (Just "multi\r\nline\r\npayload") (Just [("KEY", "VALUE")]))
+  ("MSG FOO 13 BAR 17\r\nsome payload bits\r\n", Msg "FOO" "13" (Just "BAR") (Just "some payload bits") Nothing),
+  ("MSG FOO 13 BAR 0\r\n", Msg "FOO" "13" (Just "BAR") Nothing Nothing),
+  ("MSG FOO 13 17\r\nsome payload bits\r\n", Msg "FOO" "13" Nothing (Just"some payload bits") Nothing),
+  ("MSG FOO 13 0\r\n", Msg "FOO" "13" Nothing Nothing Nothing),
+  ("MSG FOO 13 20\r\nmulti\r\nline\r\npayload\r\n", Msg "FOO" "13" Nothing (Just "multi\r\nline\r\npayload") Nothing),
+  ("MSG FOO.BAR.BAZ 13 IN.*.BOX.> 0\r\n", Msg "FOO.BAR.BAZ" "13" (Just "IN.*.BOX.>") Nothing Nothing),
+  ("HMSG FOO 13 BAR 24 41\r\nNATS/1.0\r\nKEY: VALUE\r\n\r\nsome payload bits\r\n", Msg "FOO" "13" (Just "BAR") (Just "some payload bits") (Just [("KEY", "VALUE")])),
+  ("HMSG FOO 13 24 44\r\nNATS/1.0\r\nKEY: VALUE\r\n\r\nmulti\r\nline\r\npayload\r\n", Msg "FOO" "13" Nothing (Just "multi\r\nline\r\npayload") (Just [("KEY", "VALUE")]))
   ]
 
 generatedCases :: [(BS.ByteString, Msg)]
 generatedCases = zip (map buildProtoInput msgs) msgs
   where
-    msgs = map uncurry (Msg
+    msgs = (Msg
             <$> subjectCases
             <*> sidCases
             <*> maybeify subjectCases)
-            <*> payloadCases -- because byteCount and payload are in valid pairs we needed to uncurry this
+            <*> payloadCases
             <*> maybeify headerCases
 
 cases = parallel $ do
@@ -64,7 +64,7 @@ buildProtoInput m = do
     collapseNothing (replyTo m) " ",
     if isNothing . headers $ m then "" else packStr' (printf "%v" (BS.length headerProto)),
     if isNothing . headers $ m then "" else " ",
-    packStr' (printf "%v" (BS.length headerProto + byteCount m)),
+    packStr' (printf "%v" (BS.length headerProto + (payloadLength . payload $ m ))),
     if isNothing . headers $ m then "" else "\r\n",
     headerProto,
     if isJust . headers $ m then "" else "\r\n",
@@ -79,11 +79,14 @@ headerPairProto :: [(BS.ByteString, BS.ByteString)] -> BS.ByteString
 headerPairProto []          = ""
 headerPairProto ((k, v):xs) = BS.append (foldr BS.append "" [k, ": ", v, "\r\n"]) (headerPairProto xs)
 
-
 collapseNothing :: Maybe BS.ByteString -> BS.ByteString -> BS.ByteString
 collapseNothing mbs suffix = case mbs of
   Just a  -> BS.append a suffix
   Nothing -> ""
+
+payloadLength :: Maybe BS.ByteString -> Int
+payloadLength Nothing   = 0
+payloadLength (Just xs) = BS.length xs
 
 packStr' :: String -> BS.ByteString
 packStr' = encodeUtf8 . T.pack

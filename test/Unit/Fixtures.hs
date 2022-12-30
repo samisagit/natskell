@@ -54,8 +54,8 @@ subjectCases = ["FOO", "FOO.BAR", "FOO.BAR.>", ">", "foo.bar", "123.456", "FOO.*
 invalidSubjectCases :: [BS.ByteString]
 invalidSubjectCases = [" FOO", "FOO>BAR", "FOO ", "F OO", "FOO.**"]
 
-payloadCases :: [(Int, Maybe BS.ByteString)]
-payloadCases = [(12, Just "some payload"), (24, Just "some\r\nmulti line payload"), (41, Just ".*some payload ** with specials chars > *"), (0, Nothing)]
+payloadCases :: [Maybe BS.ByteString]
+payloadCases = [Just "some payload", Just "some\r\nmulti line payload", Just ".*some payload ** with specials chars > *", Nothing]
 
 headerCases :: [[(BS.ByteString, BS.ByteString)]]
 headerCases = [[("header", "abc")], [("header", "abc"), ("HEADER", "123")]]
