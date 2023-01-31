@@ -2,7 +2,7 @@ module ParserSpec (spec) where
 
 import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as B
-import           Data.Maybe
+import           Data.Either
 import qualified Lib.Parser            as Parser
 import           Test.Hspec
 import           Test.Hspec.QuickCheck (modifyMaxSuccess)
@@ -26,8 +26,8 @@ propChar :: Char -> String -> Bool
 propChar c s = do
   let output = Parser.runParser (Parser.char parserExpectation) parserInput
   if BS.length parserInput > 0 && BS.head parserInput == parserExpectation
-    then fmap fst output == Just parserExpectation
-  else isNothing output
+    then fmap fst output == Right parserExpectation
+  else isLeft output
   where
     charToByteString c = B.pack [c]
     stringToByteString = B.pack
@@ -38,8 +38,8 @@ propString :: String -> String -> Bool
 propString p i = do
   let output = Parser.runParser (Parser.string parserExpectation) parserInput
   if BS.take (length p) parserInput == parserExpectation
-    then fmap fst output == Just (BS.unpack parserExpectation)
-  else isNothing output
+    then fmap fst output == Right (BS.unpack parserExpectation)
+  else isLeft output
   where
     stringToByteString = B.pack
     parserExpectation = stringToByteString p

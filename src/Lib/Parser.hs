@@ -7,27 +7,30 @@ import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as C
 import qualified Data.Word8            as W8
 
-newtype Parser a = Parser {runParser :: BS.ByteString -> Maybe (a, BS.ByteString)}
+data ParserErr = ParserErr {message :: String, offset :: Int}
+  deriving (Eq, Show)
+
+newtype Parser a = Parser {runParser :: BS.ByteString -> Either ParserErr (a, BS.ByteString) }
 
 instance Functor Parser where
-  fmap f (Parser x) = Parser $ \s -> do
-    (x', s') <- x s
-    return (f x', s')
+  fmap f (Parser runner) = Parser $ \bs -> do
+    (struct, bs') <- runner bs
+    return (f struct, bs')
 
 instance Applicative Parser where
-  pure x = Parser $ \s -> Just (x, s)
-  (Parser f) <*> (Parser x) = Parser $ \s -> do
-    (f', s1) <- f s
-    (x', s2) <- x s1
-    return (f' x', s2)
+  pure x = Parser $ \bs -> Right(x, bs)
+  (Parser runnerA) <*> (Parser runnerB) = Parser $ \bs -> do
+    (f, bs1) <- runnerA bs
+    (struct, bs2) <- runnerB bs1
+    return (f struct, bs2)
 
 instance Monad Parser where
-  (Parser x) >>= f = Parser $ \s -> do
-    (x', s') <- x s
-    runParser (f x') s'
+  (Parser runner) >>= f = Parser $ \bs -> do
+    (struct, bs') <- runner bs
+    runParser (f struct) bs'
 
 instance MonadFail Parser where
-  fail _ = Parser $ const Nothing
+  fail s = Parser . const $ Left (ParserErr s 0)
 
 instance Alternative Parser where
   some v = s
@@ -41,24 +44,33 @@ instance Alternative Parser where
   empty = fail ""
   (Parser x) <|> (Parser y) = Parser $ \s ->
     case x s of
-      Just x  -> Just x
-      Nothing -> y s
+      Right x  -> Right x
+      Left errA -> do
+        case y s of
+          Right x   -> Right x
+          Left errB -> Left (deepestErr errA errB)
+
+deepestErr :: ParserErr -> ParserErr -> ParserErr
+deepestErr a b
+  | offset a > offset b = b
+  | otherwise = a
 
 char :: W8.Word8 -> Parser W8.Word8
 char c = Parser charP
   where
     charP bs
-      | BS.empty == bs = Nothing
-      | BS.head bs == c = Just (c, BS.tail bs)
-      | otherwise = Nothing
+      | BS.empty == bs = Left (ParserErr "nothing to read" 0)
+      | BS.head bs == c = Right (c, BS.tail bs)
+      | otherwise = Left (ParserErr (C.unpack $ foldr BS.append "" [BS.pack [BS.head bs],  " does not match ", BS.pack [c], " in ", bs]) (BS.length bs))
+
 
 charIn :: [W8.Word8] -> Parser W8.Word8
 charIn opts = Parser charP
   where
     charP bs
-      | BS.empty == bs = Nothing
-      | BS.head bs `elem` opts = Just (BS.head bs, BS.tail bs)
-      | otherwise = Nothing
+      | BS.empty == bs = Left (ParserErr "nothing to read" 0)
+      | BS.head bs `elem` opts = Right (BS.head bs, BS.tail bs)
+      | otherwise = Left (ParserErr "bs does not match any in set" (BS.length bs))
 
 space :: Parser W8.Word8
 space = char W8._space
@@ -76,9 +88,9 @@ stringWithChars s = some (charIn s)
 alphaNumeric = Parser charP
   where
     charP bs
-      | BS.empty == bs = Nothing
-      | W8.isAlphaNum $ BS.head bs = Just (BS.head bs, BS.tail bs)
-      | otherwise = Nothing
+      | BS.empty == bs = Left (ParserErr "nothing to read" (BS.length bs))
+      | W8.isAlphaNum $ BS.head bs = Right (BS.head bs, BS.tail bs)
+      | otherwise = Left (ParserErr "bs is not alphanumeric" (BS.length bs))
 
 alphaNumerics :: Parser [W8.Word8]
 alphaNumerics = some alphaNumeric
@@ -86,9 +98,9 @@ alphaNumerics = some alphaNumeric
 ascii = Parser charP
   where
     charP bs
-      | BS.empty == bs = Nothing
-      | W8.isAscii $ BS.head bs = Just (BS.head bs, BS.tail bs)
-      | otherwise = Nothing
+      | BS.empty == bs = Left (ParserErr "nothing to read" (BS.length bs))
+      | W8.isAscii $ BS.head bs = Right (BS.head bs, BS.tail bs)
+      | otherwise = Left (ParserErr "bs is not ascii" (BS.length bs))
 
 asciis :: Parser [W8.Word8]
 asciis = some ascii
@@ -97,9 +109,9 @@ not' :: W8.Word8 -> Parser W8.Word8
 not' c = Parser charP
   where
     charP bs
-      | BS.empty == bs = Nothing
-      | BS.head bs /= c = Just (BS.head bs, BS.tail bs)
-      | otherwise = Nothing
+      | BS.empty == bs = Left (ParserErr "nothing to read" (BS.length bs))
+      | BS.head bs /= c = Right (BS.head bs, BS.tail bs)
+      | otherwise = Left (ParserErr "first char of bs was c" (BS.length bs))
 
 til :: W8.Word8 -> Parser [W8.Word8]
 til = some . not'

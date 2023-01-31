@@ -44,11 +44,11 @@ cases = parallel $ do
     forM_ explicitCases $ \(input, want) -> do
       it (printf "correctly parses explicit case %s" (show input)) $ do
         let output = genericParse input
-        output `shouldBe` Just (ParsedMsg want)
+        output `shouldBe` Right (ParsedMsg want)
     forM_ generatedCases $ \(input, want) -> do
       it (printf "correctly parses generated case %s" (show input)) $ do
         let output = genericParse input
-        output `shouldBe` Just (ParsedMsg want)
+        output `shouldBe` Right (ParsedMsg want)
 
 buildProtoInput :: Msg -> BS.ByteString
 buildProtoInput m = do
