@@ -21,4 +21,4 @@ cases = parallel $ do
       forM_ explicitCases $ \(input, want) ->
         it (printf "correctly parses explicit case %s" (show input)) $ do
           let output = genericParse input
-          output `shouldBe` Just (ParsedOk want)
+          output `shouldBe` Right (ParsedOk want)

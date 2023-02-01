@@ -5,6 +5,7 @@ module Client where
 import           Control.Concurrent
 import           Control.Exception
 import qualified Data.ByteString    as BS
+import           Lib.Parser
 import qualified Network.Simple.TCP as TCP
 import           Parsers.Parsers
 
@@ -26,12 +27,12 @@ connect host port retryCount = do
       case bs of
         Just a -> do
           case genericParse a of
-            Just result ->
+            Right result ->
               case result of
                 ParsedInfo a -> return ()
                 _            -> error $ "response incorrect: " ++ show a
-            Nothing -> do
-                error "parser failed to read a valid message"
+            Left s -> do
+                error . message $ s
         Nothing -> do
           if retryCount < 1
             then error "retry count exceeded, no message recieved"

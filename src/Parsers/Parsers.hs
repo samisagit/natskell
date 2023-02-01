@@ -25,10 +25,10 @@ data ParsedMessage = ParsedPing Ping
   | ParsedMsg Msg
   deriving (Show, Eq)
 
-genericParse :: ByteString -> Maybe ParsedMessage
+genericParse :: ByteString -> Either ParserErr ParsedMessage
 genericParse a = case result of
-  Just (p, _) -> return p
-  Nothing     -> Nothing
+  Left s       -> Left s
+  Right (p, _) -> Right p
   where
     result = runParser (
       pongParser

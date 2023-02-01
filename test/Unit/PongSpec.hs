@@ -25,7 +25,7 @@ cases = parallel $ do
     forM_ explicitParserCases $ \(input, want) -> do
       it (printf "correctly parses explicit case %s" (show input)) $ do
         let output = genericParse input
-        output `shouldBe` Just (ParsedPong want)
+        output `shouldBe` Right (ParsedPong want)
   describe "PONG transformer" $ do
     forM_ explicitTransformerCases $ \(input, want) -> do
       it (printf "correctly transforms %s" (show input)) $ do
