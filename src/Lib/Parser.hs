@@ -61,7 +61,8 @@ char c = Parser charP
     charP bs
       | BS.empty == bs = Left (ParserErr "nothing to read" 0)
       | BS.head bs == c = Right (c, BS.tail bs)
-      | otherwise = Left (ParserErr (C.unpack $ foldr BS.append "" [BS.pack [BS.head bs],  " does not match ", BS.pack [c], " in ", bs]) (BS.length bs))
+      | otherwise = Left (ParserErr (errString bs) (BS.length bs))
+    errString bs = w8sToString [BS.head bs] ++ " does not match " ++ w8sToString [c] ++ " in " ++ C.unpack bs
 
 
 charIn :: [W8.Word8] -> Parser W8.Word8
@@ -70,7 +71,11 @@ charIn opts = Parser charP
     charP bs
       | BS.empty == bs = Left (ParserErr "nothing to read" 0)
       | BS.head bs `elem` opts = Right (BS.head bs, BS.tail bs)
-      | otherwise = Left (ParserErr "bs does not match any in set" (BS.length bs))
+      | otherwise = Left (ParserErr (errString bs) (BS.length bs))
+    errString bs = w8sToString [BS.head bs] ++ " not in " ++ w8sToString opts ++ " in " ++ C.unpack bs
+
+w8sToString :: [W8.Word8] -> String
+w8sToString = C.unpack . BS.pack
 
 space :: Parser W8.Word8
 space = char W8._space
@@ -90,7 +95,7 @@ alphaNumeric = Parser charP
     charP bs
       | BS.empty == bs = Left (ParserErr "nothing to read" (BS.length bs))
       | W8.isAlphaNum $ BS.head bs = Right (BS.head bs, BS.tail bs)
-      | otherwise = Left (ParserErr "bs is not alphanumeric" (BS.length bs))
+      | otherwise = Left (ParserErr (w8sToString [BS.head bs] ++ " is not alphanumeric in " ++ C.unpack bs) (BS.length bs))
 
 alphaNumerics :: Parser [W8.Word8]
 alphaNumerics = some alphaNumeric
@@ -100,7 +105,7 @@ ascii = Parser charP
     charP bs
       | BS.empty == bs = Left (ParserErr "nothing to read" (BS.length bs))
       | W8.isAscii $ BS.head bs = Right (BS.head bs, BS.tail bs)
-      | otherwise = Left (ParserErr "bs is not ascii" (BS.length bs))
+      | otherwise = Left (ParserErr (w8sToString [BS.head bs] ++ " is not ascii in " ++ C.unpack bs) (BS.length bs))
 
 asciis :: Parser [W8.Word8]
 asciis = some ascii
@@ -111,7 +116,7 @@ not' c = Parser charP
     charP bs
       | BS.empty == bs = Left (ParserErr "nothing to read" (BS.length bs))
       | BS.head bs /= c = Right (BS.head bs, BS.tail bs)
-      | otherwise = Left (ParserErr "first char of bs was c" (BS.length bs))
+      | otherwise = Left (ParserErr (w8sToString [BS.head bs] ++ " was explicitly not allowed by parser in " ++ C.unpack bs) (BS.length bs))
 
 til :: W8.Word8 -> Parser [W8.Word8]
 til = some . not'
