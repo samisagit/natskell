@@ -17,16 +17,16 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: cachix/install-nix-action@v15
-    - run: nix-shell --arg hls false --run "hlint -git"
+    - run: nix develop --command bash -c "make lint"
   test:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
     - uses: cachix/install-nix-action@v15
-    - run: nix-shell --arg hls false --run "make test"
+    - run: nix develop --command bash -c "make test"
   testlong:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
     - uses: cachix/install-nix-action@v15
-    - run: nix-shell --arg hls false --run "make generated-unit-test"
+    - run: nix develop --command bash -c "make generated-unit-test"
