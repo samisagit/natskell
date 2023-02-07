@@ -105,7 +105,7 @@ explicitValidationCases = [
   ]
 
 validationCases = parallel $ do
-  describe "CONNECT transformer" $ do
+  describe "CONNECT validater" $ do
     forM_ explicitValidationCases $ \(input, want) -> do
       it (printf "correctly validates %s" (show input)) $ do
         validate input `shouldBe` want
