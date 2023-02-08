@@ -121,9 +121,6 @@ not' c = Parser charP
 til :: W8.Word8 -> Parser [W8.Word8]
 til = some . not'
 
-find' :: W8.Word8 -> Parser [W8.Word8]
-find' c = (++) <$> til c <*> string (BS.pack [c])
-
 integer :: Parser [W8.Word8]
 integer = stringWithChars [W8._0 .. W8._9]
 
