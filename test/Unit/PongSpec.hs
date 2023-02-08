@@ -9,6 +9,7 @@ import           Test.Hspec
 import           Text.Printf
 import           Transformers.Transformers
 import           Types.Pong
+import           Validators.Validators
 
 spec :: Spec
 spec = do
@@ -30,3 +31,9 @@ cases = parallel $ do
     forM_ explicitTransformerCases $ \(input, want) -> do
       it (printf "correctly transforms %s" (show input)) $ do
         transform input `shouldBe` want
+
+validateCase = parallel $ do
+  describe "PONG validater" $ do
+    it "correctly validates PONG" $ do
+      validate Pong `shouldBe` Nothing
+

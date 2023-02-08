@@ -10,13 +10,15 @@ import           Test.Hspec
 import           Text.Printf
 import           Transformers.Transformers
 import           Types.Connect
+import           Validators.Validators
 
 spec :: Spec
 spec = do
-  cases
+  transformationCases
+  validationCases
 
-explicitCases :: [(Connect, BS.ByteString)]
-explicitCases = [
+explicitTransformationCases :: [(Connect, BS.ByteString)]
+explicitTransformationCases = [
   (
     Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" Nothing Nothing Nothing Nothing,
     "CONNECT {\"verbose\": false, \"pedantic\": false, \"tls_required\": false, \"lang\": \"Haskell\", \"version\": \"1\"}"
@@ -31,9 +33,9 @@ explicitCases = [
     )
   ]
 
-cases = parallel $ do
+transformationCases = parallel $ do
   describe "CONNECT transformer" $ do
-    forM_ explicitCases $ \(input, want) -> do
+    forM_ explicitTransformationCases $ \(input, want) -> do
       it (printf "correctly transforms %s" (show input)) $ do
         let wantProto = BS.take 8 want
         let wantJSONString = BS.drop 8 want
@@ -48,4 +50,63 @@ cases = parallel $ do
 
         gotProto `shouldBe` wantProto
         gotJSON `shouldBe` wantJSON
+
+
+explicitValidationCases :: [(Connect, Maybe BS.ByteString)]
+explicitValidationCases = [
+  (
+    Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" Nothing Nothing Nothing Nothing,
+    Nothing
+  ),
+  (
+    Connect False False False (Just "") Nothing Nothing Nothing "Haskell" "1" Nothing Nothing Nothing Nothing,
+    Just "explicit empty auth token"
+  ),
+  (
+    Connect False False False Nothing (Just "") Nothing Nothing "Haskell" "1" Nothing Nothing Nothing Nothing,
+    Just "explicit empty user"
+  ),
+  (
+    Connect False False False Nothing Nothing (Just "") Nothing "Haskell" "1" Nothing Nothing Nothing Nothing,
+    Just "explicit empty pass"
+  ),
+  (
+    Connect False False False Nothing Nothing Nothing (Just "") "Haskell" "1" Nothing Nothing Nothing Nothing,
+    Just "explicit empty name"
+  ),
+  (
+    Connect False False False Nothing Nothing Nothing Nothing "" "1" Nothing Nothing Nothing Nothing,
+    Just "explicit empty lang"
+  ),
+  (
+    Connect False False False Nothing Nothing Nothing Nothing "Haskell" "" Nothing Nothing Nothing Nothing,
+    Just "explicit empty version"
+  ),
+  (
+    Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" (Just 0) Nothing Nothing Nothing,
+    Nothing
+  ),
+  (
+    Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" (Just 1) Nothing Nothing Nothing,
+    Nothing
+  ),
+  (
+    Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" (Just 2) Nothing Nothing Nothing,
+    Just "invalid protocol"
+  ),
+  (
+    Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" Nothing Nothing (Just "") Nothing,
+    Just "explicit empty sig"
+  ),
+  (
+    Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" Nothing Nothing Nothing (Just ""),
+    Just "explicit empty jwt"
+  )
+  ]
+
+validationCases = parallel $ do
+  describe "CONNECT validater" $ do
+    forM_ explicitValidationCases $ \(input, want) -> do
+      it (printf "correctly validates %s" (show input)) $ do
+        validate input `shouldBe` want
 
