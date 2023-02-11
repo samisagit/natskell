@@ -121,6 +121,9 @@ not' c = Parser charP
 til :: W8.Word8 -> Parser [W8.Word8]
 til = some . not'
 
+digit :: Parser W8.Word8
+digit = charIn [W8._0 .. W8._9]
+
 integer :: Parser [W8.Word8]
 integer = stringWithChars [W8._0 .. W8._9]
 

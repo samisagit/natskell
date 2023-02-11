@@ -4,6 +4,7 @@ module ValidatorsSpec (spec) where
 
 import qualified Data.ByteString       as BS
 import           Test.Hspec
+import           Test.Hspec.QuickCheck (modifyMaxSuccess)
 import           Test.QuickCheck
 import           Types.Connect
 import           Types.Pub
@@ -17,14 +18,18 @@ spec = do
 
 qc = do
   describe "validator" $ do
-    it "passes quick check given connect" . property $
-      propConnect
-    it "passes quick check given pub" . property $
-      propPub
-    it "passes quick check given sub" . property $
-      propSub
-    it "passes quick check given unsub" . property $
-      propUnsub
+    modifyMaxSuccess (const 100000) $ do
+      it "passes quick check given connect" . property $
+        propConnect
+    modifyMaxSuccess (const 100000) $ do
+      it "passes quick check given pub" . property $
+        propPub
+    modifyMaxSuccess (const 100000) $ do
+      it "passes quick check given sub" . property $
+        propSub
+    modifyMaxSuccess (const 100000) $ do
+      it "passes quick check given unsub" . property $
+        propUnsub
 
 propConnect :: Connect -> Bool
 propConnect c =

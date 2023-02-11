@@ -6,27 +6,26 @@
     flake-utils.url = "github:numtide/flake-utils/master";
   };
 
+
   outputs = { self, nixpkgs, flake-utils }: 
     flake-utils.lib.eachDefaultSystem (system:
       let
-        compiler = "ghc92";
-        ghc = pkgs.haskell.packages.${compiler}.ghcWithPackages (ps: with ps; [haskell-language-server]);
         pkgs = import nixpkgs {
           inherit system;
         };
+        hls = pkgs.haskell-language-server.override{supportedGhcVersions = [ "925" ];};
       in {
-	defaultPackage= pkgs.hello;
+	defaultPackage = pkgs.hello;
 
         devShell = pkgs.mkShell{ 
           buildInputs = [
-            ghc
+            hls
             pkgs.stack
             pkgs.hlint
             pkgs.stylish-haskell
+            pkgs.docker-compose
 	    pkgs.zlib
-	    pkgs.gnumake
           ];
-          shellHook = "eval $(egrep ^export ${ghc}/bin/ghc)";
           NIX_PATH = "nixpkgs=" + pkgs.path;
         };
       });
