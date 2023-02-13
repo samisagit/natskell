@@ -68,8 +68,8 @@ propTil :: W8.Word8 -> BS.ByteString -> Bool
 propTil c i = do
   let output = Parser.runParser (Parser.til c) i
   case output of
-    -- Right (struct, "")   -> False -- til should always leave `c` char in rest (#93)
-    Right (struct, rest) -> c `notElem` struct -- && BS.head rest == c
+    Right (struct, "")   -> False -- til should always leave `c` char in rest (#93)
+    Right (struct, rest) -> c `notElem` struct && BS.head rest == c
     Left _               -> BS.null i || c == BS.head i || c `BS.notElem` BS.tail i
 
 propTakeAscii :: Int -> BS.ByteString -> Bool
