@@ -7,6 +7,7 @@ import qualified Data.ByteString.Char8 as B
 import           Data.Char
 import           Data.Either
 import           Data.Maybe
+import qualified Data.Word8            as W8
 import qualified Lib.Parser            as Parser
 import           Test.Hspec
 import           Test.Hspec.QuickCheck (modifyMaxSuccess)
@@ -42,78 +43,54 @@ qc = do
       it "passes quick check for digit" . property $
         propTakeDigit
 
-propChar :: Char -> String -> Bool
+propChar :: W8.Word8 -> BS.ByteString -> Bool
 propChar c s = do
-  let output = Parser.runParser (Parser.char parserExpectation) parserInput
-  if BS.length parserInput > 0 && BS.head parserInput == parserExpectation
-    then fmap fst output == Right parserExpectation
+  let output = Parser.runParser (Parser.char c) s
+  if BS.length s > 0 && BS.head s == c
+    then fmap fst output == Right c
   else isLeft output
-  where
-    parserExpectation = BS.head $ charToByteString c
-    parserInput = stringToByteString s
 
-propCharIn :: [Char] -> String -> Bool
+propCharIn :: [W8.Word8] -> BS.ByteString -> Bool
 propCharIn cs s = do
-  let output = Parser.runParser (Parser.charIn parserExpectation) parserInput
+  let output = Parser.runParser (Parser.charIn cs) s
   case output of
-    Right (struct, rest) -> BS.head parserInput `BS.elem` BS.pack parserExpectation
-    Left _               -> BS.null parserInput || BS.head parserInput `BS.notElem` BS.pack parserExpectation
-  where
-    parserExpectation = map charToW8 cs
-    parserInput = stringToByteString s
+    Right (struct, rest) -> BS.head s `BS.elem` BS.pack cs
+    Left _               -> BS.null s || BS.head s `BS.notElem` BS.pack cs
 
-propString :: String -> String -> Bool
+propString :: BS.ByteString -> BS.ByteString -> Bool
 propString p i = do
-  let output = Parser.runParser (Parser.string parserExpectation) parserInput
-  if BS.take (length p) parserInput == parserExpectation
-    then fmap fst output == Right (BS.unpack parserExpectation)
+  let output = Parser.runParser (Parser.string p) i
+  if BS.take (BS.length p) i == p
+    then fmap fst output == Right (BS.unpack p)
   else isLeft output
-  where
-    parserExpectation = stringToByteString p
-    parserInput = stringToByteString i
 
--- TODO: try removing ascii filter, and making conditions based on the bytestring
--- inputs and expectations.
-
-propTil :: Char -> String -> Bool
+propTil :: W8.Word8 -> BS.ByteString -> Bool
 propTil c i = do
-  let output = Parser.runParser (Parser.til tilChar) parserInput
+  let output = Parser.runParser (Parser.til c) i
   case output of
-    Right (struct, rest) -> tilChar `notElem` struct
-    Left _               -> BS.null parserInput || tilChar == BS.head parserInput || tilChar `BS.notElem` BS.tail parserInput
-  where
-    tilChar = BS.head $ charToByteString c
-    parserInput = stringToByteString i
+    -- Right (struct, "")   -> False -- til should always leave `c` char in rest (#93)
+    Right (struct, rest) -> c `notElem` struct -- && BS.head rest == c
+    Left _               -> BS.null i || c == BS.head i || c `BS.notElem` BS.tail i
 
-propTakeAscii :: Int -> String -> Bool
+propTakeAscii :: Int -> BS.ByteString -> Bool
 propTakeAscii n i = do
-  let output = Parser.runParser (Parser.take' n Parser.ascii) parserInput
+  let output = Parser.runParser (Parser.take' n Parser.ascii) i
   case output of
     Right (struct, rest) -> length struct == n
-    Left _               -> n < 0 || length i < n || not (stringIsAscii i)
-  where
-    parserInput = stringToByteString i
+    Left _               -> n < 0 || BS.length i < n || not (stringIsAscii i)
 
-propTakeDigit :: Int -> String -> Bool
+propTakeDigit :: Int -> BS.ByteString -> Bool
 propTakeDigit n i = do
-  let output = Parser.runParser (Parser.take' n Parser.digit) parserInput
+  let output = Parser.runParser (Parser.take' n Parser.digit) i
   case output of
     Right (struct, rest) -> length struct == n
-    Left _               -> n < 0 || length i < n || not (stringIsNum i)
-  where
-    parserInput = stringToByteString i
+    Left _               -> n < 0 || BS.length i < n || not (stringIsNum i)
 
-stringIsAscii :: String -> Bool
-stringIsAscii = all isAscii
+stringIsAscii :: BS.ByteString -> Bool
+stringIsAscii = all isAscii . B.unpack
 
-charToByteString c = B.pack [c]
-
-stringToByteString = B.pack
-
-charToW8 = BS.head . charToByteString
-
-stringIsNum :: String -> Bool
-stringIsNum = all ((== True) . charIsDigit)
+stringIsNum :: BS.ByteString -> Bool
+stringIsNum = all ((== True) . charIsDigit) . B.unpack
 
 charIsDigit :: Char -> Bool
 charIsDigit = isJust . maybeIntId . readMaybe . (:[])
@@ -121,3 +98,4 @@ charIsDigit = isJust . maybeIntId . readMaybe . (:[])
 maybeIntId :: Maybe Int -> Maybe Int
 maybeIntId = id
 
+instance Arbitrary BS.ByteString where arbitrary = BS.pack <$> arbitrary

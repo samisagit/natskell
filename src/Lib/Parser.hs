@@ -118,6 +118,8 @@ not' c = Parser charP
       | BS.head bs /= c = Right (BS.head bs, BS.tail bs)
       | otherwise = Left (ParserErr (w8sToString [BS.head bs] ++ " was explicitly not allowed by parser in " ++ C.unpack bs) (BS.length bs))
 
+-- TODO: til will read until the end of the input and return successfully if no match is found
+-- raised in #93
 til :: W8.Word8 -> Parser [W8.Word8]
 til = some . not'
 
@@ -156,7 +158,6 @@ headersParser n = do
   version <- til W8._cr
   suf <- string "\r\n"
   headerPairsParser (n - sum (map (BS.length . BS.pack) [pre, version, suf]))
-
 
 headerPairsParser :: Int -> Parser [(BS.ByteString, BS.ByteString)]
 headerPairsParser 0 = do
