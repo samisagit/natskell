@@ -42,6 +42,18 @@ qc = do
     modifyMaxSuccess (const 100000) $ do
       it "passes quick check for digit" . property $
         propTakeDigit
+    modifyMaxSuccess (const 100000) $ do
+      it "passes quick check for space" . property $
+        propSpace
+    modifyMaxSuccess (const 100000) $ do
+      it "passes quick check for ss" . property $
+        propSomeSpace
+    modifyMaxSuccess (const 100000) $ do
+      it "passes quick check for stringWithChars" . property $
+        propStringWithChars
+    modifyMaxSuccess (const 100000) $ do
+      it "passes quick check for alphaNumeric" . property $
+        propAlphaNumeric
 
 propChar :: W8.Word8 -> BS.ByteString -> Bool
 propChar c s = do
@@ -85,6 +97,34 @@ propTakeDigit n i = do
   case output of
     Right (struct, rest) -> length struct == n
     Left _               -> n < 0 || BS.length i < n || not (stringIsNum i)
+
+propSpace :: BS.ByteString -> Bool
+propSpace i = do
+  let output = Parser.runParser Parser.space i
+  case output of
+    Right (struct, rest) -> BS.length rest == BS.length i -1 && struct == W8._space
+    Left _               -> BS.null i || BS.head i /= W8._space
+
+propSomeSpace :: BS.ByteString -> Bool
+propSomeSpace i = do
+  let output = Parser.runParser Parser.ss i
+  case output of
+    Right (struct, rest) -> all (== W8._space) struct && (BS.null rest || BS.head rest /= W8._space)
+    Left _               -> BS.null i || BS.head i /= W8._space
+
+propStringWithChars :: [W8.Word8] -> BS.ByteString -> Bool
+propStringWithChars cs i = do
+  let output = Parser.runParser (Parser.stringWithChars cs) i
+  case output of
+    Right (struct, rest) -> all (`BS.elem` BS.pack cs) struct && (BS.null rest || not (BS.elem (BS.head rest) (BS.pack cs)))
+    Left _               -> BS.null i || not (BS.elem (BS.head i) (BS.pack cs))
+
+propAlphaNumeric :: BS.ByteString -> Bool
+propAlphaNumeric i = do
+  let output = Parser.runParser Parser.alphaNumeric i
+  case output of
+    Right (struct, rest) -> BS.length rest == BS.length i -1 && W8.isAlphaNum struct
+    Left _               -> BS.null i || not (W8.isAlphaNum (BS.head i))
 
 stringIsAscii :: BS.ByteString -> Bool
 stringIsAscii = all isAscii . B.unpack
