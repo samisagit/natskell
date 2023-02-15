@@ -24,3 +24,5 @@ Please make sure all commits are signed.
 ### Nix
 
 This project has a nix flake, which sets up a useful dev shell. To use it run `nix develop`, which will install the project system depenencies. 
+
+There is a public cachix store at samisagit-natskell for this flake.
