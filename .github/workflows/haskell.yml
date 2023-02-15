@@ -16,8 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
-    - uses: cachix/install-nix-action@v15
-    - uses: cachix/cachix-action@v11
+    - uses: cachix/install-nix-action@v19
+    - uses: cachix/cachix-action@v12
       with:
         name: samisagit-natskell
     - run: nix develop --command bash -c "make lint"
@@ -25,8 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
-    - uses: cachix/install-nix-action@v15
-    - uses: cachix/cachix-action@v11
+    - uses: cachix/install-nix-action@v19
+    - uses: cachix/cachix-action@v12
       with:
         name: samisagit-natskell
     - run: nix develop --command bash -c "make test"
