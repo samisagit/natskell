@@ -23,11 +23,7 @@ library
         natskell-internal,
         base >=4.16.1.0,
         bytestring >=0.11.3.0,
-        word8 >=0.1.3,
-        aeson >=2.0.3.0,
-        text >= 1.2.3.1,
         network-simple >= 0.4.5,
-        base64-bytestring >= 1.2.1.0
 
     build-tool-depends: hspec-discover:hspec-discover
 
@@ -45,8 +41,6 @@ library natskell-internal
         word8 >=0.1.3,
         aeson >=2.0.3.0,
         text >= 1.2.3.1,
-        network-simple >= 0.4.5,
-        base64-bytestring >= 1.2.1.0
 
     exposed-modules:
         Lib.Parser
@@ -84,13 +78,7 @@ test-suite unit-test
                        bytestring >=0.11.3.0,
                        word8 >=0.1.3,
                        aeson >=2.0.3.0,
-                       text >= 1.2.3.1,
-                       base-orphans >=0.8.6,
-                       docker >=0.7.0.0,
-                       network-simple >= 0.4.5,
-                       QuickCheck >= 2.14.2,
-                       base64-bytestring >= 1.2.1.0,
-                       ascii >=1.2.3.0
+                       text >= 1.2.3.1
     other-modules:
         ParserSpec
         MsgSpec
@@ -115,13 +103,7 @@ test-suite fuzz-test
                        hspec >= 2.7,
                        bytestring >=0.11.3.0,
                        word8 >=0.1.3,
-                       aeson >=2.0.3.0,
-                       text >= 1.2.3.1,
-                       base-orphans >=0.8.6,
-                       docker >=0.7.0.0,
-                       network-simple >= 0.4.5,
                        QuickCheck >= 2.14.2,
-                       base64-bytestring >= 1.2.1.0
     other-modules:
         ParserSpec
         ValidatorsSpec
@@ -134,14 +116,8 @@ test-suite system-test
      build-depends:    base >=4.16.1.0,
                        natskell,
                        hspec >= 2.7,
-                       bytestring ^>=0.11.3.0,
-                       word8 ^>=0.1.3,
-                       aeson ^>=2.0.3.0,
                        text ^>= 1.2.3.1,
-                       base-orphans ^>=0.8.6,
                        docker ^>=0.7.0.0,
-                       network-simple ^>= 0.4.5,
-                       QuickCheck ^>= 2.14.2,
                        HTTP ^>= 4000.4.1,
                        conduit-extra >= 1.3.6
     other-modules:
