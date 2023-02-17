@@ -74,7 +74,7 @@ depth = parallel $ do
       outputA `shouldBe` Left (Parser.ParserErr "L does not match N in L" 1)
 
 filterSameChar :: BS.ByteString -> [(BS.ByteString, W8.Word8)] -> [(BS.ByteString, W8.Word8)]
-filterSameChar i [] = []
+filterSameChar _ [] = []
 filterSameChar i os = filter f os
   where f item = fst item /= i
 

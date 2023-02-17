@@ -1,126 +1,135 @@
-cabal-version:      3.0
-name:               natskell
-version:            0.0.0
-synopsis:           A NATS client library written in Haskell
+cabal-version:          3.0
+name:               	natskell
+version:            	0.0.0
+synopsis:           	A NATS client library written in Haskell
 
 -- A longer description of the package.
 -- description:
-homepage:
+
+-- homepage:
 
 -- A URL where users can report bugs.
 -- bug-reports:
-license:            MIT
-license-file:       LICENSE
-author:             samisagit
-maintainer:         sam@whiteteam.co.uk
+
+license:            	MIT
+license-file:       	LICENSE
+author:             	samisagit
+maintainer:         	sam@whiteteam.co.uk
 
 -- A copyright notice.
 -- copyright:
-category:           Web
+
+category:           	Web
+
+common shared
+    default-language: 	Haskell2010
+    build-depends:
+       base 		== 4.16.4.0
+    ghc-options:
+       -haddock -W -Wunused-packages
 
 library
+    import: 		shared
     build-depends:
-        natskell-internal,
-        base >=4.16.1.0,
-        bytestring >=0.11.3.0,
-        network-simple >= 0.4.5,
+       natskell-internal,
+       bytestring 	== 0.11.3.0,
+       network-simple 	== 0.4.5
 
     build-tool-depends: hspec-discover:hspec-discover
 
     exposed-modules:
-        Client
+       Client
 
     hs-source-dirs:
-      client
-    default-language: Haskell2010
+       client
 
 library natskell-internal
+    import: 		shared
     build-depends:
-        base >=4.16.1.0,
-        bytestring >=0.11.3.0,
-        word8 >=0.1.3,
-        aeson >=2.0.3.0,
-        text >= 1.2.3.1,
+       bytestring 	== 0.11.3.0,
+       word8 		== 0.1.3,
+       aeson 		== 2.0.3.0,
+       text 		== 1.2.5.0
+
+    build-tool-depends: hspec-discover:hspec-discover
 
     exposed-modules:
-        Lib.Parser
-        Parsers.Parsers
-        Transformers.Transformers
-        Validators.Validators
-        Types.Msg
-        Types.Ping
-        Types.Pong
-        Types.Ok
-        Types.Err
-        Types.Info
-        Types.Pub
-        Types.Connect
-        Types.Sub
-        Types.Unsub
+       Lib.Parser
+       Parsers.Parsers
+       Transformers.Transformers
+       Validators.Validators
+       Types.Msg
+       Types.Ping
+       Types.Pong
+       Types.Ok
+       Types.Err
+       Types.Info
+       Types.Pub
+       Types.Connect
+       Types.Sub
+       Types.Unsub
 
     hs-source-dirs:
-      internal
-      internal/Types
-      internal/Parsers
-      internal/Transformers
-      internal/Validators
-      internal/Lib
-    default-language: Haskell2010
+       internal
+       internal/Types
+       internal/Parsers
+       internal/Transformers
+       internal/Validators
+       internal/Lib
 
 test-suite unit-test
-     default-language: Haskell2010
-     type:             exitcode-stdio-1.0
-     hs-source-dirs:   test/Unit
-     main-is:          Spec.hs
-     build-depends:    base >=4.16.1.0,
-                       natskell-internal,
-                       hspec >= 2.7,
-                       bytestring >=0.11.3.0,
-                       word8 >=0.1.3,
-                       aeson >=2.0.3.0,
-                       text >= 1.2.3.1
+    import: 		shared
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test/Unit
+    main-is:          Spec.hs
+    build-depends:   
+       natskell-internal,
+       hspec 		== 2.10.8,
+       bytestring 	== 0.11.3.0,
+       word8 		== 0.1.3,
+       aeson		== 2.0.3.0,
+       text 		== 1.2.5.0
     other-modules:
-        ParserSpec
-        MsgSpec
-        PingSpec
-        PongSpec
-        OkSpec
-        ErrSpec
-        InfoSpec
-        PubSpec
-        ConnectSpec
-        SubSpec
-        UnsubSpec
-        Fixtures
+       ParserSpec
+       MsgSpec
+       PingSpec
+       PongSpec
+       OkSpec
+       ErrSpec
+       InfoSpec
+       PubSpec
+       ConnectSpec
+       SubSpec
+       UnsubSpec
+       Fixtures
 
 test-suite fuzz-test
-     default-language: Haskell2010
-     type:             exitcode-stdio-1.0
-     hs-source-dirs:   test/Fuzz
-     main-is:          Spec.hs
-     build-depends:    base >=4.16.1.0,
-                       natskell-internal,
-                       hspec >= 2.7,
-                       bytestring >=0.11.3.0,
-                       word8 >=0.1.3,
-                       QuickCheck >= 2.14.2,
+    import: 		shared
+    type:             	exitcode-stdio-1.0
+    hs-source-dirs:   	test/Fuzz
+    main-is:          	Spec.hs
+    build-depends:    
+       natskell-internal,
+       hspec 		== 2.10.8,
+       bytestring 	== 0.11.3.0,
+       word8 		== 0.1.3,
+       QuickCheck 	== 2.14.2
     other-modules:
-        ParserSpec
-        ValidatorsSpec
+       ParserSpec
+       ValidatorsSpec
 
 test-suite system-test
-     default-language: Haskell2010
-     type:             exitcode-stdio-1.0
-     hs-source-dirs:   test/System
-     main-is:          Spec.hs
-     build-depends:    base >=4.16.1.0,
-                       natskell,
-                       hspec >= 2.7,
-                       text ^>= 1.2.3.1,
-                       docker ^>=0.7.0.0,
-                       HTTP ^>= 4000.4.1,
-                       conduit-extra >= 1.3.6
+    import: 		shared
+    type:             	exitcode-stdio-1.0
+    hs-source-dirs:   	test/System
+    main-is:          	Spec.hs
+    build-depends:   
+       natskell,
+       hspec 		== 2.10.8,
+       text 		== 1.2.5.0,
+       docker 		== 0.7.0.0,
+       HTTP 		== 4000.4.1,
+       conduit-extra 	== 1.3.6
     other-modules:
-        NatsWrappers
-        ClientSpec
-
+       NatsWrappers
+       ClientSpec

@@ -14,6 +14,7 @@ import           Validators.Validators
 spec :: Spec
 spec = do
   cases
+  validateCase
 
 explicitParserCases :: [(BS.ByteString, Pong)]
 explicitParserCases = [("PONG\r\n", Pong)]

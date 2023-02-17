@@ -40,7 +40,7 @@ ensureImage image tag = do
       out <-DC.pullImage image tag Con.sinkLbs
       case out of
         Left err -> error $ show err
-        Right n  -> return ()
+        Right _  -> return ()
 
 runNATSContainer :: Text.Text -> IO (DC.ContainerID, DCT.ContainerDetails)
 runNATSContainer tag = do

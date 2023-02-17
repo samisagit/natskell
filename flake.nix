@@ -20,11 +20,13 @@
         devShell = pkgs.mkShell{ 
           buildInputs = [
             hls
-            pkgs.stack
             pkgs.hlint
             pkgs.stylish-haskell
             pkgs.docker-compose
 	    pkgs.zlib
+	    pkgs.cabal-install
+	    pkgs.haskell.compiler.ghc925
+            pkgs.haskellPackages.hspec-discover
           ];
           NIX_PATH = "nixpkgs=" + pkgs.path;
         };
