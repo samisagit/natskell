@@ -1,3 +1,6 @@
+init:
+	cabal update
+
 generated-unit-test: /tmp/generated-unit-test.out
 
 /tmp/generated-unit-test.out: $(wildcard src/*) $(wildcard test/Unit/*)
