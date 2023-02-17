@@ -105,9 +105,7 @@ packStr' :: String -> BS.ByteString
 packStr' = encodeUtf8 . T.pack
 
 boolToJSON :: Bool -> BS.ByteString
-boolToJSON b
-  | b  = "true"
-  | not b = "false"
+boolToJSON b = if b then "true" else "false"
 
 commaSep :: [BS.ByteString] -> BS.ByteString
 commaSep []     = ""

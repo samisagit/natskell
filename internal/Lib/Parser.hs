@@ -119,7 +119,12 @@ not' c = Parser charP
       | otherwise = Left (ParserErr (w8sToString [BS.head bs] ++ " was explicitly not allowed by parser in " ++ C.unpack bs) (BS.length bs))
 
 til :: W8.Word8 -> Parser [W8.Word8]
-til = some . not'
+til d = Parser $ \x -> do
+  if BS.elem d x then runParser (some (not' d)) x
+    else Left( ParserErr "unexpected end of input" (BS.length x))
+
+digit :: Parser W8.Word8
+digit = charIn [W8._0 .. W8._9]
 
 integer :: Parser [W8.Word8]
 integer = stringWithChars [W8._0 .. W8._9]
@@ -153,7 +158,6 @@ headersParser n = do
   version <- til W8._cr
   suf <- string "\r\n"
   headerPairsParser (n - sum (map (BS.length . BS.pack) [pre, version, suf]))
-
 
 headerPairsParser :: Int -> Parser [(BS.ByteString, BS.ByteString)]
 headerPairsParser 0 = do

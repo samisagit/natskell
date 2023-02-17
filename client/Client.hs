@@ -29,7 +29,7 @@ connect host port retryCount = do
           case genericParse a of
             Right result ->
               case result of
-                ParsedInfo a -> return ()
+                ParsedInfo _ -> return ()
                 _            -> error $ "response incorrect: " ++ show a
             Left s -> do
                 error . message $ s

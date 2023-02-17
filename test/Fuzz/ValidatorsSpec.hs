@@ -4,6 +4,7 @@ module ValidatorsSpec (spec) where
 
 import qualified Data.ByteString       as BS
 import           Test.Hspec
+import           Test.Hspec.QuickCheck (modifyMaxSuccess)
 import           Test.QuickCheck
 import           Types.Connect
 import           Types.Pub
@@ -17,19 +18,23 @@ spec = do
 
 qc = do
   describe "validator" $ do
-    it "passes quick check given connect" . property $
-      propConnect
-    it "passes quick check given pub" . property $
-      propPub
-    it "passes quick check given sub" . property $
-      propSub
-    it "passes quick check given unsub" . property $
-      propUnsub
+    modifyMaxSuccess (const 100000) $ do
+      it "passes quick check given connect" . property $
+        propConnect
+    modifyMaxSuccess (const 100000) $ do
+      it "passes quick check given pub" . property $
+        propPub
+    modifyMaxSuccess (const 100000) $ do
+      it "passes quick check given sub" . property $
+        propSub
+    modifyMaxSuccess (const 100000) $ do
+      it "passes quick check given unsub" . property $
+        propUnsub
 
 propConnect :: Connect -> Bool
 propConnect c =
   case validate c of
-    Just s  -> not (connectRules c)
+    Just _  -> not (connectRules c)
     Nothing -> connectRules c
 
 connectRules :: Connect -> Bool
@@ -49,7 +54,7 @@ connectRules c
 propPub :: Pub -> Bool
 propPub p =
   case validate p of
-    Just s  -> not (pubRules p)
+    Just _  -> not (pubRules p)
     Nothing -> pubRules p
 
 pubRules :: Pub -> Bool
@@ -62,7 +67,7 @@ pubRules p
 propSub :: Sub -> Bool
 propSub s =
   case validate s of
-    Just e  -> not (subRules s)
+    Just _  -> not (subRules s)
     Nothing -> subRules s
 
 subRules :: Sub -> Bool
@@ -75,7 +80,7 @@ subRules s
 propUnsub :: Unsub -> Bool
 propUnsub u =
   case validate u of
-    Just e  -> not (unsubRules u)
+    Just _  -> not (unsubRules u)
     Nothing -> unsubRules u
 
 unsubRules :: Unsub -> Bool
