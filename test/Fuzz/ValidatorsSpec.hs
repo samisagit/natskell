@@ -102,6 +102,7 @@ instance Arbitrary Connect where
                        <*> arbitrary
                        <*> arbitrary
                        <*> arbitrary
+                       <*> arbitrary
 
 instance Arbitrary Pub where
    arbitrary = Pub <$> arbitrary
