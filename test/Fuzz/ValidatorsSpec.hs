@@ -3,6 +3,7 @@
 module ValidatorsSpec (spec) where
 
 import qualified Data.ByteString       as BS
+import           Data.Maybe
 import           Test.Hspec
 import           Test.Hspec.QuickCheck (modifyMaxSuccess)
 import           Test.QuickCheck
@@ -62,7 +63,12 @@ pubRules p
   | Types.Pub.subject p == "" = False
   | Types.Pub.replyTo p == Just "" = False
   | Types.Pub.payload p == Just "" = False
+  | headers == Just [] = False
+  | isJust headers && Prelude.any (\(k, _) -> k == "") (fromJust headers) = False
+  | isJust headers && Prelude.any (\(_, v) -> v == "") (fromJust headers) = False
   | otherwise = True
+  where
+    headers = Types.Pub.headers p
 
 propSub :: Sub -> Bool
 propSub s =
@@ -106,6 +112,7 @@ instance Arbitrary Connect where
 
 instance Arbitrary Pub where
    arbitrary = Pub <$> arbitrary
+                   <*> arbitrary
                    <*> arbitrary
                    <*> arbitrary
 
