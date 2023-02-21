@@ -30,18 +30,37 @@ instance Transformer Connect where
     BS.append ("CONNECT " :: BS.ByteString) (LBS.toStrict f)
 
 instance Transformer Pub.Pub where
-  transform d = foldr BS.append "" list
-    where
-      list = [
-        "PUB",
-        " ",
-        Pub.subject d,
-        " ",
-        collapseNothing (Pub.replyTo d) " ",
-        packStr' (printf "%v" (lengthNothing . Pub.payload $ d)),
-        "\r\n",
-        collapseNothing (Pub.payload d) "\r\n"
-        ]
+  transform d = case Pub.headers d of
+    Nothing -> foldr BS.append "" [
+      "PUB",
+      " ",
+      Pub.subject d,
+      " ",
+      collapseNothing (Pub.replyTo d) " ",
+      packStr' (printf "%v" (lengthNothing . Pub.payload $ d)),
+      "\r\n",
+      collapseNothing (Pub.payload d) "",
+      "\r\n"
+      ]
+    Just hs -> foldr BS.append "" [
+      "HPUB",
+      " ",
+      Pub.subject d,
+      " ",
+      collapseNothing (Pub.replyTo d) " ",
+      packStr' (printf "%v" (BS.length . headerString $ hs)),
+      " ",
+      packStr' (printf "%v" ((lengthNothing . Pub.payload $ d) + (BS.length . headerString $ hs))),
+      "\r\n",
+      headerString hs,
+      "\r\n",
+      collapseNothing (Pub.payload d) "",
+      "\r\n"
+      ]
+
+headerString :: [(BS.ByteString, BS.ByteString)] -> BS.ByteString
+headerString = BS.concat . map (\(k, v) -> foldr BS.append "" [k, ":", v, "\r\n"])
+
 
 instance Transformer Sub.Sub where
   transform d = do
