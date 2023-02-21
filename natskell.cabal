@@ -55,6 +55,7 @@ library natskell-internal
 
     exposed-modules:
        Lib.Parser
+       Lib.Builder
        Parsers.Parsers
        Transformers.Transformers
        Validators.Validators
