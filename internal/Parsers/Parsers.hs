@@ -105,7 +105,7 @@ infoParser = do
 
   case eitherDecode . BSL.fromStrict $ pack rest of
     Right a -> return (ParsedInfo a)
-    Left e  -> Fail.fail "decode failed"
+    Left _  -> Fail.fail "decode failed"
 
 msgParser =
   msgWithReplyAndPayloadparser
@@ -173,7 +173,7 @@ msgWithReplyparser = do
   ss
   reply <- subjectParser
   ss
-  count <- integer
+  integer
   string "\r\n"
   return
     (ParsedMsg $ Msg
@@ -192,7 +192,7 @@ msgMinParser = do
   ss
   sid <- alphaNumerics
   ss
-  count <- integer
+  integer
   string "\r\n"
   return
     (ParsedMsg $ Msg
@@ -268,10 +268,9 @@ hmsgWithReplyParser = do
   ss
   hcount <- integer
   ss
-  tcount <- integer
+  integer
   string "\r\n"
   let hcountInt = toInt . pack $ hcount
-  let pcountInt = (toInt . pack $ tcount) - (toInt . pack $ hcount)
   headers <- headersParser (hcountInt - 2) -- ignore the last line break
   string "\r\n"
   return
@@ -292,10 +291,9 @@ hmsgMinParser = do
   ss
   hcount <- integer
   ss
-  tcount <- integer
+  integer
   string "\r\n"
   let hcountInt = toInt . pack $ hcount
-  let pcountInt = (toInt . pack $ tcount) - (toInt . pack $ hcount)
   headers <- headersParser (hcountInt - 2) -- ignore the last line break
   string "\r\n"
   return

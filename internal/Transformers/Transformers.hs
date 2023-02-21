@@ -29,7 +29,6 @@ instance Transformer Connect where
     let f = encode c
     BS.append ("CONNECT " :: BS.ByteString) (LBS.toStrict f)
 
-
 instance Transformer Pub.Pub where
   transform d = foldr BS.append "" list
     where
@@ -46,7 +45,7 @@ instance Transformer Pub.Pub where
 
 instance Transformer Sub.Sub where
   transform d = do
-    case Sub.queueGroup d of
+    case qg of
        Just a  -> foldr BS.append "" ["SUB ", subj, " ", a, " ", id]
        Nothing -> foldr BS.append "" ["SUB ", subj, " ", id]
     where

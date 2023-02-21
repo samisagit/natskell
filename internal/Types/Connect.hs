@@ -26,7 +26,8 @@ data Connect = Connect
     echo          :: Maybe Bool,
     sig           :: Maybe BS.ByteString,
     jwt           :: Maybe BS.ByteString,
-    no_responders :: Maybe Bool
+    no_responders :: Maybe Bool,
+    headers       :: Maybe Bool
   }
   deriving (Eq, Show, Generic)
 

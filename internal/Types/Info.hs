@@ -4,9 +4,9 @@ module Types.Info where
 
 import           Control.Monad
 import           Data.Aeson
-import qualified Data.ByteString        as BS
-import qualified Data.Text              as T
-import qualified Data.Text.Encoding     as E
+import qualified Data.ByteString    as BS
+import qualified Data.Text          as T
+import qualified Data.Text.Encoding as E
 import           GHC.Generics
 
 data Info = Info
@@ -21,7 +21,8 @@ data Info = Info
     auth_required :: Maybe Bool,
     tls_required  :: Maybe Bool,
     connect_urls  :: Maybe [BS.ByteString],
-    ldm           :: Maybe Bool
+    ldm           :: Maybe Bool,
+    headers       :: Maybe Bool
   }
   deriving (Eq, Show, Generic)
 
