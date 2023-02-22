@@ -16,18 +16,32 @@ data Pub = Pub
   deriving (Eq, Show)
 
 instance Validator Pub where
-  validate p
-    | subject p == "" = Just "explicit empty subject"
-    | replyTo p == Just "" = Just "explicit empty replyTo"
-    | payload p == Just "" = Just "explicit empty payload"
-    | isJust (validateHeaders p) = validateHeaders p
-    | otherwise = Nothing
+  validate p = do
+    validateSubject p
+    validateReplyTo p
+    validatePayload p
+    validateHeaders p
 
-validateHeaders :: Pub -> Maybe ByteString
+validateSubject :: Pub -> Either ByteString ()
+validateSubject p
+  | subject p == "" = Left "explicit empty subject"
+  | otherwise = Right ()
+
+validateReplyTo :: Pub -> Either ByteString ()
+validateReplyTo p
+  | replyTo p == Just "" = Left "explicit empty replyTo"
+  | otherwise = Right ()
+
+validatePayload :: Pub -> Either ByteString ()
+validatePayload p
+  | payload p == Just "" = Left "explicit empty payload"
+  | otherwise = Right ()
+
+validateHeaders :: Pub -> Either ByteString ()
 validateHeaders p
-  | isNothing (headers p) = Nothing
-  | headers p == Just [] = Just "explicit empty headers"
-  | Prelude.any (\(k, _) -> k == "") (fromJust (headers p)) = Just "explicit empty header key"
-  | Prelude.any (\(_, v) -> v == "") (fromJust (headers p)) = Just "explicit empty header value"
-  | otherwise = Nothing
+  | isNothing (headers p) = Right ()
+  | headers p == Just [] = Left "explicit empty headers"
+  | Prelude.any (\(k, _) -> k == "") (fromJust (headers p)) = Left "explicit empty header key"
+  | Prelude.any (\(_, v) -> v == "") (fromJust (headers p)) = Left "explicit empty header value"
+  | otherwise = Right ()
 

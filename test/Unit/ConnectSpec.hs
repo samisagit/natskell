@@ -51,58 +51,21 @@ transformationCases = parallel $ do
         gotProto `shouldBe` wantProto
         gotJSON `shouldBe` wantJSON
 
-
-explicitValidationCases :: [(Connect, Maybe BS.ByteString)]
+explicitValidationCases :: [(Connect, Either BS.ByteString ())]
 explicitValidationCases = [
-  (
-    Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" Nothing Nothing Nothing Nothing Nothing Nothing,
-    Nothing
-  ),
-  (
-    Connect False False False (Just "") Nothing Nothing Nothing "Haskell" "1" Nothing Nothing Nothing Nothing Nothing Nothing,
-    Just "explicit empty auth token"
-  ),
-  (
-    Connect False False False Nothing (Just "") Nothing Nothing "Haskell" "1" Nothing Nothing Nothing Nothing Nothing Nothing,
-    Just "explicit empty user"
-  ),
-  (
-    Connect False False False Nothing Nothing (Just "") Nothing "Haskell" "1" Nothing Nothing Nothing Nothing Nothing Nothing,
-    Just "explicit empty pass"
-  ),
-  (
-    Connect False False False Nothing Nothing Nothing (Just "") "Haskell" "1" Nothing Nothing Nothing Nothing Nothing Nothing,
-    Just "explicit empty name"
-  ),
-  (
-    Connect False False False Nothing Nothing Nothing Nothing "" "1" Nothing Nothing Nothing Nothing Nothing Nothing,
-    Just "explicit empty lang"
-  ),
-  (
-    Connect False False False Nothing Nothing Nothing Nothing "Haskell" "" Nothing Nothing Nothing Nothing Nothing Nothing,
-    Just "explicit empty version"
-  ),
-  (
-    Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" (Just 0) Nothing Nothing Nothing Nothing Nothing,
-    Nothing
-  ),
-  (
-    Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" (Just 1) Nothing Nothing Nothing Nothing Nothing,
-    Nothing
-  ),
-  (
-    Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" (Just 2) Nothing Nothing Nothing Nothing Nothing,
-    Just "invalid protocol"
-  ),
-  (
-    Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" Nothing Nothing (Just "") Nothing Nothing Nothing,
-    Just "explicit empty sig"
-  ),
-  (
-    Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" Nothing Nothing Nothing (Just "") Nothing Nothing,
-    Just "explicit empty jwt"
-  )
-  ]
+ (Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" Nothing Nothing Nothing Nothing Nothing Nothing, Right ()),
+ (Connect False False False (Just "") Nothing Nothing Nothing "Haskell" "1" Nothing Nothing Nothing Nothing Nothing Nothing, Left "explicit empty auth token"),
+ (Connect False False False Nothing (Just "") Nothing Nothing "Haskell" "1" Nothing Nothing Nothing Nothing Nothing Nothing, Left "explicit empty user"),
+ (Connect False False False Nothing Nothing (Just "") Nothing "Haskell" "1" Nothing Nothing Nothing Nothing Nothing Nothing, Left "explicit empty pass"),
+ (Connect False False False Nothing Nothing Nothing (Just "") "Haskell" "1" Nothing Nothing Nothing Nothing Nothing Nothing, Left "explicit empty name"),
+ (Connect False False False Nothing Nothing Nothing Nothing "" "1" Nothing Nothing Nothing Nothing Nothing Nothing, Left "explicit empty lang"),
+ (Connect False False False Nothing Nothing Nothing Nothing "Haskell" "" Nothing Nothing Nothing Nothing Nothing Nothing, Left "explicit empty version"),
+ (Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" (Just 0) Nothing Nothing Nothing Nothing Nothing, Right ()),
+ (Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" (Just 1) Nothing Nothing Nothing Nothing Nothing, Right ()),
+ (Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" (Just 2) Nothing Nothing Nothing Nothing Nothing, Left "invalid protocol"),
+ (Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" Nothing Nothing (Just "") Nothing Nothing Nothing, Left "explicit empty sig"),
+ (Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" Nothing Nothing Nothing (Just "") Nothing Nothing, Left "explicit empty jwt")
+ ]
 
 validationCases = parallel $ do
   describe "CONNECT validater" $ do

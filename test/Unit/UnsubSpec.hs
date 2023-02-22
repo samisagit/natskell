@@ -27,12 +27,12 @@ transformerCases = parallel $ do
       it (printf "correctly transforms %s" (show input)) $ do
         transform input `shouldBe` want
 
-explicitValidaterCases :: [(Unsub, Maybe ByteString)]
+explicitValidaterCases :: [(Unsub, Either ByteString ())]
 explicitValidaterCases = [
-  (Unsub "a" Nothing, Nothing),
-  (Unsub "a" (Just 1), Nothing),
-  (Unsub "a" (Just 0), Nothing),
-  (Unsub "" Nothing, Just "explicit empty sid")
+  (Unsub "a" Nothing, Right ()),
+  (Unsub "a" (Just 1), Right ()),
+  (Unsub "a" (Just 0), Right ()),
+  (Unsub "" Nothing, Left "explicit empty sid")
   ]
 
 validateCases = parallel $ do

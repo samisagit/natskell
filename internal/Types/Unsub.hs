@@ -12,6 +12,11 @@ data Unsub = Unsub
   deriving (Eq, Show)
 
 instance Validator Unsub where
-  validate u
-    | sid u == "" = Just "explicit empty sid"
-    | otherwise = Nothing
+  validate u = do
+    validateSid u
+
+validateSid :: Unsub -> Either BS.ByteString ()
+validateSid u
+  | sid u == "" = Left "explicit empty sid"
+  | otherwise = Right ()
+
