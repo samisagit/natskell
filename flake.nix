@@ -22,7 +22,6 @@
             hls
             pkgs.hlint
             pkgs.stylish-haskell
-            pkgs.docker-compose
 	    pkgs.zlib
 	    pkgs.cabal-install
 	    pkgs.haskell.compiler.ghc925
