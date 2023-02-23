@@ -39,4 +39,4 @@ transformerCases = parallel $ do
 validateCase = parallel $ do
   describe "PING validater" $ do
     it "correctly validates PING" $ do
-      validate Ping `shouldBe` Nothing
+      validate Ping `shouldBe` Right ()

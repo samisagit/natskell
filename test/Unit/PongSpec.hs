@@ -36,5 +36,5 @@ cases = parallel $ do
 validateCase = parallel $ do
   describe "PONG validater" $ do
     it "correctly validates PONG" $ do
-      validate Pong `shouldBe` Nothing
+      validate Pong `shouldBe` Right ()
 

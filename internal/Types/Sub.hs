@@ -13,8 +13,23 @@ data Sub = Sub
   deriving (Eq, Show)
 
 instance Validator Sub where
-  validate s
-    | subject s == "" = Just "explicit empty subject"
-    | queueGroup s == Just "" = Just "explicit empty queue group"
-    | sid s == "" = Just "explicit empty sid"
-    | otherwise = Nothing
+  validate s = do
+    validateSubject s
+    validateQueueGroup s
+    validateSid s
+
+validateSubject :: Sub -> Either BS.ByteString ()
+validateSubject s
+  | subject s == "" = Left "explicit empty subject"
+  | otherwise = Right ()
+
+validateQueueGroup :: Sub -> Either BS.ByteString ()
+validateQueueGroup s
+  | queueGroup s == Just "" = Left "explicit empty queue group"
+  | otherwise = Right ()
+
+validateSid :: Sub -> Either BS.ByteString ()
+validateSid s
+  | sid s == "" = Left "explicit empty sid"
+  | otherwise = Right ()
+

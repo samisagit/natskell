@@ -34,23 +34,23 @@ transformerCases = parallel $ do
       it (printf "correctly transforms %s" (show input)) $ do
         transform input `shouldBe` want
 
-explicitValidaterCases :: [(Pub, Maybe BS.ByteString)]
-explicitValidaterCases = [
-  (Pub ">" Nothing Nothing Nothing, Nothing),
-  (Pub ">" (Just "SUB.ME") Nothing Nothing, Nothing),
-  (Pub ">" Nothing Nothing (Just "payload"), Nothing),
-  (Pub ">" (Just "SUB.ME") Nothing (Just "payload"), Nothing),
-  (Pub "" Nothing Nothing Nothing, Just "explicit empty subject"),
-  (Pub ">" (Just "") Nothing Nothing, Just "explicit empty replyTo"),
-  (Pub ">" Nothing Nothing (Just ""), Just "explicit empty payload"),
-  (Pub ">" Nothing (Just []) Nothing, Just "explicit empty headers"),
-  (Pub ">" Nothing (Just [("", "value")]) Nothing, Just "explicit empty header key"),
-  (Pub ">" Nothing (Just [("key", "")]) Nothing, Just "explicit empty header value")
+explicitValidatorCases :: [(Pub, Either BS.ByteString ())]
+explicitValidatorCases = [
+  (Pub ">" Nothing Nothing Nothing, Right ()),
+  (Pub ">" (Just "SUB.ME") Nothing Nothing, Right ()),
+  (Pub ">" Nothing Nothing (Just "payload"), Right ()),
+  (Pub ">" (Just "SUB.ME") Nothing (Just "payload"), Right ()),
+  (Pub "" Nothing Nothing Nothing, Left "explicit empty subject"),
+  (Pub ">" (Just "") Nothing Nothing, Left "explicit empty replyTo"),
+  (Pub ">" Nothing Nothing (Just ""), Left "explicit empty payload"),
+  (Pub ">" Nothing (Just []) Nothing, Left "explicit empty headers"),
+  (Pub ">" Nothing (Just [("", "value")]) Nothing, Left "explicit empty header key"),
+  (Pub ">" Nothing (Just [("key", "")]) Nothing, Left "explicit empty header value")
   ]
 
 validateCases = parallel $ do
   describe "PUB validater" $ do
-    forM_ explicitValidaterCases $ \(input, want) ->
+    forM_ explicitValidatorCases $ \(input, want) ->
       it (printf "correctly validates %s" (show input)) $ do
         validate input `shouldBe` want
 

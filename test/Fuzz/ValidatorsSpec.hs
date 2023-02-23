@@ -35,8 +35,8 @@ qc = do
 propConnect :: Connect -> Bool
 propConnect c =
   case validate c of
-    Just _  -> not (connectRules c)
-    Nothing -> connectRules c
+    Left _  -> not (connectRules c)
+    Right _ -> connectRules c
 
 connectRules :: Connect -> Bool
 connectRules c
@@ -55,8 +55,8 @@ connectRules c
 propPub :: Pub -> Bool
 propPub p =
   case validate p of
-    Just _  -> not (pubRules p)
-    Nothing -> pubRules p
+    Left _  -> not (pubRules p)
+    Right _ -> pubRules p
 
 pubRules :: Pub -> Bool
 pubRules p
@@ -73,8 +73,8 @@ pubRules p
 propSub :: Sub -> Bool
 propSub s =
   case validate s of
-    Just _  -> not (subRules s)
-    Nothing -> subRules s
+    Left _  -> not (subRules s)
+    Right _ -> subRules s
 
 subRules :: Sub -> Bool
 subRules s
@@ -86,8 +86,8 @@ subRules s
 propUnsub :: Unsub -> Bool
 propUnsub u =
   case validate u of
-    Just _  -> not (unsubRules u)
-    Nothing -> unsubRules u
+    Left _  -> not (unsubRules u)
+    Right _ -> unsubRules u
 
 unsubRules :: Unsub -> Bool
 unsubRules u
