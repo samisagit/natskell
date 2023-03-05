@@ -1,28 +1,25 @@
-init:
-	cabal update
-
 generated-unit-test: /tmp/generated-unit-test.out
 
 /tmp/generated-unit-test.out: $(wildcard src/*) $(wildcard test/Unit/*)
-	cabal test  natskell:unit-test
+	stack test natskell:unit-test --ta="-j 16 --format=failed-examples --fail-fast --match=generated"
 	touch /tmp/generated-unit-test.out
 
 unit-test: /tmp/unit-test.out
 
 /tmp/unit-test.out: $(wildcard src/*) $(wildcard test/Unit/*)
-	cabal test  natskell:unit-test
+	stack test natskell:unit-test --ta="-j 16 --format=progress --fail-fast --skip=generated"
 	touch /tmp/unit-test.out
 
 fuzz-test: /tmp/fuzz-test.out
 
 /tmp/fuzz-test.out: $(wildcard src/*) $(wildcard test/Fuzz/*)
-	cabal test  natskell:fuzz-test
+	stack test  natskell:fuzz-test --ta="-j 16 --format=progress --fail-fast"
 	touch /tmp/fuzz-test.out
 
 system-test: /tmp/system-test.out
 
 /tmp/system-test.out: $(wildcard src/*) $(wildcard test/System/*) 
-	cabal test natskell:system-test
+	stack test natskell:system-test --ta="-j 16 --format=progress --fail-fast"
 	touch /tmp/system-test.out
 
 test: /tmp/unit-test.out /tmp/fuzz-test.out /tmp/system-test.out
@@ -33,6 +30,16 @@ lint: /tmp/lint.out
 	hlint --git
 	touch /tmp/lint.out
 
+test-all: ./*stack.yaml
+	for file in $^; do \
+		if stack --stack-yaml $${file} test --ta="-j 16 --format=failed-examples --fail-fast" ; then \
+			make clean; \
+		else \
+			echo "Test failed for resolver $${file}"; \
+			exit 1; \
+		fi; \
+	done
+
 PHONY clean:
 clean:
 	rm -f /tmp/generated-unit-test.out
@@ -42,7 +49,7 @@ clean:
 	rm -f /tmp/lint.out
 
 build:
-	cabal build
+	stack build
 
 push-cachix:
 	nix develop --profile dev-profile
