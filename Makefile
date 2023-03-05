@@ -61,9 +61,7 @@ lint: /tmp/lint.out
 
 test-all: ./*stack.yaml
 	for file in $^; do \
-		if stack --stack-yaml $${file} test --fast --cabal-verbosity=silent --ta="-j 16 --format=failed-examples --fail-fast" ; then \
-			make clean; \
-		else \
+		if ! stack --stack-yaml $${file} test --fast --cabal-verbosity=silent --ta="-j 16 --format=failed-examples --fail-fast" ; then \
 			echo "Test failed for resolver $${file}"; \
 			exit 1; \
 		fi; \
@@ -78,7 +76,10 @@ clean:
 	rm -f /tmp/lint.out
 
 build:
-	stack build
+	stack build --fast
+
+build-test:
+	stack test --fast --no-run-tests --ta '-j 16'
 
 push-cachix:
 	nix develop --profile dev-profile
