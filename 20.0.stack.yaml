@@ -67,3 +67,7 @@ packages:
 nix:
   enable: true
   packages: [zlib.dev, zlib.out]
+
+ghc-options:
+  "$everything": -w
+  "natskell": -haddock -W -Wunused-packages
