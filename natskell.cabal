@@ -1,7 +1,7 @@
 cabal-version:          3.0
-name:               	natskell
-version:            	0.0.0
-synopsis:           	A NATS client library written in Haskell
+name:                   natskell
+version:                0.0.0
+synopsis:               A NATS client library written in Haskell
 
 -- A longer description of the package.
 -- description:
@@ -11,29 +11,29 @@ synopsis:           	A NATS client library written in Haskell
 -- A URL where users can report bugs.
 -- bug-reports:
 
-license:            	MIT
-license-file:       	LICENSE
-author:             	samisagit
-maintainer:         	sam@whiteteam.co.uk
+license:                MIT
+license-file:           LICENSE
+author:                 samisagit
+maintainer:             sam@whiteteam.co.uk
 
 -- A copyright notice.
 -- copyright:
 
-category:           	Web
+category:               Web
 
 common shared
-    default-language: 	Haskell2010
+    default-language:     Haskell2010
     build-depends:
-       base 		== 4.16.4.0
+       base
     ghc-options:
        -haddock -W -Wunused-packages
 
 library
-    import: 		shared
+    import:         shared
     build-depends:
        natskell-internal,
-       bytestring 	== 0.11.3.0,
-       network-simple 	== 0.4.5
+       bytestring,
+       network-simple
 
     build-tool-depends: hspec-discover:hspec-discover
 
@@ -44,14 +44,12 @@ library
        client
 
 library natskell-internal
-    import: 		shared
+    import:         shared
     build-depends:
-       bytestring 	== 0.11.3.0,
-       word8 		== 0.1.3,
-       aeson 		== 2.0.3.0,
-       text 		== 1.2.5.0
-
-    build-tool-depends: hspec-discover:hspec-discover
+       bytestring,
+       word8,
+       aeson,
+       text,
 
     exposed-modules:
        Lib.Parser
@@ -79,17 +77,17 @@ library natskell-internal
        internal/Lib
 
 test-suite unit-test
-    import: 		shared
+    import:         shared
     type:             exitcode-stdio-1.0
     hs-source-dirs:   test/Unit
     main-is:          Spec.hs
     build-depends:   
        natskell-internal,
-       hspec 		== 2.10.8,
-       bytestring 	== 0.11.3.0,
-       word8 		== 0.1.3,
-       aeson		== 2.0.3.0,
-       text 		== 1.2.5.0
+       hspec,
+       bytestring,
+       word8,
+       aeson,
+       text
     other-modules:
        ParserSpec
        MsgSpec
@@ -105,32 +103,32 @@ test-suite unit-test
        Fixtures
 
 test-suite fuzz-test
-    import: 		shared
-    type:             	exitcode-stdio-1.0
-    hs-source-dirs:   	test/Fuzz
-    main-is:          	Spec.hs
+    import:         shared
+    type:                 exitcode-stdio-1.0
+    hs-source-dirs:       test/Fuzz
+    main-is:              Spec.hs
     build-depends:    
        natskell-internal,
-       hspec 		== 2.10.8,
-       bytestring 	== 0.11.3.0,
-       word8 		== 0.1.3,
-       QuickCheck 	== 2.14.2
+       hspec,
+       bytestring,
+       word8,
+       QuickCheck
     other-modules:
        ParserSpec
        ValidatorsSpec
 
 test-suite system-test
-    import: 		shared
-    type:             	exitcode-stdio-1.0
-    hs-source-dirs:   	test/System
-    main-is:          	Spec.hs
+    import:         shared
+    type:                 exitcode-stdio-1.0
+    hs-source-dirs:       test/System
+    main-is:              Spec.hs
     build-depends:   
        natskell,
-       hspec 		== 2.10.8,
-       text 		== 1.2.5.0,
-       docker 		== 0.7.0.0,
-       HTTP 		== 4000.4.1,
-       conduit-extra 	== 1.3.6
+       hspec,
+       text ,
+       docker,
+       HTTP,
+       conduit-extra
     other-modules:
        NatsWrappers
        ClientSpec

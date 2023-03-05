@@ -25,3 +25,4 @@ report
 *.swp
 .stack
 *.out
+*.stack.yaml.lock
