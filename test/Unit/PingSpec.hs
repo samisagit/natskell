@@ -28,7 +28,7 @@ parserCases = parallel $ do
     forM_ explicitParserCases $ \(input, want) -> do
       it (printf "correctly parses explicit case %s" (show input)) $ do
         let output = genericParse input
-        output `shouldBe` Right (ParsedPing want)
+        output `shouldBe` Right (ParsedPing want, "")
 
 transformerCases = parallel $ do
   describe "PING transformer" $ do

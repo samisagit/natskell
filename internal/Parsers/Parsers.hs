@@ -25,10 +25,10 @@ data ParsedMessage = ParsedPing Ping
   | ParsedMsg Msg
   deriving (Show, Eq)
 
-genericParse :: ByteString -> Either ParserErr ParsedMessage
+genericParse :: ByteString -> Either ParserErr (ParsedMessage, ByteString)
 genericParse a = case result of
   Left s       -> Left s
-  Right (p, _) -> Right p
+  Right (p, bs) -> Right (p, bs)
   where
     result = runParser (
       pongParser
@@ -98,14 +98,15 @@ infoParser :: Parser ParsedMessage
 infoParser = do
   string "INFO"
   ss
-  rest <- asciis
+  rest <- til _cr
+  string "\r\n"
   -- TODO: there might be one of these, but asciis will have consumed it.
   -- A more generic JSON parser would be handy
   -- string "\r\n"
 
   case eitherDecode . BSL.fromStrict $ pack rest of
     Right a -> return (ParsedInfo a)
-    Left _  -> Fail.fail "decode failed"
+    Left e  -> Fail.fail $ "decode failed" ++ show e
 
 msgParser =
   msgWithReplyAndPayloadparser

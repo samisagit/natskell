@@ -43,9 +43,9 @@ cases = parallel $ do
     forM_ explicitCases $ \(input, want) ->
       it (printf "correctly parses explicit case %s" (show input)) $ do
         let output = genericParse input
-        output `shouldBe` Right (ParsedErr want)
+        output `shouldBe` Right (ParsedErr want, "")
     forM_ generatedCases $ \(input, want) ->
       it (printf "correctly parses generated case %s" (show input)) $ do
         let output = genericParse input
-        output `shouldBe` Right (ParsedErr want)
+        output `shouldBe` Right (ParsedErr want, "")
 

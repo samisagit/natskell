@@ -17,8 +17,8 @@ spec = do
 
 explicitTransformerCases :: [(Sub, ByteString)]
 explicitTransformerCases = [
-  (Sub "SOME.SUBJ" Nothing "uuid", "SUB SOME.SUBJ uuid"),
-  (Sub "SOME.SUBJ" (Just "QUEUE.GROUP.A") "uuid", "SUB SOME.SUBJ QUEUE.GROUP.A uuid")
+  (Sub "SOME.SUBJ" Nothing "uuid", "SUB SOME.SUBJ uuid\r\n"),
+  (Sub "SOME.SUBJ" (Just "QUEUE.GROUP.A") "uuid", "SUB SOME.SUBJ QUEUE.GROUP.A uuid\r\n")
   ]
 
 transformerCases = parallel $ do

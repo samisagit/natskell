@@ -17,8 +17,8 @@ spec = do
 
 explicitTransformerCases :: [(Unsub, ByteString)]
 explicitTransformerCases = [
-  (Unsub "uuid" Nothing, "UNSUB uuid"),
-  (Unsub "uuid" (Just 10), "UNSUB uuid 10")
+  (Unsub "uuid" Nothing, "UNSUB uuid\r\n"),
+  (Unsub "uuid" (Just 10), "UNSUB uuid 10\r\n")
   ]
 
 transformerCases = parallel $ do

@@ -26,14 +26,16 @@ common shared
     build-depends:
        base
     ghc-options:
-       -haddock -W -Wunused-packages
+       -haddock -W -Wunused-packages -threaded
 
 library
     import:         shared
     build-depends:
        natskell-internal,
        bytestring,
-       network-simple
+       network-simple,
+       stm,
+       containers,
 
     build-tool-depends: hspec-discover:hspec-discover
 
@@ -128,7 +130,9 @@ test-suite system-test
        text ,
        docker,
        HTTP,
+       stm,
        conduit-extra
+
     other-modules:
        NatsWrappers
        ClientSpec

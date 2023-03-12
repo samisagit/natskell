@@ -55,11 +55,11 @@ cases = parallel $ do
     forM_ explicitCases $ \(input, want) ->
       it (printf "correctly parses explicit case %s" (show input)) $ do
         let output = genericParse input
-        output `shouldBe` Right (ParsedInfo want)
+        output `shouldBe` Right (ParsedInfo want, "")
     forM_ generatedCases $ \(input, want) ->
       it (printf "correctly parses generated case %s" (show input)) $ do
         let output = genericParse input
-        output `shouldBe` Right (ParsedInfo want)
+        output `shouldBe` Right (ParsedInfo want, "")
 
 buildProtoInput :: Info -> BS.ByteString
 buildProtoInput m = foldr BS.append "" [
