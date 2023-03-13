@@ -3,7 +3,6 @@
 module ClientSpec (spec) where
 
 import           Client
-import           Control.Concurrent.STM.TMVar
 import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Monad
@@ -27,14 +26,13 @@ sys = parallel $ do
       around (withNATSConnection version) $ do
         it "connects successfully" $ \(_, host, port) -> do
           nats <- connect host port
+
+          let want = Msg "foo" "sid" Nothing (Just "bar") Nothing
           (lock, assertion) <- asyncAssert $ \msg -> msg `shouldBe` want
-          sub nats "foo" $ \msg -> assertion msg
+          sub nats "sid" "foo" $ \msg -> assertion msg
           pub nats "foo" "bar"
           join . atomically $ takeTMVar lock
-          where
-            -- TODO: would be good to make cid available on nats, if it's always the same
-            -- or we could provide it to sub...
-            want = Msg "foo" "4" Nothing (Just "bar") Nothing
+          unsub nats "sid" "foo"
 
 asyncAssert :: (Msg -> Expectation) -> IO (TMVar Expectation, Msg -> IO ())
 asyncAssert e = do

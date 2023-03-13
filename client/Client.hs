@@ -1,14 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Client(pub, sub, connect, Msg(..)) where
+module Client(pub, sub, unsub, connect, Msg(..)) where
 
 import           Control.Concurrent
+import           Control.Concurrent.STM
 import           Control.Monad
-import qualified Data.ByteString             as BS
-import Control.Concurrent.STM.TVar
-import Control.Concurrent.STM
-import qualified Data.Map                    as Map
-import qualified Network.Simple.TCP          as TCP
+import qualified Data.ByteString           as BS
+import qualified Data.Map                  as Map
+import qualified Network.Simple.TCP        as TCP
 import           Parsers.Parsers
 import           Transformers.Transformers
 import           Types.Connect
@@ -22,7 +21,7 @@ import           Validators.Validators
 
 data Nats = Nats
   {
-    sock :: TCP.Socket,
+    sock   :: TCP.Socket,
     router :: TVar(Map.Map BS.ByteString (Msg -> IO ()))
   }
 
@@ -45,10 +44,15 @@ pong nats = writeSock nats Pong
 pub :: Nats -> BS.ByteString -> BS.ByteString -> IO ()
 pub nats subject payload = writeSock nats $ Pub subject Nothing Nothing (Just payload)
 
-sub :: Nats -> BS.ByteString -> (Msg -> IO()) -> IO ()
-sub nats subject callback = do
-  atomically . modifyTVar (router nats) $ \m -> Map.insert subject callback m
-  writeSock nats $ Sub subject Nothing "4"
+sub :: Nats -> BS.ByteString -> BS.ByteString -> (Msg -> IO()) -> IO ()
+sub nats sid subject callback = do
+  atomically . modifyTVar (router nats) $ \m -> Map.insert sid callback m
+  writeSock nats $ Sub subject Nothing sid
+
+unsub :: Nats -> BS.ByteString -> BS.ByteString -> IO ()
+unsub nats sid subject = do
+  atomically . modifyTVar (router nats) $ \m -> Map.delete subject m
+  writeSock nats $ Sub subject Nothing sid
 
 readSock :: Nats -> IO ()
 readSock nats = do
@@ -79,7 +83,7 @@ handleParsedMessage nats msg = do
   case msg of
     ParsedMsg a -> do
       readMap <- readTVarIO $ router nats
-      case Map.lookup (Types.Msg.subject a) readMap of
+      case Map.lookup (Types.Msg.sid a) readMap of
         Nothing -> do
           print $ "no callback found for " ++ show msg -- TODO: decide how to handle missing subs
         Just f  -> f a
