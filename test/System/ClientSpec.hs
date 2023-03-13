@@ -6,8 +6,8 @@ import           Client
 import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Monad
-import qualified Data.Text                    as Text
-import qualified Docker.Client                as DC
+import qualified Data.Text              as Text
+import qualified Docker.Client          as DC
 import           NatsWrappers
 import           Test.Hspec
 

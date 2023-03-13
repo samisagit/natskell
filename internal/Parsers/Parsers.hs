@@ -100,9 +100,6 @@ infoParser = do
   ss
   rest <- til _cr
   string "\r\n"
-  -- TODO: there might be one of these, but asciis will have consumed it.
-  -- A more generic JSON parser would be handy
-  -- string "\r\n"
 
   case eitherDecode . BSL.fromStrict $ pack rest of
     Right a -> return (ParsedInfo a)
