@@ -24,15 +24,32 @@ sys = parallel $ do
   describe "client" $ do
     forM_ versions $ \version ->
       around (withNATSConnection version) $ do
-        it "connects successfully" $ \(_, host, port) -> do
+        it "sends and receives messages" $ \(_, host, port) -> do
           nats <- connect host port
 
-          let want = Msg "foo" "sid" Nothing (Just "bar") Nothing
-          (lock, assertion) <- asyncAssert $ \msg -> msg `shouldBe` want
-          sub nats "sid" "foo" $ \msg -> assertion msg
-          pub nats "foo" "bar"
-          join . atomically $ takeTMVar lock
-          unsub nats "sid" "foo"
+          let wantA = Msg "foo" "sidA" Nothing (Just "a") Nothing
+          let wantB = Msg "bar" "sidB" Nothing (Just "b") Nothing
+          let wantC = Msg "baz" "sidC" Nothing (Just "c") Nothing
+
+          (lockA, assertionA) <- asyncAssert $ \msg -> msg `shouldBe` wantA
+          (lockB, assertionB) <- asyncAssert $ \msg -> msg `shouldBe` wantB
+          (lockC, assertionC) <- asyncAssert $ \msg -> msg `shouldBe` wantC
+
+          sub nats "sidA" "foo" $ \msg -> assertionA msg
+          sub nats "sidB" "bar" $ \msg -> assertionB msg
+          sub nats "sidC" "baz" $ \msg -> assertionC msg
+
+          pub nats "foo" "a"
+          pub nats "bar" "b"
+          pub nats "baz" "c"
+
+          join . atomically $ takeTMVar lockA
+          join . atomically $ takeTMVar lockB
+          join . atomically $ takeTMVar lockC
+
+          unsub nats "sidA" "foo"
+          unsub nats "sidB" "bar"
+          unsub nats "sidC" "baz"
 
 asyncAssert :: (Msg -> Expectation) -> IO (TMVar Expectation, Msg -> IO ())
 asyncAssert e = do

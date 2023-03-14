@@ -19,6 +19,14 @@ import           Types.Pub
 import           Types.Sub
 import           Validators.Validators
 
+data Nats = Nats
+  {
+    sock   :: TVar TCP.Socket,
+    router :: TVar(Map.Map BS.ByteString (Msg -> IO ())),
+    config :: TMVar Config,
+    buffer :: TVar BS.ByteString
+  }
+
 data Config = Config
   {
     maxPayload       :: Int,
@@ -28,26 +36,23 @@ data Config = Config
     headersSupported :: Bool
   }
 
-data Nats = Nats
-  {
-    sock   :: TCP.Socket,
-    router :: TVar(Map.Map BS.ByteString (Msg -> IO ())),
-    config :: TMVar Config
-  }
-
 connect :: String -> Int -> IO Nats
 connect host port = do
   (sock, _) <- TCP.connectSock host $ show port
+  sockLock <- newTVarIO sock
   configLock <- newEmptyTMVarIO
   routerLock <- newTVarIO Map.empty
-  let nats = Nats sock routerLock configLock
+  bufferLock <- newTVarIO BS.empty
+  let nats = Nats sockLock routerLock configLock bufferLock
 
   forkIO . forever $ readSock nats
   connect' nats
+  forkIO . forever $ loop nats
   return nats
 
 connect' :: Nats -> IO ()
 connect' nats = do
+  -- TODO: at some point we'll want to read the state set by INFO
   writeSock nats $ Connect {
     Types.Connect.verbose       = False,
     Types.Connect.pedantic      = True,
@@ -84,42 +89,50 @@ unsub nats sid subject = do
 
 readSock :: Nats -> IO ()
 readSock nats = do
-  dat <- TCP.recv (sock nats) 1024
+  socket <- readTVarIO (sock nats)
+  dat    <- TCP.recv socket 1024
   case dat of
     Nothing  -> do
+      -- we've reached the end of input
       threadDelay 1000000
       readSock nats
-    Just msg -> void . forkIO $ handleProtoMessage nats msg
+    Just msg -> void . forkIO $ writeToBuffer nats msg
 
 writeSock :: (Transformer a, Validator a) => Nats -> a -> IO ()
 writeSock nats msg = do
   case validate msg of
     Left err -> error $ show err
-    Right _  -> TCP.send (sock nats) $ transform msg
+    Right _  -> do
+      socket <- readTVarIO (sock nats)
+      TCP.send socket $ transform msg
 
-handleProtoMessage :: Nats -> BS.ByteString -> IO ()
-handleProtoMessage nats msg = do
-  case genericParse msg of
-    -- TODO: this will bin all the messages in that block
-    --       we should probably handle them one by one
-    --       a buffer would be a good way to go, since we 
-    --       don't know how many messages are in the block
-    --       and we don't know how many bytes each message
-    --       is.
-    Left err  -> error $ show err
-    Right (msg, rest) -> do
-      handleParsedMessage nats msg
-      unless (BS.null rest) $ handleProtoMessage nats rest
-
-handleParsedMessage :: Nats -> ParsedMessage -> IO ()
-handleParsedMessage nats msg = do
+loop :: Nats -> IO ()
+loop nats = do
+  msg <- atomically $ readBuffer nats
   case msg of
     ParsedMsg a     -> handleMsg nats a
     ParsedPing Ping -> pong nats
     ParsedInfo a    -> setConfigFromInfo nats a
     ParsedOk _      -> return ()
     ParsedPong _    -> return ()
+    -- TODO: we should check the error to see if it' fatal, if so we'll have been disconnected
     ParsedErr err   -> print $ "error: " ++ show err
+
+readBuffer :: Nats -> STM ParsedMessage
+readBuffer nats = do
+  bytes <- readTVar (buffer nats)
+  case genericParse bytes of
+    -- it's possible that we've read a partial message, so we'll retry.
+    -- TODO: it's also possible that we've read a message that we don't know how to parse
+    -- so we should probably catch that somehow and enter a self repair mode, i.e. drop all
+    -- bytes until we find a control keyword.
+    Left _            -> retry
+    Right (msg, rest) -> do
+      writeTVar (buffer nats) rest
+      return msg
+
+writeToBuffer :: Nats -> BS.ByteString -> IO ()
+writeToBuffer nats msg = atomically . modifyTVar (buffer nats) $ \b -> b <> msg
 
 handleMsg :: Nats -> Msg -> IO ()
 handleMsg nats msg = do
