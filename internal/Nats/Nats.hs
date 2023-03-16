@@ -1,0 +1,115 @@
+{-# LANGUAGE GADTs #-}
+
+module Nats.Nats(
+  nats,
+  NatsConn(..),
+  Config(..),
+  NatsAPI(..),
+  subscriptionCallback,
+  setConfig,
+  addSubscription,
+  removeSubscription,
+  readMessage,
+  sendBytes,
+  recvBytes,
+  ) where
+
+import           Control.Concurrent
+import           Control.Concurrent.STM
+import           Control.Monad
+import qualified Data.ByteString           as BS
+import qualified Data.Map                  as Map
+import           Parsers.Parsers
+import           Transformers.Transformers
+import           Types.Msg
+import           Validators.Validators
+
+-- The NATS API
+
+nats :: NatsConn a => a -> IO (NatsAPI a)
+nats socket = do
+  sock   <- newTVarIO socket
+  router <- newTVarIO Map.empty
+  -- TODO: define a default config AND make sure places we're setting it know it's not empty
+  config <- newEmptyTMVarIO
+  buffer <- newTVarIO BS.empty
+  return $ Nats sock router config buffer
+
+readMessage :: NatsConn a => NatsAPI a -> IO ParsedMessage
+readMessage nats = atomically $ readBuffer nats
+
+addSubscription :: NatsConn a => NatsAPI a -> BS.ByteString -> (Msg -> IO ()) -> IO ()
+addSubscription nats sid callback = atomically . modifyTVar (router nats) $ Map.insert sid callback
+
+removeSubscription :: NatsConn a => NatsAPI a -> BS.ByteString -> IO ()
+removeSubscription nats sid = atomically . modifyTVar (router nats) $ Map.delete sid
+
+subscriptionCallback :: NatsConn a => NatsAPI a -> BS.ByteString -> IO (Msg -> IO ())
+subscriptionCallback nats sid = do
+  router <- readTVarIO (router nats)
+  case Map.lookup sid router of
+    Nothing -> error $ "no subscription found for sid " ++ show sid
+    Just cb -> return cb
+
+recvBytes :: NatsConn a => NatsAPI a -> IO ()
+recvBytes nats = do
+  socket <- readTVarIO (sock nats)
+  dat    <- recv socket 1024
+  case dat of
+    Nothing  -> do
+      -- we've reached the end of input
+      threadDelay 1000000
+      recvBytes nats
+    Just msg -> void . forkIO $ writeBuffer nats msg
+
+sendBytes :: (Transformer m, Validator m, NatsConn a) => NatsAPI a -> m -> IO ()
+sendBytes nats msg = do
+  case validate msg of
+    Left err -> error $ show err
+    Right _  -> do
+      socket <- readTVarIO (sock nats)
+      send socket $ transform msg
+
+setConfig :: NatsConn a => NatsAPI a -> Config -> IO ()
+setConfig nats = atomically . putTMVar (config nats)
+
+-- lower level byte shuttling
+
+class NatsConn a where
+  recv :: a -> Int -> IO (Maybe BS.ByteString)
+  send :: a -> BS.ByteString -> IO ()
+
+data NatsAPI a where
+  Nats :: NatsConn a => {
+    sock   :: TVar a,
+    router :: TVar(Map.Map BS.ByteString (Msg -> IO ())),
+    config :: TMVar Config,
+    buffer :: TVar BS.ByteString
+  }  -> NatsAPI a
+
+data Config = Config
+  {
+    maxPayload       :: Int,
+    authRequired     :: Bool,
+    _TLSRequired     :: Bool,
+    connectURLs      :: Maybe [BS.ByteString],
+    headersSupported :: Bool
+  }
+
+readBuffer :: NatsConn a => NatsAPI a -> STM ParsedMessage
+readBuffer nats = do
+  bytes <- readTVar (buffer nats)
+  case genericParse bytes of
+    -- it's possible that we've read a partial message, so we'll retry.
+    -- TODO: it's also possible that we've read a message that we don't know how to parse
+    -- so we should probably catch that somehow and enter a self repair mode, i.e. drop all
+    -- bytes until we find a control keyword.
+    Left _            -> retry
+    Right (msg, rest) -> do
+      writeTVar (buffer nats) rest
+      return msg
+
+-- this could be hidden
+writeBuffer :: NatsConn a => NatsAPI a -> BS.ByteString -> IO ()
+writeBuffer nats msg = atomically . modifyTVar (buffer nats) $ \b -> b <> msg
+

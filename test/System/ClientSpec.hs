@@ -26,6 +26,7 @@ sys = parallel $ do
       around (withNATSConnection version) $ do
         it "sends and receives messages" $ \(_, host, port) -> do
           nats <- connect host port
+          handShake nats
 
           let wantA = Msg "foo" "sidA" Nothing (Just "a") Nothing
           let wantB = Msg "bar" "sidB" Nothing (Just "b") Nothing
