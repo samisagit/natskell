@@ -4,7 +4,7 @@ module Nats.Nats(
   nats,
   NatsConn(..),
   Config(..),
-  NatsAPI(..),
+  NatsAPI(),
   subscriptionCallback,
   setConfig,
   addSubscription,
@@ -70,6 +70,7 @@ sendBytes nats msg = do
       socket <- readTVarIO (sock nats)
       send socket $ transform msg
 
+-- TODO: this many want to be more granular if a merge isn't possible
 setConfig :: NatsConn a => NatsAPI a -> Config -> IO ()
 setConfig nats = atomically . putTMVar (config nats)
 
