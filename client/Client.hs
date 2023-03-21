@@ -61,13 +61,13 @@ loop :: NatsConn a => NatsAPI a -> IO ()
 loop nats = do
   msg <- readMessage nats
   case msg of
-    ParsedMsg a     -> handleMsg nats a
-    ParsedPing Ping -> pong nats
-    ParsedInfo a    -> handleInfo nats a
+    ParsedMsg a     -> void . forkIO $ handleMsg nats a
+    ParsedPing Ping -> void . forkIO $ pong nats
+    ParsedInfo a    -> void . forkIO $ handleInfo nats a
     ParsedOk _      -> return ()
     ParsedPong _    -> return ()
     -- TODO: we should check the error to see if it' fatal, if so we'll have been disconnected
-    ParsedErr err   -> print $ "error: " ++ show err
+    ParsedErr err   -> void . forkIO . print $ "error: " ++ show err
 
 handleMsg :: NatsConn a => NatsAPI a -> Msg -> IO ()
 handleMsg nats msg = do

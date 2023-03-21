@@ -6,7 +6,9 @@ import           Client
 import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Monad
+import           Data.ByteString        as BS
 import qualified Data.Text              as Text
+import           Data.Text.Encoding     (encodeUtf8)
 import qualified Docker.Client          as DC
 import           NatsWrappers
 import           Test.Hspec
@@ -24,33 +26,23 @@ sys = parallel $ do
   describe "client" $ do
     forM_ versions $ \version ->
       around (withNATSConnection version) $ do
-        it "sends and receives messages" $ \(_, host, port) -> do
+        it "sends and receives it's own messages" $ \(_, host, port) -> do
           nats <- connect host port
           handShake nats
 
-          let wantA = Msg "foo" "sidA" Nothing (Just "a") Nothing
-          let wantB = Msg "bar" "sidB" Nothing (Just "b") Nothing
-          let wantC = Msg "baz" "sidC" Nothing (Just "c") Nothing
+          let rands = Prelude.map (packStr . show) [1..100] :: [BS.ByteString]
+          let subData = Prelude.map (\x msg -> msg `shouldBe` Msg x x Nothing (Just x) Nothing) rands
+          asyncAsserts <- Prelude.mapM asyncAssert subData
+          let combined = Prelude.zip asyncAsserts rands
 
-          (lockA, assertionA) <- asyncAssert $ \msg -> msg `shouldBe` wantA
-          (lockB, assertionB) <- asyncAssert $ \msg -> msg `shouldBe` wantB
-          (lockC, assertionC) <- asyncAssert $ \msg -> msg `shouldBe` wantC
+          forM_ combined $ \((_, callback), x) -> sub nats x x callback
 
-          sub nats "sidA" "foo" $ \msg -> assertionA msg
-          sub nats "sidB" "bar" $ \msg -> assertionB msg
-          sub nats "sidC" "baz" $ \msg -> assertionC msg
+          -- TODO: see if we can parallelize this so that we have a load of incoming messages at roughly the same time
+          forM_ combined $ \(_, x) -> pub nats x x
 
-          pub nats "foo" "a"
-          pub nats "bar" "b"
-          pub nats "baz" "c"
+          forM_ asyncAsserts $ \(lock, _) -> atomically $ takeTMVar lock
 
-          join . atomically $ takeTMVar lockA
-          join . atomically $ takeTMVar lockB
-          join . atomically $ takeTMVar lockC
-
-          unsub nats "sidA" "foo"
-          unsub nats "sidB" "bar"
-          unsub nats "sidC" "baz"
+          forM_ combined $ \(_, x) -> unsub nats x x
 
 asyncAssert :: (Msg -> Expectation) -> IO (TMVar Expectation, Msg -> IO ())
 asyncAssert e = do
@@ -58,3 +50,5 @@ asyncAssert e = do
   let callback msg = atomically $ putTMVar lock (e msg)
   return (lock, callback)
 
+packStr :: String -> BS.ByteString
+packStr = encodeUtf8 . Text.pack

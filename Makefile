@@ -39,6 +39,12 @@ unit-test: /tmp/unit-test.out
 	stack test natskell:unit-test --fast --cabal-verbosity=silent --ta="-j 16 --format=progress --fail-fast --skip=generated"
 	touch /tmp/unit-test.out
 
+unit-test-profile: /tmp/unit-test-profile.out
+
+/tmp/unit-test-profile.out: $(wildcard src/*) $(wildcard test/Unit/*)
+	stack test natskell:unit-test --fast --profile --cabal-verbosity=silent --ta="-j 16 --format=progress --fail-fast --skip=generated"
+	touch /tmp/unit-test-profile.out
+
 fuzz-test: /tmp/fuzz-test.out
 
 /tmp/fuzz-test.out: $(wildcard src/*) $(wildcard test/Fuzz/*)
@@ -71,6 +77,7 @@ PHONY clean:
 clean:
 	rm -f /tmp/generated-unit-test.out
 	rm -f /tmp/unit-test.out
+	rm -f /tmp/unit-test-profile.out
 	rm -f /tmp/system-test.out
 	rm -f /tmp/fuzz-test.out
 	rm -f /tmp/lint.out

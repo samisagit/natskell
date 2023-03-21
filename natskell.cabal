@@ -87,6 +87,7 @@ test-suite unit-test
     hs-source-dirs:   test/Unit
     main-is:          Spec.hs
     build-depends:   
+       natskell,
        natskell-internal,
        hspec,
        bytestring,
@@ -106,7 +107,7 @@ test-suite unit-test
        ConnectSpec
        SubSpec
        UnsubSpec
-       NatsSpec
+       ClientSpec
        Fixtures
 
 test-suite fuzz-test
@@ -132,6 +133,7 @@ test-suite system-test
     build-depends:   
        natskell,
        hspec,
+       bytestring,
        text ,
        docker,
        HTTP,
