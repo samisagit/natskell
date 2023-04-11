@@ -16,6 +16,7 @@ module Nats.Nats(
 
 import           Control.Concurrent
 import           Control.Concurrent.STM
+import           Control.Exception
 import           Control.Monad
 import qualified Data.ByteString           as BS
 import qualified Data.Map                  as Map
@@ -28,7 +29,7 @@ import           Validators.Validators
 
 nats :: NatsConn a => a -> IO (NatsAPI a)
 nats socket = do
-  sock   <- newTVarIO socket
+  sock   <- newTMVarIO socket
   router <- newTVarIO Map.empty
   -- TODO: define a default config AND make sure places we're setting it know it's not empty
   config <- newEmptyTMVarIO
@@ -53,11 +54,13 @@ subscriptionCallback nats sid = do
 
 recvBytes :: NatsConn a => NatsAPI a -> IO ()
 recvBytes nats = do
-  socket <- readTVarIO (sock nats)
-  dat    <- recv socket 1024
+  socket <- atomically $ takeTMVar (sock nats)
+  -- since we only read here, we can safely replace the sock lock
+  atomically $ putTMVar (sock nats) socket
+  dat <- recv socket 1024
   case dat of
     Nothing  -> do
-      -- we've reached the end of input
+      -- TODO: we've reached the end of input, which probably means the socket has been closed
       threadDelay 1000000
       recvBytes nats
     Just msg -> void . forkIO $ writeBuffer nats msg
@@ -66,13 +69,16 @@ sendBytes :: (Transformer m, Validator m, NatsConn a) => NatsAPI a -> m -> IO ()
 sendBytes nats msg = do
   case validate msg of
     Left err -> error $ show err
-    Right _  -> do
-      socket <- readTVarIO (sock nats)
-      send socket $ transform msg
+    Right _  -> withSocket nats $ \socket -> send socket $ transform msg
 
 -- TODO: this many want to be more granular if a merge isn't possible
 setConfig :: NatsConn a => NatsAPI a -> Config -> IO ()
 setConfig nats = atomically . putTMVar (config nats)
+
+withSocket :: NatsConn a => NatsAPI a -> (a -> IO b) -> IO b
+withSocket nats = bracket
+  (atomically . takeTMVar $ sock nats)
+  (atomically . putTMVar (sock nats))
 
 -- lower level byte shuttling
 
@@ -82,7 +88,7 @@ class NatsConn a where
 
 data NatsAPI a where
   Nats :: NatsConn a => {
-    sock   :: TVar a,
+    sock   :: TMVar a,
     router :: TVar(Map.Map BS.ByteString (Msg -> IO ())),
     config :: TMVar Config,
     buffer :: TVar BS.ByteString
@@ -110,7 +116,7 @@ readBuffer nats = do
       writeTVar (buffer nats) rest
       return msg
 
--- this could be hidden
+-- TODO: this could be hidden
 writeBuffer :: NatsConn a => NatsAPI a -> BS.ByteString -> IO ()
 writeBuffer nats msg = atomically . modifyTVar (buffer nats) $ \b -> b <> msg
 

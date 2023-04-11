@@ -30,19 +30,18 @@ sys = parallel $ do
           nats <- connect host port
           handShake nats
 
-          let rands = Prelude.map (packStr . show) [1..100] :: [BS.ByteString]
-          let subData = Prelude.map (\x msg -> msg `shouldBe` Msg x x Nothing (Just x) Nothing) rands
+          let keys = Prelude.map (packStr . show) [1..100] :: [BS.ByteString]
+          let subData = Prelude.map (\x msg -> msg `shouldBe` Msg x x Nothing (Just x) Nothing) keys
           asyncAsserts <- Prelude.mapM asyncAssert subData
-          let combined = Prelude.zip asyncAsserts rands
+          let keyedAssertions = Prelude.zip asyncAsserts keys
 
-          forM_ combined $ \((_, callback), x) -> sub nats x x callback
+          forM_ keyedAssertions $ \((_, callback), x) -> sub nats x x callback
 
-          -- TODO: see if we can parallelize this so that we have a load of incoming messages at roughly the same time
-          forM_ combined $ \(_, x) -> pub nats x x
+          forM_ keyedAssertions $ \(_, x) -> pub nats x x
 
           forM_ asyncAsserts $ \(lock, _) -> atomically $ takeTMVar lock
 
-          forM_ combined $ \(_, x) -> unsub nats x x
+          forM_ keyedAssertions $ \(_, x) -> unsub nats x x
 
 asyncAssert :: (Msg -> Expectation) -> IO (TMVar Expectation, Msg -> IO ())
 asyncAssert e = do
