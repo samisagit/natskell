@@ -21,7 +21,7 @@ import           Types.Sub
 handShake :: NatsConn a => NatsAPI a -> IO ()
 handShake nats = do
   forkIO . forever $ recvBytes nats
-  forkIO . forever $ loop nats
+  forkIO . forever $ readMessages nats
   -- TODO: at some point we'll want to read the state set by INFO
   sendBytes nats $ Connect {
     Types.Connect.verbose       = False,
@@ -57,8 +57,8 @@ unsub nats sid subject = do
   removeSubscription nats sid
   sendBytes nats $ Sub subject Nothing sid
 
-loop :: NatsConn a => NatsAPI a -> IO ()
-loop nats = do
+readMessages :: NatsConn a => NatsAPI a -> IO ()
+readMessages nats = do
   msg <- readMessage nats
   case msg of
     ParsedMsg a     -> void . forkIO $ handleMsg nats a
