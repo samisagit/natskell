@@ -12,6 +12,7 @@ module Nats.Nats(
   readMessage,
   sendBytes,
   recvBytes,
+  socketReadLength,
   ) where
 
 import           Control.Concurrent
@@ -26,6 +27,9 @@ import           Types.Msg
 import           Validators.Validators
 
 -- The NATS API
+
+socketReadLength :: Int
+socketReadLength = 1024
 
 nats :: NatsConn a => a -> IO (NatsAPI a)
 nats socket = do
@@ -57,7 +61,7 @@ recvBytes nats = do
   socket <- atomically $ takeTMVar (sock nats)
   -- since we only read here, we can safely replace the sock lock
   atomically $ putTMVar (sock nats) socket
-  dat <- recv socket 1024
+  dat <- recv socket socketReadLength
   case dat of
     Nothing  -> do
       -- TODO: we've reached the end of input, which probably means the socket has been closed

@@ -25,13 +25,43 @@ instance N.NatsConn (TMVar BS.ByteString) where
 
 spec :: Spec
 spec = do
+  singleMessage
+  multiRead
+
+singleMessage = parallel $ do
   describe "Client" $ do
-    it "should process many messages" $ do
-      let matchers        = map (packStr . show) [1..100000]
+    it "processes a single message" $ do
+      let matchers        = map (packStr . show) [1]
       let msgs            = foldr (BS.append . matcherMsg) "" matchers
       let assertions      = map matcherAssertion matchers
       asyncAssertions     <- mapM asyncAssert assertions
       let keyedAssertions = zip matchers asyncAssertions
+
+      -- dump all the msgs onto the 'socket'
+      socket <- newTMVarIO msgs
+
+      nats <- N.nats socket
+
+      -- subscribe to all matchers
+      forM_ keyedAssertions $ \(matcher, (_, callback)) -> sub nats matcher matcher callback
+
+      -- process the msgs
+      handShake nats
+
+      -- wait for the locks to release
+      forM_ keyedAssertions $ \(_, (lock, _)) -> join . atomically $ takeTMVar lock
+
+multiRead = parallel $ do
+  describe "Client" $ do
+    it "processes messages from multiple socket reads" $ do
+      let matchers        = map (packStr . show) [1..62]
+      let msgs            = foldr (BS.append . matcherMsg) "" matchers
+      let assertions      = map matcherAssertion matchers
+      asyncAssertions     <- mapM asyncAssert assertions
+      let keyedAssertions = zip matchers asyncAssertions
+
+      -- check the socket has enough bytes to be read multiple times
+      BS.length msgs > N.socketReadLength `shouldBe` True
 
       -- dump all the msgs onto the 'socket'
       socket <- newTMVarIO msgs
