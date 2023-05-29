@@ -27,7 +27,7 @@ instance Transformer Pong where
 instance Transformer Connect where
   transform c = do
     let f = encode c
-    BS.append ("CONNECT " :: BS.ByteString) (LBS.toStrict f)
+    foldr BS.append "" ["CONNECT ", LBS.toStrict f, "\r\n"]
 
 instance Transformer Pub.Pub where
   transform d = case Pub.headers d of
@@ -65,8 +65,8 @@ headerString = BS.concat . map (\(k, v) -> foldr BS.append "" [k, ":", v, "\r\n"
 instance Transformer Sub.Sub where
   transform d = do
     case qg of
-       Just a  -> foldr BS.append "" ["SUB ", subj, " ", a, " ", id]
-       Nothing -> foldr BS.append "" ["SUB ", subj, " ", id]
+       Just a  -> foldr BS.append "" ["SUB ", subj, " ", a, " ", id, "\r\n"]
+       Nothing -> foldr BS.append "" ["SUB ", subj, " ", id, "\r\n"]
     where
       subj = Sub.subject d
       qg = Sub.queueGroup d
@@ -75,8 +75,8 @@ instance Transformer Sub.Sub where
 instance Transformer Unsub.Unsub where
   transform d = do
     case mm of
-       Just a  -> foldr BS.append "" ["UNSUB ", id, " ", packInt a]
-       Nothing -> foldr BS.append "" ["UNSUB ", id]
+       Just a  -> foldr BS.append "" ["UNSUB ", id, " ", packInt a, "\r\n"]
+       Nothing -> foldr BS.append "" ["UNSUB ", id, "\r\n"]
     where
       id = Unsub.sid d
       mm = Unsub.maxMsg d

@@ -58,8 +58,10 @@ createNATSContainer tag = do
       let pba = DC.PortBinding 4222 DC.TCP [hpa]
       let hpb = DC.HostPort "0.0.0.0" 0
       let pbb = DC.PortBinding 8222 DC.TCP [hpb]
-      let createOpts = (DC.addPortBinding pba . DC.addPortBinding pbb) . DC.defaultCreateOpts . Text.append "nats:" $ tag
-      DC.createContainer createOpts Nothing
+      let createOpts = ( DC.addPortBinding pba . DC.addPortBinding pbb) . DC.defaultCreateOpts . Text.append "nats:" $ tag
+      let containerOpts = (DC.containerConfig createOpts) { DC.cmd = ["-DV", "--config", "nats-server.conf"] }
+      let createOpts' = createOpts { DC.containerConfig = containerOpts }
+      DC.createContainer createOpts' Nothing
 
 startNATSContainer i = do
   h <- DC.unixHttpHandler sock
