@@ -25,10 +25,9 @@ instance N.NatsConn (TMVar BS.ByteString) where
 
 spec :: Spec
 spec = do
-  singleMessage
-  multiRead
+  cases
 
-singleMessage = parallel $ do
+cases = parallel $ do
   describe "Client" $ do
     it "processes a single message" $ do
       let matchers        = map (packStr . show) [1]
@@ -36,46 +35,29 @@ singleMessage = parallel $ do
       let assertions      = map matcherAssertion matchers
       asyncAssertions     <- mapM asyncAssert assertions
       let keyedAssertions = zip matchers asyncAssertions
-
-      -- dump all the msgs onto the 'socket'
-      socket <- newTMVarIO msgs
-
-      nats <- N.nats socket
-
-      -- subscribe to all matchers
-      forM_ keyedAssertions $ \(matcher, (_, callback)) -> sub nats matcher matcher callback
-
-      -- process the msgs
-      handShake nats
-
-      -- wait for the locks to release
-      forM_ keyedAssertions $ \(_, (lock, _)) -> join . atomically $ takeTMVar lock
-
-multiRead = parallel $ do
-  describe "Client" $ do
+      BS.length msgs < N.socketReadLength `shouldBe` True
+      performAssertions msgs keyedAssertions
     it "processes messages from multiple socket reads" $ do
       let matchers        = map (packStr . show) [1..62]
       let msgs            = foldr (BS.append . matcherMsg) "" matchers
       let assertions      = map matcherAssertion matchers
       asyncAssertions     <- mapM asyncAssert assertions
       let keyedAssertions = zip matchers asyncAssertions
-
-      -- check the socket has enough bytes to be read multiple times
       BS.length msgs > N.socketReadLength `shouldBe` True
+      performAssertions msgs keyedAssertions
 
-      -- dump all the msgs onto the 'socket'
-      socket <- newTMVarIO msgs
+performAssertions :: BS.ByteString -> [(BS.ByteString, (TMVar Expectation, Msg -> IO ()))] -> IO ()
+performAssertions msgs keyedAssertions = do
+  -- dump all the msgs onto the 'socket'
+  socket <- newTMVarIO msgs
+  nats <- N.nats socket
+  -- subscribe to all matchers
+  forM_ keyedAssertions $ \(matcher, (_, callback)) -> sub nats matcher matcher callback
+  -- process the msgs
+  handShake nats
+  -- wait for the locks to release
+  forM_ keyedAssertions $ \(_, (lock, _)) -> join . atomically $ takeTMVar lock
 
-      nats <- N.nats socket
-
-      -- subscribe to all matchers
-      forM_ keyedAssertions $ \(matcher, (_, callback)) -> sub nats matcher matcher callback
-
-      -- process the msgs
-      handShake nats
-
-      -- wait for the locks to release
-      forM_ keyedAssertions $ \(_, (lock, _)) -> join . atomically $ takeTMVar lock
 
 matcherMsg :: BS.ByteString -> BS.ByteString
 matcherMsg matcher = BS.concat ["MSG ", matcher, " ", matcher, " ", (packStr . show) byteLength, "\r\n", matcher, "\r\n"]
