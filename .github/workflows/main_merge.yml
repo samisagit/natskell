@@ -1,7 +1,7 @@
-name: Haskell CI
+name: Main Merge
 
 on:
-  pull_request:
+  merge_group:
 
 permissions:
   contents: read
@@ -26,7 +26,7 @@ jobs:
       with:
         name: samisagit-natskell
     - run: nix develop --command bash -c "cabal check"
-  test:
+  test-all:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
@@ -35,4 +35,4 @@ jobs:
       with:
         name: samisagit-natskell
     - run: nix develop --command bash -c "make build-test"
-    - run: nix develop --command bash -c "make test"
+    - run: nix develop --command bash -c "make test-all"
