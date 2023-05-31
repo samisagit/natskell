@@ -4,12 +4,12 @@ version:                0.0.0
 synopsis:               A NATS client library written in Haskell
 
 -- A longer description of the package.
--- description:
+description:            Please see the README on GitHub at <github.com/samisagit/natskell#readme>
 
 -- homepage:
 
 -- A URL where users can report bugs.
--- bug-reports:
+bug-reports: https://github.com/samisagit/natskell/issues
 
 license:                MIT
 license-file:           LICENSE
@@ -21,10 +21,14 @@ maintainer:             sam@whiteteam.co.uk
 
 category:               Web
 
+source-repository head
+    type:               git
+    location:           https://github.com/samisagit/natskell.git
+
 common shared
     default-language:     Haskell2010
     build-depends:
-       base
+       base >= 4.7 && < 4.19,
     ghc-options:
        -haddock -W -Wunused-packages
 
