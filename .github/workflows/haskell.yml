@@ -38,4 +38,4 @@ jobs:
       with:
         name: samisagit-natskell
     - run: nix develop --command bash -c "make build-test"
-    - run: nix develop --command bash -c "make test"
+    - run: nix develop --command bash -c "make test-all"
