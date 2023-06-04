@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Client(handShake, connect, pub, sub, unsub, Msg(..)) where
+module Client(handShake, connect, pub, sub, pubWithReply, unsub, Msg(..)) where
 
 import           Control.Concurrent
 import           Control.Monad
@@ -51,6 +51,21 @@ sub :: NatsConn a => NatsAPI a -> BS.ByteString -> BS.ByteString -> (Msg -> IO()
 sub nats sid subject callback = do
   addSubscription nats sid callback
   sendBytes nats $ Sub subject Nothing sid
+
+-- TODO: we'll want to gc reply subs that haven't been recieved in a given duration
+-- we could plausibly add a timeout when adding a subscription, and periodically check
+-- for expired subs
+pubWithReply :: NatsConn a => NatsAPI a -> BS.ByteString -> BS.ByteString -> BS.ByteString -> (Msg -> IO()) -> IO ()
+pubWithReply nats sid subject payload callback = do
+  sub nats sid "SOMETHING.REPLY" cb -- TODO: this subject needs to be unique, so user created subs don't get removed on reciept
+  pub nats subject payload
+  where
+    cb = replyCallback nats callback sid subject
+
+replyCallback :: NatsConn a => NatsAPI a -> (Msg -> IO()) -> BS.ByteString -> BS.ByteString -> (Msg -> IO())
+replyCallback nats callback sid subject msg = do
+  unsub nats sid subject
+  callback msg
 
 unsub :: NatsConn a => NatsAPI a -> BS.ByteString -> BS.ByteString -> IO ()
 unsub nats sid subject = do
