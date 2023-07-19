@@ -29,31 +29,31 @@ haddock:
 
 generated-unit-test: /tmp/generated-unit-test.out
 
-/tmp/generated-unit-test.out: $(wildcard src/*) $(wildcard test/Unit/*)
+/tmp/generated-unit-test.out: $(wildcard internal/*) $(wildcard client/*) $(wildcard test/Unit/*)
 	stack test natskell:unit-test --fast --cabal-verbosity=silent --ta="-j 16 --format=failed-examples --fail-fast --match=generated"
 	touch /tmp/generated-unit-test.out
 
 unit-test: /tmp/unit-test.out
 
-/tmp/unit-test.out: $(wildcard src/*) $(wildcard test/Unit/*)
+/tmp/unit-test.out: $(wildcard internal/*) $(wildcard client/*) $(wildcard test/Unit/*)
 	stack test natskell:unit-test --fast --cabal-verbosity=silent --ta="-j 16 --fail-fast --skip=generated"
 	touch /tmp/unit-test.out
 
 unit-test-profile: /tmp/unit-test-profile.out
 
-/tmp/unit-test-profile.out: $(wildcard src/*) $(wildcard test/Unit/*)
+/tmp/unit-test-profile.out: $(wildcard internal/*) $(wildcard client/*) $(wildcard test/Unit/*)
 	stack test natskell:unit-test --fast --profile --cabal-verbosity=silent --ta="-j 16 --format=progress --fail-fast --skip=generated"
 	touch /tmp/unit-test-profile.out
 
 fuzz-test: /tmp/fuzz-test.out
 
-/tmp/fuzz-test.out: $(wildcard src/*) $(wildcard test/Fuzz/*)
+/tmp/fuzz-test.out: $(wildcard internal/*) $(wildcard client/*) $(wildcard test/Fuzz/*)
 	stack test  natskell:fuzz-test --fast --cabal-verbosity=silent --ta="-j 16 --fail-fast"
 	touch /tmp/fuzz-test.out
 
 system-test: /tmp/system-test.out
 
-/tmp/system-test.out: $(wildcard src/*) $(wildcard test/System/*) 
+/tmp/system-test.out: $(wildcard internal/*) $(wildcard client/*) $(wildcard test/System/*) 
 	stack test natskell:system-test --fast --cabal-verbosity=silent --ta="-j 16 --fail-fast"
 	touch /tmp/system-test.out
 
@@ -61,7 +61,7 @@ test: /tmp/unit-test.out /tmp/fuzz-test.out /tmp/system-test.out
 
 lint: /tmp/lint.out
 
-/tmp/lint.out: $(wildcard src/*) $(wildcard test/*) 
+/tmp/lint.out: $(wildcard internal/*) $(wildcard client/*) $(wildcard test/*) 
 	hlint --git
 	touch /tmp/lint.out
 
