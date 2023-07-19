@@ -2,16 +2,18 @@
 
 module ClientSpec (spec) where
 
-import           Client
-import           Control.Concurrent.STM
-import           Control.Exception
-import           Control.Monad
-import           Data.ByteString        as BS
-import qualified Data.Text              as Text
-import           Data.Text.Encoding     (encodeUtf8)
-import qualified Docker.Client          as DC
-import           NatsWrappers
-import           Test.Hspec
+import Client
+import Control.Concurrent
+import Control.Concurrent.STM
+import Control.Exception
+import Control.Monad
+import Data.ByteString as BS
+import qualified Data.Text as Text
+import Data.Text.Encoding (encodeUtf8)
+import qualified Docker.Client as DC
+import NatsWrappers
+import Test.Hspec
+import Text.Printf
 
 spec :: Spec
 spec = do
@@ -23,25 +25,58 @@ withNATSConnection tag = bracket (startNATS tag) stopNATS
 versions = ["latest", "2.9.8", "2.9.6"]
 
 sys = parallel $ do
-  describe "client" $ do
-    forM_ versions $ \version ->
+  forM_ versions $ \version ->
+    describe (printf "client (nats:%s)" version) $ do
       around (withNATSConnection version) $ do
-        it "sends and receives it's own messages" $ \(_, host, port) -> do
+        it "sends and receives its own messages" $ \(_, host, port) -> do
           nats <- connect host port
           handShake nats
 
-          let keys = Prelude.map (packStr . show) [1..100] :: [BS.ByteString]
+          let keys = Prelude.map (packStr . show) [1 .. 100] :: [BS.ByteString]
           let subData = Prelude.map (\x msg -> msg `shouldBe` Msg x x Nothing (Just x) Nothing) keys
           asyncAsserts <- Prelude.mapM asyncAssert subData
           let keyedAssertions = Prelude.zip asyncAsserts keys
 
-          forM_ keyedAssertions $ \((_, callback), x) -> sub nats x x callback
+          forM_ keyedAssertions $ \((_, callback), x) ->
+            sub
+              nats
+              [ subWithSubject x,
+                subWithSID x,
+                subWithCallback callback
+              ]
 
-          forM_ keyedAssertions $ \(_, x) -> pub nats x x
+          forM_ keyedAssertions $ \(_, x) -> pub nats [pubWithSubject x, pubWithPayload x]
 
-          forM_ asyncAsserts $ \(lock, _) -> atomically $ takeTMVar lock
+          forM_ asyncAsserts $ \(lock, _) -> join . atomically $ takeTMVar lock
 
           forM_ keyedAssertions $ \(_, x) -> unsub nats x x
+
+        it "handles replies" $ \(_, host, port) -> do
+          -- TODO: there appears to be a race somewhere in here
+          nats1 <- connect host port
+          handShake nats1
+
+          nats2 <- connect host port
+          handShake nats2
+
+          (lockAssure, assertAssure) <- asyncAssert (\_ -> return ())
+          sub nats2 [subWithSubject "foo", subWithSID "xyz", subWithCallback assertAssure]
+
+          -- wait for the inital sub to go through
+          -- TODO: could make use of OK responses...
+          threadDelay 1000000
+
+          (lock, assertion) <- asyncAssert (\msg -> msg `shouldBe` Msg "foo.REPLY" "abc" Nothing (Just "bar") Nothing)
+          pub nats1 [pubWithSubject "foo", pubWithPayload "bar", pubWithReplyCallback assertion "abc"]
+
+          -- ensure the inital pub is received
+          join . atomically $ takeTMVar lockAssure
+
+          -- mock a response from nats2
+          pub nats2 [pubWithSubject "foo.REPLY", pubWithPayload "bar"]
+
+          -- wait for a response from nats2
+          join . atomically $ takeTMVar lock
 
 asyncAssert :: (Msg -> Expectation) -> IO (TMVar Expectation, Msg -> IO ())
 asyncAssert e = do

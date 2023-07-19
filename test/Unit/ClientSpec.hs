@@ -3,25 +3,32 @@
 
 module ClientSpec (spec) where
 
-import           Client
-import           Control.Concurrent.STM
-import           Control.Monad
-import qualified Data.ByteString        as BS
-import qualified Data.Text              as Text
-import           Data.Text.Encoding     (encodeUtf8)
-import qualified Nats.Nats              as N
-import           Test.Hspec
+import Client
+import Control.Concurrent.STM
+import Control.Monad
+import qualified Data.ByteString as BS
+import Data.IORef
+import qualified Data.Text as Text
+import Data.Text.Encoding (encodeUtf8)
+import qualified Nats.Nats as N
+import Test.Hspec
+import Transformers.Transformers
+import Types.Sub
 
-instance N.NatsConn (TMVar BS.ByteString) where
+-- needs to take an IO ref of a [ByteString] in order to read it elsewhere
+instance N.NatsConn (TMVar (BS.ByteString, IORef [BS.ByteString])) where
   recv sock x = do
-    bs <- atomically $ takeTMVar sock
-    let (a, b) = BS.splitAt x bs
-    atomically $ putTMVar sock b
+    (i, o) <- atomically $ takeTMVar sock
+    let (a, b) = BS.splitAt x i
+    atomically $ putTMVar sock (b, o)
     if BS.length a == 0
       then return Nothing
       else return (Just a)
-  send _ _ = do
-    return () -- we seed the data to the 'socket' in the test
+  send sock x = do
+    (i, o) <- atomically $ takeTMVar sock
+    msgList <- readIORef o
+    writeIORef o (msgList ++ [x])
+    atomically $ putTMVar sock (i, o)
 
 spec :: Spec
 spec = do
@@ -30,38 +37,35 @@ spec = do
 cases = parallel $ do
   describe "Client" $ do
     it "processes a single message" $ do
-      let matchers        = map (packStr . show) [1]
-      let msgs            = foldr (BS.append . matcherMsg) "" matchers
-      let assertions      = map matcherAssertion matchers
-      asyncAssertions     <- mapM asyncAssert assertions
-      let keyedAssertions = zip matchers asyncAssertions
-      BS.length msgs < N.socketReadLength `shouldBe` True
-      performAssertions msgs keyedAssertions
-    it "processes messages from multiple socket reads" $ do
-      let matchers        = map (packStr . show) [1..62]
-      let msgs            = foldr (BS.append . matcherMsg) "" matchers
-      let assertions      = map matcherAssertion matchers
-      asyncAssertions     <- mapM asyncAssert assertions
-      let keyedAssertions = zip matchers asyncAssertions
-      BS.length msgs > N.socketReadLength `shouldBe` True
-      performAssertions msgs keyedAssertions
+      let matcher = "1" -- arbitrary bytestring to match on
+      let msg = matcherMsg matcher
+      (lock, assertion) <- asyncAssert (matcherAssertion matcher)
+      msgList <- newIORef [] :: IO (IORef [BS.ByteString])
+      -- dump the msg onto the 'socket'
+      socket <- newTMVarIO (msg, msgList)
+      nats <- N.nats socket
+      sub
+        nats
+        [ subWithSubject matcher,
+          subWithSID matcher,
+          subWithCallback assertion
+        ]
+      chkLastMsg socket $ Sub "1" Nothing "1"
 
-performAssertions :: BS.ByteString -> [(BS.ByteString, (TMVar Expectation, Msg -> IO ()))] -> IO ()
-performAssertions msgs keyedAssertions = do
-  -- dump all the msgs onto the 'socket'
-  socket <- newTMVarIO msgs
-  nats <- N.nats socket
-  -- subscribe to all matchers
-  forM_ keyedAssertions $ \(matcher, (_, callback)) -> sub nats matcher matcher callback
-  -- process the msgs
-  handShake nats
-  -- wait for the locks to release
-  forM_ keyedAssertions $ \(_, (lock, _)) -> join . atomically $ takeTMVar lock
+      handShake nats
+      join . atomically $ takeTMVar lock
 
+chkLastMsg :: (Transformer m) => TMVar (BS.ByteString, IORef [BS.ByteString]) -> m -> IO ()
+chkLastMsg socket msg = do
+  (i, o) <- atomically $ takeTMVar socket
+  msgList <- readIORef o
+  last msgList `shouldBe` transform msg
+  atomically $ putTMVar socket (i, o)
 
 matcherMsg :: BS.ByteString -> BS.ByteString
 matcherMsg matcher = BS.concat ["MSG ", matcher, " ", matcher, " ", (packStr . show) byteLength, "\r\n", matcher, "\r\n"]
-  where byteLength = BS.length matcher
+  where
+    byteLength = BS.length matcher
 
 matcherAssertion :: BS.ByteString -> (Msg -> Expectation)
 matcherAssertion matcher msg = msg `shouldBe` Msg matcher matcher Nothing (Just matcher) Nothing
@@ -74,4 +78,3 @@ asyncAssert e = do
 
 packStr :: String -> BS.ByteString
 packStr = encodeUtf8 . Text.pack
-

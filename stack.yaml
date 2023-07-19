@@ -69,5 +69,5 @@ nix:
   packages: [zlib.dev, zlib.out]
 
 ghc-options:
-  "$everything": -w
+  "$everything": -w -j16 -H14m
   "natskell": -haddock -W -Wunused-packages
