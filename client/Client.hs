@@ -2,19 +2,19 @@
 
 module Client (module Sub, module Pub, module Unsub, handShake, connect, Msg (..)) where
 
-import Control.Concurrent
-import Control.Monad
-import Nats.Nats
-import Nats.NatsProper
-import Parsers.Parsers
-import Sub
-import Pub
-import Unsub
-import Types.Connect
-import Types.Info
-import Types.Msg
-import Types.Ping
-import Types.Pong
+import           Control.Concurrent
+import           Control.Monad
+import           Nats.Nats
+import           Nats.NatsProper
+import           Parsers.Parsers
+import           Pub
+import           Sub
+import           Types.Connect
+import           Types.Info
+import           Types.Msg
+import           Types.Ping
+import           Types.Pong
+import           Unsub
 
 -- TODO: this name is a bit misleading, it doesn't just perform the handshake
 -- it also starts the read and write threads
@@ -49,13 +49,13 @@ readMessages :: NatsConn a => NatsAPI a -> IO ()
 readMessages nats = do
   msg <- readMessage nats
   case msg of
-    ParsedMsg a -> void . forkIO $ handleMsg nats a
+    ParsedMsg a     -> void . forkIO $ handleMsg nats a
     ParsedPing Ping -> void . forkIO $ pong nats
-    ParsedInfo a -> void . forkIO $ handleInfo nats a
-    ParsedOk _ -> return ()
-    ParsedPong _ -> return ()
+    ParsedInfo a    -> void . forkIO $ handleInfo nats a
+    ParsedOk _      -> return ()
+    ParsedPong _    -> return ()
     -- TODO: we should check the error to see if it' fatal, if so we'll have been disconnected
-    ParsedErr err -> void . forkIO . print $ "error: " ++ show err
+    ParsedErr err   -> void . forkIO . print $ "error: " ++ show err
 
 handleMsg :: NatsConn a => NatsAPI a -> Msg -> IO ()
 handleMsg nats msg = do
@@ -75,5 +75,5 @@ handleInfo nats info =
       }
 
 isTruthy :: Maybe Bool -> Bool
-isTruthy Nothing = False
+isTruthy Nothing  = False
 isTruthy (Just b) = b

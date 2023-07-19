@@ -53,7 +53,7 @@ subscriptionCallback :: NatsConn a => NatsAPI a -> BS.ByteString -> IO (Msg -> I
 subscriptionCallback nats sid = do
   router <- readTVarIO (router nats)
   case Map.lookup sid router of
-    Nothing -> error $ "no subscription found for sid " ++ show sid
+    Nothing      -> error $ "no subscription found for sid " ++ show sid
     Just (cb, _) -> return cb
 
 recvBytes :: NatsConn a => NatsAPI a -> IO ()

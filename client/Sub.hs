@@ -2,10 +2,10 @@
 
 module Sub where
 
-import           Types.Sub
-import           Types.Msg
 import           Nats.Nats
 import           Types
+import           Types.Msg
+import           Types.Sub
 
 type SubOptions = (Subject, SID, Msg -> IO(), Maybe Int)
 

@@ -2,13 +2,13 @@
 
 module Pub where
 
-import qualified Data.ByteString    as BS
-import           Types.Pub
-import           Types.Msg
+import qualified Data.ByteString as BS
 import           Nats.Nats
-import Sub
-import Unsub
-import Types
+import           Sub
+import           Types
+import           Types.Msg
+import           Types.Pub
+import           Unsub
 
 type PubOptions = (Subject, BS.ByteString, Maybe (Msg -> IO ()), SID)
 
@@ -28,7 +28,7 @@ pub nats options = do
     Nothing -> sendBytes nats $ Pub subject Nothing Nothing (Just payload)
     Just cb -> do
       let replyTo = BS.append subject ".REPLY" -- TODO: this subject needs to be unique, so user created subs don't get removed on reciept
-      sub nats [ 
+      sub nats [
         subWithSID sid, -- TODO: what should this be
         subWithSubject replyTo,
         subWithCallback (replyCallback nats cb sid subject),

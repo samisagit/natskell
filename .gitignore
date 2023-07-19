@@ -26,3 +26,4 @@ report
 .stack
 *.out
 *.stack.yaml.lock
+*.log

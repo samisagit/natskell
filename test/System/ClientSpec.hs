@@ -2,18 +2,18 @@
 
 module ClientSpec (spec) where
 
-import Client
-import Control.Concurrent
-import Control.Concurrent.STM
-import Control.Exception
-import Control.Monad
-import Data.ByteString as BS
-import qualified Data.Text as Text
-import Data.Text.Encoding (encodeUtf8)
-import qualified Docker.Client as DC
-import NatsWrappers
-import Test.Hspec
-import Text.Printf
+import           Client
+import           Control.Concurrent
+import           Control.Concurrent.STM
+import           Control.Exception
+import           Control.Monad
+import           Data.ByteString        as BS
+import qualified Data.Text              as Text
+import           Data.Text.Encoding     (encodeUtf8)
+import qualified Docker.Client          as DC
+import           NatsWrappers
+import           Test.Hspec
+import           Text.Printf
 
 spec :: Spec
 spec = do

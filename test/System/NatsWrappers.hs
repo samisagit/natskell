@@ -2,14 +2,14 @@
 
 module NatsWrappers where
 
-import Control.Concurrent
-import Control.Exception
+import           Control.Concurrent
+import           Control.Exception
+import qualified Data.ByteString     as BS
 import qualified Data.Conduit.Binary as Con
-import qualified Data.Text as Text
-import qualified Docker.Client as DC
+import qualified Data.Text           as Text
+import qualified Docker.Client       as DC
 import qualified Docker.Client.Types as DCT
-import qualified Network.HTTP as HTTP
-import qualified Data.ByteString as BS
+import qualified Network.HTTP        as HTTP
 
 second = 1000000
 
@@ -56,7 +56,7 @@ ensureImage image tag = do
       out <- DC.pullImage image tag Con.sinkLbs
       case out of
         Left err -> error $ show err
-        Right _ -> return ()
+        Right _  -> return ()
 
 runNATSContainer :: Text.Text -> IO (DC.ContainerID, DCT.ContainerDetails)
 runNATSContainer tag = do
@@ -90,7 +90,7 @@ startNATSContainer i = do
           details <- DC.inspectContainer i
           case details of
             Left err -> error $ show err
-            Right d -> return (i, d)
+            Right d  -> return (i, d)
 
 callNATSHealth :: String -> Int -> IO HTTP.ResponseCode
 callNATSHealth host port = do

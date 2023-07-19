@@ -3,17 +3,17 @@
 
 module ClientSpec (spec) where
 
-import Client
-import Control.Concurrent.STM
-import Control.Monad
-import qualified Data.ByteString as BS
-import Data.IORef
-import qualified Data.Text as Text
-import Data.Text.Encoding (encodeUtf8)
-import qualified Nats.Nats as N
-import Test.Hspec
-import Transformers.Transformers
-import Types.Sub
+import           Client
+import           Control.Concurrent.STM
+import           Control.Monad
+import qualified Data.ByteString           as BS
+import           Data.IORef
+import qualified Data.Text                 as Text
+import           Data.Text.Encoding        (encodeUtf8)
+import qualified Nats.Nats                 as N
+import           Test.Hspec
+import           Transformers.Transformers
+import           Types.Sub
 
 -- needs to take an IO ref of a [ByteString] in order to read it elsewhere
 instance N.NatsConn (TMVar (BS.ByteString, IORef [BS.ByteString])) where
