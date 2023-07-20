@@ -2,7 +2,9 @@
 
 module Pub where
 
-import qualified Data.ByteString as BS
+import           Control.Concurrent
+import           Control.Monad
+import qualified Data.ByteString    as BS
 import           Nats.Nats
 import           Sub
 import           Types
@@ -18,9 +20,6 @@ applyPubOptions = foldl (flip ($))
 defaultPubOptions :: PubOptions
 defaultPubOptions = ("", "", Nothing, "")
 
--- TODO: we'll want to gc reply subs that haven't been recieved in a given duration
--- we could plausibly add a timeout when adding a subscription, and periodically check
--- for expired subs
 pub :: NatsConn a => NatsAPI a -> [PubOptions -> PubOptions] -> IO ()
 pub nats options = do
   let (subject, payload, callback, sid) = applyPubOptions defaultPubOptions options
@@ -29,12 +28,14 @@ pub nats options = do
     Just cb -> do
       let replyTo = BS.append subject ".REPLY" -- TODO: this subject needs to be unique, so user created subs don't get removed on reciept
       sub nats [
-        subWithSID sid, -- TODO: what should this be
+        subWithSID sid,
         subWithSubject replyTo,
-        subWithCallback (replyCallback nats cb sid subject),
-        subWithTimeout 10
+        subWithCallback (replyCallback nats cb sid subject)
         ]
       sendBytes nats $ Pub subject (Just replyTo) Nothing (Just payload)
+      void . forkIO $ do
+        _ <- threadDelay 10000000
+        unsub nats sid replyTo
 
 pubWithSubject :: Subject -> PubOptions -> PubOptions
 pubWithSubject subject (_, payload, callback, sid) = (subject, payload, callback, sid)

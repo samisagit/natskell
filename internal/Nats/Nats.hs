@@ -43,8 +43,8 @@ nats socket = do
 readMessage :: NatsConn a => NatsAPI a -> IO ParsedMessage
 readMessage nats = atomically $ readBuffer nats
 
-addSubscription :: NatsConn a => NatsAPI a -> BS.ByteString -> (Msg -> IO ()) -> Maybe Int -> IO ()
-addSubscription nats sid callback timeout = atomically . modifyTVar (router nats) $ Map.insert sid (callback, timeout)
+addSubscription :: NatsConn a => NatsAPI a -> BS.ByteString -> (Msg -> IO ()) -> IO ()
+addSubscription nats sid callback = atomically . modifyTVar (router nats) $ Map.insert sid callback
 
 removeSubscription :: NatsConn a => NatsAPI a -> BS.ByteString -> IO ()
 removeSubscription nats sid = atomically . modifyTVar (router nats) $ Map.delete sid
@@ -54,7 +54,7 @@ subscriptionCallback nats sid = do
   router <- readTVarIO (router nats)
   case Map.lookup sid router of
     Nothing      -> error $ "no subscription found for sid " ++ show sid
-    Just (cb, _) -> return cb
+    Just cb -> return cb
 
 recvBytes :: NatsConn a => NatsAPI a -> IO ()
 recvBytes nats = do
@@ -93,7 +93,7 @@ class NatsConn a where
 data NatsAPI a where
   Nats :: NatsConn a => {
     sock   :: TMVar a,
-    router :: TVar(Map.Map BS.ByteString (Msg -> IO (), Maybe Int)),
+    router :: TVar(Map.Map BS.ByteString (Msg -> IO ())),
     config :: TMVar Config,
     buffer :: TVar BS.ByteString
   }  -> NatsAPI a
