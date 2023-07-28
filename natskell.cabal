@@ -120,6 +120,7 @@ test-suite unit-test
        ClientLoadSpec
        ClientSpec
        Fixtures
+       Harness
 
 test-suite fuzz-test
     import:         shared
