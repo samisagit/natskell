@@ -6,12 +6,14 @@ module ClientSpec (spec) where
 import           Client
 import           Control.Concurrent.STM
 import           Control.Monad
-import qualified Data.ByteString           as BS
+import qualified Data.ByteString        as BS
 import           Data.IORef
 import           Harness
-import qualified Nats.Nats                 as N
+import qualified Nats.Nats              as N
 import           Test.Hspec
 import           Types.Sub
+import           Types.Pub
+import Transformers.Transformers
 
 -- needs to take an IO ref of a [ByteString] in order to read it elsewhere
 instance N.NatsConn (TMVar (BS.ByteString, IORef [BS.ByteString])) where
@@ -52,3 +54,15 @@ cases = parallel $ do
       handShake nats
       join . atomically $ takeTMVar lock
 
+    it "subscribes to its reply before publishing" $ do
+      msgList <- newIORef [] :: IO (IORef [BS.ByteString])
+      -- dump the msg onto the 'socket'
+      socket <- newTMVarIO (""::BS.ByteString, msgList)
+      nats <- N.nats socket
+      pub
+        nats
+        [pubWithSubject "sub", pubWithPayload "payload", pubWithReplyCallback (\_ -> return ()) "reply"]
+      readIORef msgList `shouldReturn` [
+        transform $ Sub "sub.REPLY" Nothing "reply",
+        transform $ Pub "sub" (Just "sub.REPLY") Nothing (Just "payload")
+        ]

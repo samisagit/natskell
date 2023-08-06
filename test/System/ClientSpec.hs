@@ -52,7 +52,6 @@ sys = parallel $ do
           forM_ keyedAssertions $ \(_, x) -> unsub nats x x
 
         it "handles replies" $ \(_, host, port) -> do
-          -- TODO: there appears to be a race somewhere in here
           nats1 <- connect host port
           handShake nats1
 

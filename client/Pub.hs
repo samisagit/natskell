@@ -26,7 +26,7 @@ pub nats options = do
   case callback of
     Nothing -> sendBytes nats $ Pub subject Nothing Nothing (Just payload)
     Just cb -> do
-      let replyTo = BS.append subject ".REPLY" -- TODO: this subject needs to be unique, so user created subs don't get removed on reciept
+      let replyTo = BS.append subject ".REPLY" -- TODO: this subject needs to be unique, so user created subs don't get removed on reciept, or perhaps just the SID need to be unique, need to check the use of that
       sub nats [
         subWithSID sid,
         subWithSubject replyTo,
