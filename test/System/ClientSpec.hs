@@ -12,6 +12,7 @@ import qualified Data.Text              as Text
 import           Data.Text.Encoding     (encodeUtf8)
 import qualified Docker.Client          as DC
 import           NatsWrappers
+import           System.Timeout
 import           Test.Hspec
 import           Text.Printf
 
@@ -66,16 +67,16 @@ sys = parallel $ do
           threadDelay 1000000
 
           (lock, assertion) <- asyncAssert (\msg -> msg `shouldBe` Msg "foo.REPLY" "abc" Nothing (Just "bar") Nothing)
-          pub nats1 [pubWithSubject "foo", pubWithPayload "bar", pubWithReplyCallback assertion "abc"]
+          pub nats1 [pubWithSubject "foo", pubWithPayload "bar", pubWithReplyCallback assertion]
 
           -- ensure the inital pub is received
-          join . atomically $ takeTMVar lockAssure
+          timeout 1000000 (join . atomically $ takeTMVar lockAssure) `shouldNotReturn` Nothing
 
           -- mock a response from nats2
           pub nats2 [pubWithSubject "foo.REPLY", pubWithPayload "bar"]
 
           -- wait for a response from nats2
-          join . atomically $ takeTMVar lock
+          timeout 1000000 (join . atomically $ takeTMVar lock) `shouldNotReturn` Nothing
 
 asyncAssert :: (Msg -> Expectation) -> IO (TMVar Expectation, Msg -> IO ())
 asyncAssert e = do

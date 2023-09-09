@@ -37,6 +37,7 @@ library
     build-depends:
        natskell-internal,
        bytestring,
+       uuid,
 
     build-tool-depends: hspec-discover:hspec-discover
 
