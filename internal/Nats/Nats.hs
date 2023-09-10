@@ -4,7 +4,7 @@ module Nats.Nats(
   nats,
   NatsConn(..),
   Config(..),
-  NatsAPI(),
+  NatsAPI(sidService),
   subscriptionCallback,
   setConfig,
   addSubscription,
@@ -31,14 +31,14 @@ import           Validators.Validators
 socketReadLength :: Int
 socketReadLength = 1024
 
-nats :: NatsConn a => a -> IO (NatsAPI a)
-nats socket = do
+nats :: NatsConn a => a -> (() -> IO BS.ByteString) -> IO (NatsAPI a)
+nats socket sidService = do
   sock   <- newTMVarIO socket
   router <- newTVarIO Map.empty
   -- TODO: define a default config AND make sure places we're setting it know it's not empty
   config <- newEmptyTMVarIO
   buffer <- newTVarIO BS.empty
-  return $ Nats sock router config buffer
+  return $ Nats sock router config buffer sidService
 
 readMessage :: NatsConn a => NatsAPI a -> IO ParsedMessage
 readMessage nats = atomically $ readBuffer nats
@@ -95,7 +95,8 @@ data NatsAPI a where
     sock   :: TMVar a,
     router :: TVar(Map.Map BS.ByteString (Msg -> IO ())),
     config :: TMVar Config,
-    buffer :: TVar BS.ByteString
+    buffer :: TVar BS.ByteString,
+    sidService :: () -> IO BS.ByteString
   }  -> NatsAPI a
 
 data Config = Config

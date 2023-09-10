@@ -12,12 +12,15 @@ type SubOptions = (Subject, SID, Msg -> IO())
 applySubOptions :: SubOptions -> [SubOptions -> SubOptions] -> SubOptions
 applySubOptions = foldl (flip ($))
 
-defaultSubOptions :: SubOptions
-defaultSubOptions = ("", "", \_ -> return ())
+defaultSubOptions :: NatsAPI a -> IO SubOptions
+defaultSubOptions nats = do
+  sid <- sidService nats ()
+  return ("", sid, \_ -> return ())
 
 sub :: NatsConn a => NatsAPI a -> [SubOptions -> SubOptions] -> IO ()
 sub nats opts = do
-  let (subject, sid, callback) = applySubOptions defaultSubOptions opts
+  defaultOpts <- defaultSubOptions nats
+  let (subject, sid, callback) = applySubOptions defaultOpts opts
   addSubscription nats sid callback
   sendBytes nats $ Sub subject Nothing sid
 

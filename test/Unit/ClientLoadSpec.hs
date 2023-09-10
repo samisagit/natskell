@@ -10,6 +10,10 @@ import qualified Data.ByteString        as BS
 import qualified Nats.Nats              as N
 import           Test.Hspec
 import           Harness
+import Data.UUID.V4
+import Data.UUID
+
+sidService () =  toASCIIBytes <$> nextRandom
 
 instance N.NatsConn (TMVar BS.ByteString) where
   recv sock x = do
@@ -49,7 +53,7 @@ performAssertions :: BS.ByteString -> [(BS.ByteString, (TMVar Expectation, Msg -
 performAssertions msgs keyedAssertions = do
   -- dump all the msgs onto the 'socket'
   socket <- newTMVarIO msgs
-  nats <- N.nats socket
+  nats <- N.nats socket sidService
   -- subscribe to all matchers
   forM_ keyedAssertions $ \(matcher, (_, callback)) -> sub nats [
     subWithSubject matcher,
@@ -60,5 +64,4 @@ performAssertions msgs keyedAssertions = do
   handShake nats
   -- wait for the locks to release
   forM_ keyedAssertions $ \(_, (lock, _)) -> join . atomically $ takeTMVar lock
-
 

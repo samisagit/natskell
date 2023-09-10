@@ -10,11 +10,15 @@ import           Control.Monad
 import           Data.ByteString        as BS
 import qualified Data.Text              as Text
 import           Data.Text.Encoding     (encodeUtf8)
+import           Data.UUID
+import           Data.UUID.V4
 import qualified Docker.Client          as DC
 import           NatsWrappers
 import           System.Timeout
 import           Test.Hspec
 import           Text.Printf
+
+sidService () = toASCIIBytes <$> nextRandom
 
 spec :: Spec
 spec = do
@@ -30,7 +34,7 @@ sys = parallel $ do
     describe (printf "client (nats:%s)" version) $ do
       around (withNATSConnection version) $ do
         it "sends and receives its own messages" $ \(_, host, port) -> do
-          nats <- connect host port
+          nats <- connect host port sidService
           handShake nats
 
           let keys = Prelude.map (packStr . show) [1 .. 100] :: [BS.ByteString]
@@ -53,10 +57,10 @@ sys = parallel $ do
           forM_ keyedAssertions $ \(_, x) -> unsub nats x x
 
         it "handles replies" $ \(_, host, port) -> do
-          nats1 <- connect host port
+          nats1 <- connect host port sidService
           handShake nats1
 
-          nats2 <- connect host port
+          nats2 <- connect host port sidService
           handShake nats2
 
           (lockAssure, assertAssure) <- asyncAssert (\_ -> return ())

@@ -15,6 +15,8 @@ import           Transformers.Transformers
 import           Types.Pub
 import           Types.Sub
 
+sidService () = return "sid"
+
 -- needs to take an IO ref of a [ByteString] in order to read it elsewhere
 instance N.NatsConn (TMVar (BS.ByteString, IORef [BS.ByteString])) where
   recv sock x = do
@@ -42,7 +44,7 @@ cases = parallel $ do
       msgList <- newIORef [] :: IO (IORef [BS.ByteString])
       -- dump the msg onto the 'socket'
       socket <- newTMVarIO (msg, msgList)
-      nats <- N.nats socket
+      nats <- N.nats socket sidService
       sub
         nats
         [ subWithSubject matcher,
@@ -58,13 +60,13 @@ cases = parallel $ do
       msgList <- newIORef [] :: IO (IORef [BS.ByteString])
       -- dump the msg onto the 'socket'
       socket <- newTMVarIO (""::BS.ByteString, msgList)
-      nats <- N.nats socket
+      nats <- N.nats socket sidService
       pub nats [
         pubWithSubject "sub",
         pubWithPayload "payload",
         pubWithReplyCallback (\_ -> return ())
         ]
       readIORef msgList `shouldReturn` [
-        transform $ Sub "sub.REPLY" Nothing "reply",
-        transform $ Pub "sub" (Just "sub.REPLY") Nothing (Just "payload")
+        transform $ Sub "INBOX.sub.sid" Nothing "sid",
+        transform $ Pub "sub" (Just "INBOX.sub.sid") Nothing (Just "payload")
         ]

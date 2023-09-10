@@ -37,7 +37,6 @@ library
     build-depends:
        natskell-internal,
        bytestring,
-       uuid,
 
     build-tool-depends: hspec-discover:hspec-discover
 
@@ -62,7 +61,7 @@ library natskell-internal
        network-simple,
        stm,
        text,
-       containers,
+       containers
 
     exposed-modules:
        Lib.Parser
@@ -105,7 +104,9 @@ test-suite unit-test
        word8,
        aeson,
        stm,
-       text
+       text,
+       uuid
+
     other-modules:
        ParserSpec
        MsgSpec
@@ -151,7 +152,8 @@ test-suite system-test
        docker,
        HTTP,
        stm,
-       conduit-extra
+       conduit-extra,
+       uuid
 
     other-modules:
        NatsWrappers

@@ -5,8 +5,6 @@ module Pub where
 import           Control.Concurrent
 import           Control.Monad
 import qualified Data.ByteString    as BS
-import           Data.UUID
-import           Data.UUID.V4
 import           Nats.Nats
 import           Sub
 import           Types
@@ -25,11 +23,14 @@ defaultPubOptions = ("", "", Nothing)
 pub :: NatsConn a => NatsAPI a -> [PubOptions -> PubOptions] -> IO ()
 pub nats options = do
   let (subject, payload, callback) = applyPubOptions defaultPubOptions options
-  sid <- toASCIIBytes <$> nextRandom
+  sid <- sidService nats ()
   case callback of
     Nothing -> sendBytes nats $ Pub subject Nothing Nothing (Just payload)
     Just cb -> do
-      let replyTo = foldr BS.append "" [subject, ".REPLY.", sid]
+      -- replyTo needs to be unique for each message, so many calls can be made
+      -- to the same subject with different closures.
+      -- For human readability, we include the subject, but this is not necessary.
+      let replyTo = foldr BS.append "" ["INBOX.", subject, ".", sid]
       sub nats [
         subWithSID sid,
         subWithSubject replyTo,
