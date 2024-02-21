@@ -3,6 +3,7 @@
 module NatsWrappers where
 
 import           Control.Concurrent
+import           Control.Monad
 import           Control.Exception
 import qualified Data.ByteString     as BS
 import qualified Data.Conduit.Binary as Con
@@ -22,11 +23,11 @@ startNATS tag = do
   let health = exposedService d 0
   let nats = exposedService d 2
   ensureNATS health 10
+  syncFile cid
   return (cid, Text.unpack . fst $ nats, snd nats)
 
 stopNATS :: (DC.ContainerID, String, Int) -> IO ()
 stopNATS (cid, _, _) = do
-  writeLogFile cid
   h <- DC.unixHttpHandler sock
   DC.runDockerT (DC.defaultClientOpts, h) $
     do
@@ -47,6 +48,12 @@ writeLogFile cid = do
         Right l -> do
           return $ BS.toStrict l
   BS.writeFile "nats.log" output
+
+syncFile :: DC.ContainerID -> IO ()
+syncFile cid = do
+  void . forkIO . forever $ do
+    writeLogFile cid
+    threadDelay 5000000
 
 ensureImage :: Text.Text -> Text.Text -> IO ()
 ensureImage image tag = do

@@ -11,18 +11,24 @@ import           Data.IORef
 import           Harness
 import qualified Nats.Nats                 as N
 import           Test.Hspec
-import           Transformers.Transformers
-import           Types.Pub
-import           Types.Sub
+import Data.Word8
+import           Control.Concurrent
 
-sidService () = return "sid"
+type NatsHarness = (TMVar (IORef BS.ByteString, IORef [BS.ByteString]))
 
--- needs to take an IO ref of a [ByteString] in order to read it elsewhere
-instance N.NatsConn (TMVar (BS.ByteString, IORef [BS.ByteString])) where
+newNatsHarness :: IO NatsHarness
+newNatsHarness = do
+  msgList <- newIORef [] :: IO (IORef [BS.ByteString])
+  incoming <- newIORef "" :: IO (IORef BS.ByteString)
+  newTMVarIO (incoming, msgList)
+
+instance N.NatsConn NatsHarness where
   recv sock x = do
     (i, o) <- atomically $ takeTMVar sock
-    let (a, b) = BS.splitAt x i
-    atomically $ putTMVar sock (b, o)
+    incoming <- readIORef i
+    let (a, b) = BS.splitAt x incoming
+    writeIORef i b
+    atomically $ putTMVar sock (i, o)
     if BS.length a == 0
       then return Nothing
       else return (Just a)
@@ -32,6 +38,11 @@ instance N.NatsConn (TMVar (BS.ByteString, IORef [BS.ByteString])) where
     writeIORef o (msgList ++ [x])
     atomically $ putTMVar sock (i, o)
 
+sentMessages :: NatsHarness -> IO [BS.ByteString]
+sentMessages harness = do
+  (_, o) <- atomically $ takeTMVar harness
+  readIORef o
+
 spec :: Spec
 spec = do
   cases
@@ -39,34 +50,54 @@ spec = do
 cases = parallel $ do
   describe "Client" $ do
     it "processes a single message" $ do
-      let matcher = "1" -- arbitrary bytestring to match on
-      (lock, assertion, msg) <- matcherMsg matcher
-      msgList <- newIORef [] :: IO (IORef [BS.ByteString])
-      -- dump the msg onto the 'socket'
-      socket <- newTMVarIO (msg, msgList)
-      nats <- N.nats socket sidService
-      sub
+      (lock, assertion) <- matcherMsg "Hello World"
+      harness <- newNatsHarness
+      nats <- N.nats harness
+      handShake nats
+      mockOk harness
+
+      let subj = "SOME.EVENT"
+      sid <- sub
         nats
-        [ subWithSubject matcher,
-          subWithSID matcher,
+        [ subWithSubject subj,
           subWithCallback assertion
         ]
-      chkLastMsg socket $ Sub "1" Nothing "1"
-
-      handShake nats
+      mockOk harness
+      mockPub harness $ foldl BS.append "MSG " [ subj,  " ", sid, " ", "11\r\nHello World\r\n" ]
       join . atomically $ takeTMVar lock
 
     it "subscribes to its reply before publishing" $ do
-      msgList <- newIORef [] :: IO (IORef [BS.ByteString])
-      -- dump the msg onto the 'socket'
-      socket <- newTMVarIO (""::BS.ByteString, msgList)
-      nats <- N.nats socket sidService
+      harness <- newNatsHarness
+      nats <- N.nats harness
+
+      handShake nats
+      mockOk harness
+
+      forkIO $ mockOk harness -- OK for the sub
+      forkIO $ mockOk harness -- OK for the pub
       pub nats [
-        pubWithSubject "sub",
-        pubWithPayload "payload",
+        pubWithSubject "SOME.ENDPOINT",
+        pubWithPayload "Hello World",
         pubWithReplyCallback (\_ -> return ())
         ]
-      readIORef msgList `shouldReturn` [
-        transform $ Sub "INBOX.sub.sid" Nothing "sid",
-        transform $ Pub "sub" (Just "INBOX.sub.sid") Nothing (Just "payload")
-        ]
+
+      (_:sub:pub:_) <- sentMessages harness
+      subjectFromSub sub `shouldBe` replyToFromPub pub
+
+subjectFromSub :: BS.ByteString -> BS.ByteString
+subjectFromSub s = head . tail $ BS.split _space s
+      
+replyToFromPub :: BS.ByteString -> BS.ByteString
+replyToFromPub s = head . tail . tail $ BS.split _space s
+
+mockPub :: NatsHarness -> BS.ByteString -> IO ()
+mockPub harness msg = do
+  (i, o) <- atomically $ takeTMVar harness
+  readIORef i >>= writeIORef i . (msg `BS.append`)
+  atomically $ putTMVar harness (i, o)
+
+mockOk :: NatsHarness -> IO ()
+mockOk harness = do
+  (i, o) <- atomically $ takeTMVar harness
+  writeIORef i "+OK\r\n"
+  atomically $ putTMVar harness (i, o)

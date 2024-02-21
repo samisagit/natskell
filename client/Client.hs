@@ -14,6 +14,8 @@ import           Types.Info
 import           Types.Msg
 import           Types.Ping
 import           Types.Pong
+import           Types.Ok
+import           Types.Err
 import           Unsub
 
 -- TODO: this name is a bit misleading, it doesn't just perform the handshake
@@ -23,9 +25,10 @@ handShake nats = do
   forkIO . forever $ recvBytes nats
   forkIO . forever $ readMessages nats
   -- TODO: at some point we'll want to read the state set by INFO
+  prepareSend nats
   sendBytes nats $
     Connect
-      { Types.Connect.verbose = False,
+      { Types.Connect.verbose = True,
         Types.Connect.pedantic = True,
         Types.Connect.tls_required = False,
         Types.Connect.auth_token = Nothing,
@@ -52,10 +55,19 @@ readMessages nats = do
     ParsedMsg a     -> void . forkIO $ handleMsg nats a
     ParsedPing Ping -> void . forkIO $ pong nats
     ParsedInfo a    -> void . forkIO $ handleInfo nats a
-    ParsedOk _      -> return ()
+    ParsedOk a      -> handleOk nats a
     ParsedPong _    -> return ()
     -- TODO: we should check the error to see if it' fatal, if so we'll have been disconnected
-    ParsedErr err   -> void . forkIO . print $ "error: " ++ show err
+    ParsedErr err   -> handleErr nats err
+
+handleErr :: NatsConn a => NatsAPI a -> Err -> IO ()
+handleErr nats err = do 
+  ackBytes nats
+  void . forkIO . print $ "error: " ++ show err
+
+-- TODO: if safe mode, unblock further sends
+handleOk :: NatsConn a => NatsAPI a -> Ok -> IO ()
+handleOk nats _ = ackBytes nats
 
 handleMsg :: NatsConn a => NatsAPI a -> Msg -> IO ()
 handleMsg nats msg = do
@@ -71,9 +83,11 @@ handleInfo nats info =
         headersSupported = isTruthy (Types.Info.headers info),
         authRequired = isTruthy (Types.Info.auth_required info),
         _TLSRequired = isTruthy (Types.Info.tls_required info),
-        connectURLs = connect_urls info
+        connectURLs = connect_urls info,
+        safeMode = True -- TODO: this should be set by the user
       }
 
 isTruthy :: Maybe Bool -> Bool
 isTruthy Nothing  = False
 isTruthy (Just b) = b
+

@@ -4,13 +4,15 @@ module Nats.Nats(
   nats,
   NatsConn(..),
   Config(..),
-  NatsAPI(sidService),
+  NatsAPI(),
   subscriptionCallback,
   setConfig,
   addSubscription,
   removeSubscription,
   readMessage,
   sendBytes,
+  ackBytes,
+  prepareSend,
   recvBytes,
   socketReadLength,
   ) where
@@ -31,14 +33,15 @@ import           Validators.Validators
 socketReadLength :: Int
 socketReadLength = 1024
 
-nats :: NatsConn a => a -> (() -> IO BS.ByteString) -> IO (NatsAPI a)
-nats socket sidService = do
+nats :: NatsConn a => a -> IO (NatsAPI a)
+nats socket = do
   sock   <- newTMVarIO socket
   router <- newTVarIO Map.empty
   -- TODO: define a default config AND make sure places we're setting it know it's not empty
   config <- newEmptyTMVarIO
   buffer <- newTVarIO BS.empty
-  return $ Nats sock router config buffer sidService
+  pubStack <- newTMVarIO []
+  return $ Nats sock router config buffer pubStack
 
 readMessage :: NatsConn a => NatsAPI a -> IO ParsedMessage
 readMessage nats = atomically $ readBuffer nats
@@ -73,9 +76,16 @@ sendBytes :: (Transformer m, Validator m, NatsConn a) => NatsAPI a -> m -> IO ()
 sendBytes nats msg = do
   case validate msg of
     Left err -> error $ show err
-    Right _  -> withSocket nats $ \socket -> send socket $ transform msg
+    Right _  -> do
+      withSocket nats $ \socket -> send socket $ transform msg
 
--- TODO: this many want to be more granular if a merge isn't possible
+prepareSend :: NatsConn a => NatsAPI a -> IO ()
+prepareSend nats = void . atomically $ takeTMVar (pubStack nats)
+
+ackBytes :: NatsConn a => NatsAPI a -> IO ()
+ackBytes nats = atomically $ putTMVar (pubStack nats) []
+
+-- TODO: this may want to be more granular if a merge isn't possible
 setConfig :: NatsConn a => NatsAPI a -> Config -> IO ()
 setConfig nats = atomically . putTMVar (config nats)
 
@@ -96,7 +106,7 @@ data NatsAPI a where
     router :: TVar(Map.Map BS.ByteString (Msg -> IO ())),
     config :: TMVar Config,
     buffer :: TVar BS.ByteString,
-    sidService :: () -> IO BS.ByteString
+    pubStack :: TMVar [BS.ByteString]
   }  -> NatsAPI a
 
 data Config = Config
@@ -105,7 +115,8 @@ data Config = Config
     authRequired     :: Bool,
     _TLSRequired     :: Bool,
     connectURLs      :: Maybe [BS.ByteString],
-    headersSupported :: Bool
+    headersSupported :: Bool,
+    safeMode         :: Bool
   }
 
 readBuffer :: NatsConn a => NatsAPI a -> STM ParsedMessage
@@ -121,7 +132,6 @@ readBuffer nats = do
       writeTVar (buffer nats) rest
       return msg
 
--- TODO: this could be hidden
 writeBuffer :: NatsConn a => NatsAPI a -> BS.ByteString -> IO ()
 writeBuffer nats msg = atomically . modifyTVar (buffer nats) $ \b -> b <> msg
 

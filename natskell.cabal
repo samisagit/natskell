@@ -37,6 +37,9 @@ library
     build-depends:
        natskell-internal,
        bytestring,
+       uuid,
+       hashable,
+       text,
 
     build-tool-depends: hspec-discover:hspec-discover
 
@@ -48,6 +51,7 @@ library
        Pub
        Unsub
        Types
+       Sid
 
     hs-source-dirs:
        client
