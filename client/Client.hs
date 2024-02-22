@@ -22,8 +22,6 @@ import           Unsub
 -- it also starts the read and write threads
 handShake :: NatsConn a => NatsAPI a -> IO ()
 handShake nats = do
-  forkIO . forever $ recvBytes nats
-  forkIO . forever $ readMessages nats
   -- TODO: at some point we'll want to read the state set by INFO
   prepareSend nats
   sendBytes nats $
@@ -44,6 +42,8 @@ handShake nats = do
         Types.Connect.no_responders = Nothing,
         Types.Connect.headers = Nothing
       }
+  forkIO . forever $ recvBytes nats
+  void . forkIO . forever $ readMessages nats
 
 pong :: NatsConn a => NatsAPI a -> IO ()
 pong nats = sendBytes nats Pong
