@@ -108,8 +108,7 @@ test-suite unit-test
        word8,
        aeson,
        stm,
-       text,
-       uuid
+       text
 
     other-modules:
        ParserSpec
@@ -156,8 +155,7 @@ test-suite system-test
        docker,
        HTTP,
        stm,
-       conduit-extra,
-       uuid
+       conduit-extra
 
     other-modules:
        NatsWrappers
