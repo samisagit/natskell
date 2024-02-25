@@ -37,7 +37,7 @@ withNATSConnection tag = bracket (startNATS tag) stopNATS
 
 versions = ["latest", "2.9.8", "2.9.6"]
 
-sys = parallel $ do
+sys = do
   forM_ versions $ \version ->
     describe (printf "client (nats:%s)" version) $ do
       around (withNATSConnection version) $ do
