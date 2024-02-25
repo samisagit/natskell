@@ -4,9 +4,9 @@ import           Nats.Nats
 import           Types
 import           Types.Unsub
 
-unsub :: NatsConn a => NatsAPI a -> SID -> Subject -> IO ()
-unsub nats sid subject = do
+unsub :: NatsConn a => NatsAPI a -> SID -> IO ()
+unsub nats sid = do
   removeSubscription nats sid
   prepareSend nats
-  sendBytes nats $ Unsub subject Nothing
+  sendBytes nats $ Unsub sid Nothing
 

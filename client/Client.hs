@@ -60,12 +60,13 @@ readMessages nats = do
     -- TODO: we should check the error to see if it' fatal, if so we'll have been disconnected
     ParsedErr err   -> handleErr nats err
 
+-- if safe mode, unblock further sends
 handleErr :: NatsConn a => NatsAPI a -> Err -> IO ()
 handleErr nats err = do 
   ackBytes nats
   void . forkIO . print $ "error: " ++ show err
 
--- TODO: if safe mode, unblock further sends
+-- if safe mode, unblock further sends
 handleOk :: NatsConn a => NatsAPI a -> Ok -> IO ()
 handleOk nats _ = ackBytes nats
 
