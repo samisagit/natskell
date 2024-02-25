@@ -28,6 +28,7 @@ startNATS tag = do
 
 stopNATS :: (DC.ContainerID, String, Int) -> IO ()
 stopNATS (cid, _, _) = do
+  writeLogFile cid
   h <- DC.unixHttpHandler sock
   DC.runDockerT (DC.defaultClientOpts, h) $
     do

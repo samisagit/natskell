@@ -13,6 +13,8 @@ import qualified Docker.Client          as DC
 import           NatsWrappers
 import           Test.Hspec
 import           Text.Printf
+import Debug.Trace
+import Control.Concurrent
 
 
 spec :: Spec
@@ -30,14 +32,15 @@ replyToReplyTo nats msg = do
   let reply = replyTo msg
   case reply of
     Just r -> pub nats [pubWithSubject r, pubWithPayload "bar"]
-    Nothing -> error $ "expected replyTo in message " ++ show msg
+    Nothing -> trace "expected replyTo field" error $ "expected replyTo in message " ++ show msg
 
 withNATSConnection :: Text.Text -> ((DC.ContainerID, String, Int) -> IO ()) -> IO ()
 withNATSConnection tag = bracket (startNATS tag) stopNATS
 
 versions = ["latest", "2.9.8", "2.9.6"]
+singleSecond = 1000000
 
-sys = do
+sys = parallel $ do
   forM_ versions $ \version ->
     describe (printf "client (nats:%s)" version) $ do
       around (withNATSConnection version) $ do
@@ -50,7 +53,7 @@ sys = do
           asyncAsserts <- Prelude.mapM asyncAssert comparisons
           let keyedAssertions = Prelude.zip asyncAsserts keys
 
-          forM_ keyedAssertions $ \((_, callback), x) ->
+          sids <- forM keyedAssertions $ \((_, callback), x) ->
             sub
               nats
               [ subWithSubject x,
@@ -61,7 +64,7 @@ sys = do
 
           forM_ asyncAsserts $ \(lock, _) -> join . atomically $ takeTMVar lock
 
-          forM_ keyedAssertions $ \(_, x) -> unsub nats x x
+          forM_ sids $ \x -> unsub nats x
 
         it "receives others messages" $ \(_, host, port) -> do
           nats1 <- connect host port
@@ -71,16 +74,21 @@ sys = do
           handShake nats2
 
           (lockAssure, assertAssure) <- asyncAssert (\_ -> return ())
-          sub nats1 [
+          sid <- sub nats1 [
             subWithSubject "foo",
             subWithCallback assertAssure
             ]
+
+          -- we can't rate limit on different connections
+          -- TODO: we _could_ make calls block until the +OK is received
+          threadDelay $ singleSecond * 3
 
           pub nats2 [
             pubWithSubject "foo",
             pubWithPayload "bar"
             ]
           join . atomically $ takeTMVar lockAssure
+          unsub nats1 sid
 
         it "subscribes to its reply to" $ \(_, host, port) -> do
           nats1 <- connect host port
@@ -90,7 +98,7 @@ sys = do
           handShake nats2
 
           -- when a message comes to foo with a replyTo, send a message to that subject
-          sub nats1 [
+          sid <- sub nats1 [
            subWithSubject "foo",
            subWithCallback (replyToReplyTo nats2)
            ]
@@ -103,6 +111,7 @@ sys = do
             ]
 
           join . atomically $ takeTMVar lockAssure
+          unsub nats1 sid
 
 asyncAssert :: (Msg -> Expectation) -> IO (TMVar Expectation, Msg -> IO ())
 asyncAssert e = do
