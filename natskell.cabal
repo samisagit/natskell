@@ -37,11 +37,21 @@ library
     build-depends:
        natskell-internal,
        bytestring,
+       uuid,
+       hashable,
+       text,
 
     build-tool-depends: hspec-discover:hspec-discover
 
     exposed-modules:
        Client
+
+    other-modules:
+       Sub
+       Pub
+       Unsub
+       Types
+       Sid
 
     hs-source-dirs:
        client
@@ -55,7 +65,7 @@ library natskell-internal
        network-simple,
        stm,
        text,
-       containers,
+       containers
 
     exposed-modules:
        Lib.Parser
@@ -99,6 +109,7 @@ test-suite unit-test
        aeson,
        stm,
        text
+
     other-modules:
        ParserSpec
        MsgSpec
@@ -111,8 +122,10 @@ test-suite unit-test
        ConnectSpec
        SubSpec
        UnsubSpec
+       ClientLoadSpec
        ClientSpec
        Fixtures
+       Harness
 
 test-suite fuzz-test
     import:         shared

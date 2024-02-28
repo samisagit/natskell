@@ -12,36 +12,106 @@ import           Data.Text.Encoding     (encodeUtf8)
 import qualified Docker.Client          as DC
 import           NatsWrappers
 import           Test.Hspec
+import           Text.Printf
+import Debug.Trace
+import Control.Concurrent
+
 
 spec :: Spec
 spec = do
   sys
 
+compareMsg :: Msg -> Msg -> Expectation
+compareMsg want got = do
+  subject want `shouldBe` subject got
+  replyTo want `shouldBe` replyTo got
+  payload want `shouldBe` payload got
+  headers want `shouldBe` headers got
+
+replyToReplyTo nats msg = do
+  let reply = replyTo msg
+  case reply of
+    Just r -> pub nats [pubWithSubject r, pubWithPayload "bar"]
+    Nothing -> trace "expected replyTo field" error $ "expected replyTo in message " ++ show msg
+
 withNATSConnection :: Text.Text -> ((DC.ContainerID, String, Int) -> IO ()) -> IO ()
 withNATSConnection tag = bracket (startNATS tag) stopNATS
 
 versions = ["latest", "2.9.8", "2.9.6"]
+singleSecond = 1000000
 
 sys = parallel $ do
-  describe "client" $ do
-    forM_ versions $ \version ->
+  forM_ versions $ \version ->
+    describe (printf "client (nats:%s)" version) $ do
       around (withNATSConnection version) $ do
-        it "sends and receives it's own messages" $ \(_, host, port) -> do
+        it "sends and receives its own messages" $ \(_, host, port) -> do
           nats <- connect host port
           handShake nats
 
-          let keys = Prelude.map (packStr . show) [1..100] :: [BS.ByteString]
-          let subData = Prelude.map (\x msg -> msg `shouldBe` Msg x x Nothing (Just x) Nothing) keys
-          asyncAsserts <- Prelude.mapM asyncAssert subData
+          let keys = Prelude.map (packStr . show) [1 .. 100] :: [BS.ByteString]
+          let comparisons = Prelude.map (\x msg -> compareMsg (Msg x x Nothing (Just x) Nothing) msg) keys
+          asyncAsserts <- Prelude.mapM asyncAssert comparisons
           let keyedAssertions = Prelude.zip asyncAsserts keys
 
-          forM_ keyedAssertions $ \((_, callback), x) -> sub nats x x callback
+          sids <- forM keyedAssertions $ \((_, callback), x) ->
+            sub
+              nats
+              [ subWithSubject x,
+                subWithCallback callback
+              ]
 
-          forM_ keyedAssertions $ \(_, x) -> pub nats x x
+          forM_ keyedAssertions $ \(_, x) -> pub nats [pubWithSubject x, pubWithPayload x]
 
-          forM_ asyncAsserts $ \(lock, _) -> atomically $ takeTMVar lock
+          forM_ asyncAsserts $ \(lock, _) -> join . atomically $ takeTMVar lock
 
-          forM_ keyedAssertions $ \(_, x) -> unsub nats x x
+          forM_ sids $ \x -> unsub nats x
+
+        it "receives others messages" $ \(_, host, port) -> do
+          nats1 <- connect host port
+          handShake nats1
+
+          nats2 <- connect host port
+          handShake nats2
+
+          (lockAssure, assertAssure) <- asyncAssert (\_ -> return ())
+          sid <- sub nats1 [
+            subWithSubject "foo",
+            subWithCallback assertAssure
+            ]
+
+          -- we can't rate limit on different connections
+          -- TODO: we _could_ make calls block until the +OK is received
+          threadDelay $ singleSecond * 3
+
+          pub nats2 [
+            pubWithSubject "foo",
+            pubWithPayload "bar"
+            ]
+          join . atomically $ takeTMVar lockAssure
+          unsub nats1 sid
+
+        it "subscribes to its reply to" $ \(_, host, port) -> do
+          nats1 <- connect host port
+          handShake nats1
+
+          nats2 <- connect host port
+          handShake nats2
+
+          -- when a message comes to foo with a replyTo, send a message to that subject
+          sid <- sub nats1 [
+           subWithSubject "foo",
+           subWithCallback (replyToReplyTo nats2)
+           ]
+
+          (lockAssure, assertAssure) <- asyncAssert (\_ -> return ())
+          pub nats1 [
+            pubWithSubject "foo",
+            pubWithPayload "bar",
+            pubWithReplyCallback assertAssure
+            ]
+
+          join . atomically $ takeTMVar lockAssure
+          unsub nats1 sid
 
 asyncAssert :: (Msg -> Expectation) -> IO (TMVar Expectation, Msg -> IO ())
 asyncAssert e = do

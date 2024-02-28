@@ -6,22 +6,42 @@ module ClientSpec (spec) where
 import           Client
 import           Control.Concurrent.STM
 import           Control.Monad
-import qualified Data.ByteString        as BS
-import qualified Data.Text              as Text
-import           Data.Text.Encoding     (encodeUtf8)
-import qualified Nats.Nats              as N
+import qualified Data.ByteString           as BS
+import           Data.IORef
+import           Harness
+import qualified Nats.Nats                 as N
 import           Test.Hspec
+import Data.Word8
+import           Control.Concurrent
 
-instance N.NatsConn (TMVar BS.ByteString) where
+type NatsHarness = (TMVar (IORef BS.ByteString, IORef [BS.ByteString]))
+
+newNatsHarness :: IO NatsHarness
+newNatsHarness = do
+  msgList <- newIORef [] :: IO (IORef [BS.ByteString])
+  incoming <- newIORef "" :: IO (IORef BS.ByteString)
+  newTMVarIO (incoming, msgList)
+
+instance N.NatsConn NatsHarness where
   recv sock x = do
-    bs <- atomically $ takeTMVar sock
-    let (a, b) = BS.splitAt x bs
-    atomically $ putTMVar sock b
+    (i, o) <- atomically $ takeTMVar sock
+    incoming <- readIORef i
+    let (a, b) = BS.splitAt x incoming
+    writeIORef i b
+    atomically $ putTMVar sock (i, o)
     if BS.length a == 0
       then return Nothing
       else return (Just a)
-  send _ _ = do
-    return () -- we seed the data to the 'socket' in the test
+  send sock x = do
+    (i, o) <- atomically $ takeTMVar sock
+    msgList <- readIORef o
+    writeIORef o (msgList ++ [x])
+    atomically $ putTMVar sock (i, o)
+
+sentMessages :: NatsHarness -> IO [BS.ByteString]
+sentMessages harness = do
+  (_, o) <- atomically $ takeTMVar harness
+  readIORef o
 
 spec :: Spec
 spec = do
@@ -30,48 +50,54 @@ spec = do
 cases = parallel $ do
   describe "Client" $ do
     it "processes a single message" $ do
-      let matchers        = map (packStr . show) [1]
-      let msgs            = foldr (BS.append . matcherMsg) "" matchers
-      let assertions      = map matcherAssertion matchers
-      asyncAssertions     <- mapM asyncAssert assertions
-      let keyedAssertions = zip matchers asyncAssertions
-      BS.length msgs < N.socketReadLength `shouldBe` True
-      performAssertions msgs keyedAssertions
-    it "processes messages from multiple socket reads" $ do
-      let matchers        = map (packStr . show) [1..62]
-      let msgs            = foldr (BS.append . matcherMsg) "" matchers
-      let assertions      = map matcherAssertion matchers
-      asyncAssertions     <- mapM asyncAssert assertions
-      let keyedAssertions = zip matchers asyncAssertions
-      BS.length msgs > N.socketReadLength `shouldBe` True
-      performAssertions msgs keyedAssertions
+      (lock, assertion) <- matcherMsg "Hello World"
+      harness <- newNatsHarness
+      nats <- N.nats harness
+      handShake nats
+      mockOk harness
 
-performAssertions :: BS.ByteString -> [(BS.ByteString, (TMVar Expectation, Msg -> IO ()))] -> IO ()
-performAssertions msgs keyedAssertions = do
-  -- dump all the msgs onto the 'socket'
-  socket <- newTMVarIO msgs
-  nats <- N.nats socket
-  -- subscribe to all matchers
-  forM_ keyedAssertions $ \(matcher, (_, callback)) -> sub nats matcher matcher callback
-  -- process the msgs
-  handShake nats
-  -- wait for the locks to release
-  forM_ keyedAssertions $ \(_, (lock, _)) -> join . atomically $ takeTMVar lock
+      let subj = "SOME.EVENT"
+      sid <- sub
+        nats
+        [ subWithSubject subj,
+          subWithCallback assertion
+        ]
+      mockOk harness
+      mockPub harness $ foldl BS.append "MSG " [ subj,  " ", sid, " ", "11\r\nHello World\r\n" ]
+      join . atomically $ takeTMVar lock
 
+    it "subscribes to its reply before publishing" $ do
+      harness <- newNatsHarness
+      nats <- N.nats harness
 
-matcherMsg :: BS.ByteString -> BS.ByteString
-matcherMsg matcher = BS.concat ["MSG ", matcher, " ", matcher, " ", (packStr . show) byteLength, "\r\n", matcher, "\r\n"]
-  where byteLength = BS.length matcher
+      handShake nats
+      mockOk harness
 
-matcherAssertion :: BS.ByteString -> (Msg -> Expectation)
-matcherAssertion matcher msg = msg `shouldBe` Msg matcher matcher Nothing (Just matcher) Nothing
+      forkIO $ mockOk harness -- OK for the sub
+      forkIO $ mockOk harness -- OK for the pub
+      pub nats [
+        pubWithSubject "SOME.ENDPOINT",
+        pubWithPayload "Hello World",
+        pubWithReplyCallback (\_ -> return ())
+        ]
 
-asyncAssert :: (Msg -> Expectation) -> IO (TMVar Expectation, Msg -> IO ())
-asyncAssert e = do
-  lock <- newEmptyTMVarIO
-  let callback msg = atomically $ putTMVar lock (e msg)
-  return (lock, callback)
+      (_:sub:pub:_) <- sentMessages harness
+      subjectFromSub sub `shouldBe` replyToFromPub pub
 
-packStr :: String -> BS.ByteString
-packStr = encodeUtf8 . Text.pack
+subjectFromSub :: BS.ByteString -> BS.ByteString
+subjectFromSub s = head . tail $ BS.split _space s
+      
+replyToFromPub :: BS.ByteString -> BS.ByteString
+replyToFromPub s = head . tail . tail $ BS.split _space s
 
+mockPub :: NatsHarness -> BS.ByteString -> IO ()
+mockPub harness msg = do
+  (i, o) <- atomically $ takeTMVar harness
+  readIORef i >>= writeIORef i . (msg `BS.append`)
+  atomically $ putTMVar harness (i, o)
+
+mockOk :: NatsHarness -> IO ()
+mockOk harness = do
+  (i, o) <- atomically $ takeTMVar harness
+  writeIORef i "+OK\r\n"
+  atomically $ putTMVar harness (i, o)
