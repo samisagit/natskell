@@ -61,9 +61,16 @@ test: /tmp/unit-test.out /tmp/fuzz-test.out /tmp/system-test.out
 
 lint: /tmp/lint.out
 
-/tmp/lint.out: $(wildcard internal/*) $(wildcard client/*) $(wildcard test/*) 
+/tmp/lint.out: $(wildcard ./**/*)
+	stylish-haskell -r -c stylish.yaml .
 	hlint --git
 	touch /tmp/lint.out
+
+format: /tmp/format.out
+
+/tmp/format.out: $(wildcard ./**/*)
+	stylish-haskell -r -c stylish.yaml -i . || true
+	touch /tmp/format.out
 
 test-all: ./*stack.yaml
 	for file in $^; do \
@@ -81,6 +88,7 @@ clean:
 	rm -f /tmp/system-test.out
 	rm -f /tmp/fuzz-test.out
 	rm -f /tmp/lint.out
+	rm -f /tmp/format.out
 
 build:
 	stack build --fast
