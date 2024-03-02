@@ -3,7 +3,7 @@
 
 module ClientSpec (spec) where
 
-import           Client
+import           API
 import           Control.Concurrent.STM
 import           Control.Monad
 import qualified Data.ByteString           as BS
@@ -53,12 +53,13 @@ cases = parallel $ do
       (lock, assertion) <- matcherMsg "Hello World"
       harness <- newNatsHarness
       nats <- N.nats harness
-      handShake nats
+      c <- newClient nats True
+      handShake c
       mockOk harness
 
       let subj = "SOME.EVENT"
       sid <- sub
-        nats
+        c
         [ subWithSubject subj,
           subWithCallback assertion
         ]
@@ -69,13 +70,14 @@ cases = parallel $ do
     it "subscribes to its reply before publishing" $ do
       harness <- newNatsHarness
       nats <- N.nats harness
+      c <- newClient nats True
 
-      handShake nats
+      handShake c
       mockOk harness
 
       forkIO $ mockOk harness -- OK for the sub
       forkIO $ mockOk harness -- OK for the pub
-      pub nats [
+      pub c [
         pubWithSubject "SOME.ENDPOINT",
         pubWithPayload "Hello World",
         pubWithReplyCallback (\_ -> return ())

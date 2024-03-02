@@ -2,7 +2,7 @@
 
 module ClientSpec (spec) where
 
-import           Client
+import           API
 import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Monad
@@ -14,7 +14,6 @@ import           NatsWrappers
 import           Test.Hspec
 import           Text.Printf
 import Debug.Trace
-import Control.Concurrent
 
 
 spec :: Spec
@@ -38,7 +37,6 @@ withNATSConnection :: Text.Text -> ((DC.ContainerID, String, Int) -> IO ()) -> I
 withNATSConnection tag = bracket (startNATS tag) stopNATS
 
 versions = ["latest", "2.9.8", "2.9.6"]
-singleSecond = 1000000
 
 sys = parallel $ do
   forM_ versions $ \version ->
@@ -46,7 +44,8 @@ sys = parallel $ do
       around (withNATSConnection version) $ do
         it "sends and receives its own messages" $ \(_, host, port) -> do
           nats <- connect host port
-          handShake nats
+          c <- newClient nats True
+          handShake c
 
           let keys = Prelude.map (packStr . show) [1 .. 100] :: [BS.ByteString]
           let comparisons = Prelude.map (\x msg -> compareMsg (Msg x x Nothing (Just x) Nothing) msg) keys
@@ -55,63 +54,65 @@ sys = parallel $ do
 
           sids <- forM keyedAssertions $ \((_, callback), x) ->
             sub
-              nats
+              c
               [ subWithSubject x,
                 subWithCallback callback
               ]
 
-          forM_ keyedAssertions $ \(_, x) -> pub nats [pubWithSubject x, pubWithPayload x]
+          forM_ keyedAssertions $ \(_, x) -> pub c [pubWithSubject x, pubWithPayload x]
 
           forM_ asyncAsserts $ \(lock, _) -> join . atomically $ takeTMVar lock
 
-          forM_ sids $ \x -> unsub nats x
+          forM_ sids $ \x -> unsub c x
 
         it "receives others messages" $ \(_, host, port) -> do
           nats1 <- connect host port
-          handShake nats1
+          c1 <- newClient nats1 True
+          handShake c1
 
           nats2 <- connect host port
-          handShake nats2
+          c2 <- newClient nats2 True
+          handShake c2
 
           (lockAssure, assertAssure) <- asyncAssert (\_ -> return ())
-          sid <- sub nats1 [
+          sid <- sub c1 [
             subWithSubject "foo",
             subWithCallback assertAssure
             ]
 
           -- we can't rate limit on different connections
           -- TODO: we _could_ make calls block until the +OK is received
-          threadDelay $ singleSecond * 3
-
-          pub nats2 [
+          pub c2 [
             pubWithSubject "foo",
             pubWithPayload "bar"
             ]
           join . atomically $ takeTMVar lockAssure
-          unsub nats1 sid
+          unsub c1 sid
 
         it "subscribes to its reply to" $ \(_, host, port) -> do
           nats1 <- connect host port
-          handShake nats1
+          c1 <- newClient nats1 True
+          handShake c1
 
           nats2 <- connect host port
-          handShake nats2
+          c2 <- newClient nats2 True
+          handShake c2
 
           -- when a message comes to foo with a replyTo, send a message to that subject
-          sid <- sub nats1 [
+          sid <- sub c1 [
            subWithSubject "foo",
-           subWithCallback (replyToReplyTo nats2)
+           subWithCallback (replyToReplyTo c2)
            ]
 
           (lockAssure, assertAssure) <- asyncAssert (\_ -> return ())
-          pub nats1 [
+          pub c1 [
             pubWithSubject "foo",
             pubWithPayload "bar",
             pubWithReplyCallback assertAssure
             ]
 
           join . atomically $ takeTMVar lockAssure
-          unsub nats1 sid
+          unsub c1 sid
 
 asyncAssert :: (Msg -> Expectation) -> IO (TMVar Expectation, Msg -> IO ())
 asyncAssert e = do

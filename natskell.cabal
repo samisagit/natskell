@@ -44,7 +44,7 @@ library
     build-tool-depends: hspec-discover:hspec-discover
 
     exposed-modules:
-       Client
+      API
 
     other-modules:
        Sub
@@ -52,6 +52,8 @@ library
        Unsub
        Types
        Sid
+       StrictLock
+       Client
 
     hs-source-dirs:
        client

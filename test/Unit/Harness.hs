@@ -2,7 +2,7 @@
 
 module Harness where
 
-import           Client
+import           API
 import           Control.Concurrent.STM
 import qualified Data.ByteString        as BS
 import           Data.IORef

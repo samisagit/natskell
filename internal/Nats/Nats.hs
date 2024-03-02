@@ -1,4 +1,5 @@
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Nats.Nats(
   nats,
@@ -11,8 +12,6 @@ module Nats.Nats(
   removeSubscription,
   readMessage,
   sendBytes,
-  ackBytes,
-  prepareSend,
   recvBytes,
   socketReadLength,
   ) where
@@ -40,8 +39,7 @@ nats socket = do
   -- TODO: define a default config AND make sure places we're setting it know it's not empty
   config <- newEmptyTMVarIO
   buffer <- newTVarIO BS.empty
-  pubStack <- newTMVarIO []
-  return $ Nats sock router config buffer pubStack
+  return $ Nats sock router config buffer
 
 readMessage :: NatsConn a => NatsAPI a -> IO ParsedMessage
 readMessage nats = atomically $ readBuffer nats
@@ -56,7 +54,7 @@ subscriptionCallback :: NatsConn a => NatsAPI a -> BS.ByteString -> IO (Msg -> I
 subscriptionCallback nats sid = do
   router <- readTVarIO (router nats)
   case Map.lookup sid router of
-    Nothing      -> error $ "no subscription found for sid " ++ show sid
+    Nothing -> error $ "no subscription found for sid " ++ show sid
     Just cb -> return cb
 
 recvBytes :: NatsConn a => NatsAPI a -> IO ()
@@ -67,7 +65,7 @@ recvBytes nats = do
   dat <- recv socket socketReadLength
   case dat of
     Nothing  -> do
-      -- TODO: we've reached the end of input, which probably means the socket has been closed
+      -- TODO: we've reached the end of input, which might mean the socket has been closed, or we've got no new messages
       threadDelay 1000000
       recvBytes nats
     Just msg -> void . forkIO $ writeBuffer nats msg
@@ -78,12 +76,6 @@ sendBytes nats msg = do
     Left err -> error $ show err
     Right _  -> do
       withSocket nats $ \socket -> send socket $ transform msg
-
-prepareSend :: NatsConn a => NatsAPI a -> IO ()
-prepareSend nats = void . atomically $ takeTMVar (pubStack nats)
-
-ackBytes :: NatsConn a => NatsAPI a -> IO ()
-ackBytes nats = atomically $ putTMVar (pubStack nats) []
 
 -- TODO: this may want to be more granular if a merge isn't possible
 setConfig :: NatsConn a => NatsAPI a -> Config -> IO ()
@@ -105,8 +97,7 @@ data NatsAPI a where
     sock   :: TMVar a,
     router :: TVar(Map.Map BS.ByteString (Msg -> IO ())),
     config :: TMVar Config,
-    buffer :: TVar BS.ByteString,
-    pubStack :: TMVar [BS.ByteString]
+    buffer :: TVar BS.ByteString
   }  -> NatsAPI a
 
 data Config = Config
@@ -115,8 +106,7 @@ data Config = Config
     authRequired     :: Bool,
     _TLSRequired     :: Bool,
     connectURLs      :: Maybe [BS.ByteString],
-    headersSupported :: Bool,
-    safeMode         :: Bool
+    headersSupported :: Bool
   }
 
 readBuffer :: NatsConn a => NatsAPI a -> STM ParsedMessage
