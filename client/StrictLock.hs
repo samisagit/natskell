@@ -23,4 +23,4 @@ request Nothing action = do
 
 ack :: Maybe StrictLock -> IO ()
 ack (Just sl) = putMVar (requestLock sl) ()
-ack Nothing = return ()
+ack Nothing   = return ()

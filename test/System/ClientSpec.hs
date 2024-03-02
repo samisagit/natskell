@@ -9,11 +9,11 @@ import           Control.Monad
 import           Data.ByteString        as BS
 import qualified Data.Text              as Text
 import           Data.Text.Encoding     (encodeUtf8)
+import           Debug.Trace
 import qualified Docker.Client          as DC
 import           NatsWrappers
 import           Test.Hspec
 import           Text.Printf
-import Debug.Trace
 
 
 spec :: Spec

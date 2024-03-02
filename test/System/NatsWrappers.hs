@@ -3,8 +3,8 @@
 module NatsWrappers where
 
 import           Control.Concurrent
-import           Control.Monad
 import           Control.Exception
+import           Control.Monad
 import qualified Data.ByteString     as BS
 import qualified Data.Conduit.Binary as Con
 import qualified Data.Text           as Text

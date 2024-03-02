@@ -5,7 +5,7 @@ import           StrictLock
 
 data Client a = Client
   {
-    conn :: NatsAPI a,
+    conn       :: NatsAPI a,
     strictLock :: Maybe StrictLock
   }
 

@@ -7,11 +7,11 @@ import           Control.Concurrent
 import           Control.Monad
 import           Nats.Nats
 import           Sid
+import           StrictLock
 import           Types
 import           Types.Msg
 import           Types.Sub
 import           Unsub
-import StrictLock
 
 type SubOptions = (Subject, Msg -> IO(), Bool, Maybe Int)
 

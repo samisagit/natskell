@@ -2,15 +2,15 @@
 
 module Pub where
 
-import qualified Data.ByteString    as BS
+import           Client
+import qualified Data.ByteString as BS
 import           Nats.Nats
 import           Sid
+import           StrictLock
 import           Sub
 import           Types
 import           Types.Msg
 import           Types.Pub
-import           Client
-import StrictLock
 
 type PubOptions = (Subject, BS.ByteString, Maybe (Msg -> IO ()))
 

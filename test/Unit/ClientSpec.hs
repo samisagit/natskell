@@ -4,15 +4,15 @@
 module ClientSpec (spec) where
 
 import           API
+import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Monad
-import qualified Data.ByteString           as BS
+import qualified Data.ByteString        as BS
 import           Data.IORef
+import           Data.Word8
 import           Harness
-import qualified Nats.Nats                 as N
+import qualified Nats.Nats              as N
 import           Test.Hspec
-import Data.Word8
-import           Control.Concurrent
 
 type NatsHarness = (TMVar (IORef BS.ByteString, IORef [BS.ByteString]))
 
@@ -88,7 +88,7 @@ cases = parallel $ do
 
 subjectFromSub :: BS.ByteString -> BS.ByteString
 subjectFromSub s = head . tail $ BS.split _space s
-      
+
 replyToFromPub :: BS.ByteString -> BS.ByteString
 replyToFromPub s = head . tail . tail $ BS.split _space s
 

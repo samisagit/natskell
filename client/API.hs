@@ -2,13 +2,14 @@
 
 module API (module Sub, module Pub, module Unsub, Msg (..), module Client, handShake, connect) where
 
+import           Client
 import           Control.Concurrent
 import           Control.Monad
-import           StrictLock
 import           Nats.Nats
 import           Nats.NatsProper
 import           Parsers.Parsers
 import           Pub
+import           StrictLock
 import           Sub
 import           Types.Connect
 import           Types.Err
@@ -17,7 +18,6 @@ import           Types.Msg
 import           Types.Ping
 import           Types.Pong
 import           Unsub
-import Client
 
 -- TODO: this name is a bit misleading, it doesn't just perform the handshake
 -- it also starts the read and write threads

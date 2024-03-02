@@ -27,7 +27,7 @@ data ParsedMessage = ParsedPing Ping
 
 genericParse :: ByteString -> Either ParserErr (ParsedMessage, ByteString)
 genericParse a = case result of
-  Left s       -> Left s
+  Left s        -> Left s
   Right (p, bs) -> Right (p, bs)
   where
     result = runParser (
