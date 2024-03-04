@@ -8,6 +8,7 @@ import           Control.Monad
 import qualified Data.ByteString     as BS
 import qualified Data.Conduit.Binary as Con
 import qualified Data.Text           as Text
+import           Debug.Trace
 import qualified Docker.Client       as DC
 import qualified Docker.Client.Types as DCT
 import qualified Network.HTTP        as HTTP
@@ -20,7 +21,7 @@ startNATS :: Text.Text -> IO (DC.ContainerID, String, Int)
 startNATS tag = do
   ensureImage "nats" tag
   (cid, d) <- runNATSContainer tag
-  let health = exposedService d 0
+  let health = exposedService d 1 -- WTF, stack test need `0`, cabal test needs `1`
   let nats = exposedService d 2
   ensureNATS health 10
   syncFile cid
@@ -58,13 +59,33 @@ syncFile cid = do
 
 ensureImage :: Text.Text -> Text.Text -> IO ()
 ensureImage image tag = do
+  cached <- trace "using cached image" cachedImage image tag
+  if cached
+  then return ()
+  else do
+    h <- DC.unixHttpHandler sock
+    DC.runDockerT (DC.defaultClientOpts, h) $
+      do
+        out <- DC.pullImage image tag Con.sinkLbs
+        case out of
+          Left err -> error $ show err
+          Right _  -> return ()
+
+cachedImage :: Text.Text -> Text.Text -> IO Bool
+cachedImage image tag = do
   h <- DC.unixHttpHandler sock
   DC.runDockerT (DC.defaultClientOpts, h) $
     do
-      out <- DC.pullImage image tag Con.sinkLbs
+      out <- DC.listImages undefined
       case out of
         Left err -> error $ show err
-        Right _  -> return ()
+        Right images -> do
+          let tags = map DC.imageRepoTags images
+          let matchString = Text.intercalate (Text.pack ":") [image, tag]
+          let match = sum (length . filter (== matchString) <$> tags)
+          case match of
+            0 -> return False
+            _ -> return True
 
 runNATSContainer :: Text.Text -> IO (DC.ContainerID, DCT.ContainerDetails)
 runNATSContainer tag = do
@@ -119,7 +140,7 @@ ensureNATS service retryCount = do
   case result of
     Left ex -> do
       if retryCount == 0
-        then error $ "retried too many times " ++ show ex
+        then error $ "retried too many times: " ++ displayException ex
         else do
           threadDelay $ second `div` 2
           ensureNATS service $ retryCount - 1
@@ -137,3 +158,4 @@ exposedService cd n = (DC.hostIp service, fromIntegral . DC.hostPost $ service)
   where
     networkPortA = DCT.networkSettingsPorts (DCT.networkSettings cd) !! n
     service = head $ DCT.hostPorts networkPortA
+

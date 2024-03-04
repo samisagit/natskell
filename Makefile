@@ -25,36 +25,30 @@ help:
 	@echo "    Push to cachix"
 
 haddock:
-	stack haddock natskell --open
-
-generated-unit-test: /tmp/generated-unit-test.out
-
-/tmp/generated-unit-test.out: $(wildcard internal/*) $(wildcard client/*) $(wildcard test/Unit/*)
-	stack test natskell:unit-test --fast --cabal-verbosity=silent --ta="-j 16 --format=failed-examples --fail-fast --match=generated"
-	touch /tmp/generated-unit-test.out
+	cabal haddock natskell --open
 
 unit-test: /tmp/unit-test.out
 
 /tmp/unit-test.out: $(wildcard internal/*) $(wildcard client/*) $(wildcard test/Unit/*)
-	stack test natskell:unit-test --fast --cabal-verbosity=silent --ta="-j 16 --fail-fast --skip=generated"
+	cabal test natskell:unit-test --test-show-details=direct
 	touch /tmp/unit-test.out
 
 unit-test-profile: /tmp/unit-test-profile.out
 
 /tmp/unit-test-profile.out: $(wildcard internal/*) $(wildcard client/*) $(wildcard test/Unit/*)
-	stack test natskell:unit-test --fast --profile --cabal-verbosity=silent --ta="-j 16 --format=progress --fail-fast --skip=generated"
+	cabal test natskell:unit-test --test-show-details=direct
 	touch /tmp/unit-test-profile.out
 
 fuzz-test: /tmp/fuzz-test.out
 
 /tmp/fuzz-test.out: $(wildcard internal/*) $(wildcard client/*) $(wildcard test/Fuzz/*)
-	stack test  natskell:fuzz-test --fast --cabal-verbosity=silent --ta="-j 16 --fail-fast"
+	cabal test natskell:fuzz-test --test-show-details=direct
 	touch /tmp/fuzz-test.out
 
 system-test: /tmp/system-test.out
 
 /tmp/system-test.out: $(wildcard internal/*) $(wildcard client/*) $(wildcard test/System/*) 
-	stack test natskell:system-test --fast --cabal-verbosity=silent --ta="-j 16 --fail-fast"
+	cabal test natskell:system-test --test-show-details=direct
 	touch /tmp/system-test.out
 
 test: /tmp/unit-test.out /tmp/fuzz-test.out /tmp/system-test.out
@@ -72,14 +66,6 @@ format: /tmp/format.out
 	stylish-haskell -r -c stylish.yaml -i . || true
 	touch /tmp/format.out
 
-test-all: ./*stack.yaml
-	for file in $^; do \
-		if ! stack --stack-yaml $${file} test --fast --cabal-verbosity=silent --ta="-j 16 --format=failed-examples --fail-fast" ; then \
-			echo "Test failed for resolver $${file}"; \
-			exit 1; \
-		fi; \
-	done
-
 PHONY clean:
 clean:
 	rm -f /tmp/generated-unit-test.out
@@ -91,10 +77,7 @@ clean:
 	rm -f /tmp/format.out
 
 build:
-	stack build --fast
-
-build-test:
-	stack test --fast --no-run-tests --ta '-j 16'
+	cabal build
 
 push-cachix:
 	nix develop --profile dev-profile
