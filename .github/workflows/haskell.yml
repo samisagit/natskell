@@ -11,9 +11,9 @@ jobs:
     name: lint
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - uses: cachix/install-nix-action@v20
-    - uses: cachix/cachix-action@v12
+    - uses: cachix/cachix-action@v14
       with:
         name: samisagit-natskell
     - run: nix develop --command bash -c "make lint"
@@ -21,9 +21,9 @@ jobs:
     name: cabal_check
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - uses: cachix/install-nix-action@v20
-    - uses: cachix/cachix-action@v12
+    - uses: actions/checkout@v4
+    - uses: cachix/install-nix-action@v25
+    - uses: cachix/cachix-action@v14
       with:
         name: samisagit-natskell
     - run: nix develop --command bash -c "cabal check"
@@ -31,9 +31,9 @@ jobs:
     name: test
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - uses: cachix/install-nix-action@v20
-    - uses: cachix/cachix-action@v12
+    - uses: cachix/cachix-action@v14
       with:
         name: samisagit-natskell
     - run: nix develop --command bash -c "cabal update && make test"
