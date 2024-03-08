@@ -80,8 +80,6 @@ sys = parallel $ do
             subWithCallback assertAssure
             ]
 
-          -- we can't rate limit on different connections
-          -- TODO: we _could_ make calls block until the +OK is received
           pub c2 [
             pubWithSubject "foo",
             pubWithPayload "bar"

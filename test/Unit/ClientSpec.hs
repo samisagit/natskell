@@ -16,11 +16,16 @@ import           Test.Hspec
 
 type NatsHarness = (TMVar (IORef BS.ByteString, IORef [BS.ByteString]))
 
-newNatsHarness :: IO NatsHarness
+newNatsHarness :: IO (Client NatsHarness, NatsHarness)
 newNatsHarness = do
   msgList <- newIORef [] :: IO (IORef [BS.ByteString])
   incoming <- newIORef "" :: IO (IORef BS.ByteString)
-  newTMVarIO (incoming, msgList)
+  harness <- newTMVarIO (incoming, msgList)
+  nats <- N.nats harness
+  c <- newClient nats True
+  forkIO $ mockOk harness -- async as we aren't reading yet
+  handShake c
+  return (c, harness)
 
 instance N.NatsConn NatsHarness where
   recv sock x = do
@@ -47,36 +52,26 @@ spec :: Spec
 spec = do
   cases
 
-cases = parallel $ do
-  describe "Client" $ do
+cases :: Spec
+cases =  describe "Client" $ do
     it "processes a single message" $ do
-      (lock, assertion) <- matcherMsg "Hello World"
-      harness <- newNatsHarness
-      nats <- N.nats harness
-      c <- newClient nats True
-      handShake c
-      mockOk harness
+      (c, harness) <- newNatsHarness
 
+      (lock, assertion) <- matcherMsg "Hello World"
+      mockOk harness
       let subj = "SOME.EVENT"
       sid <- sub
         c
         [ subWithSubject subj,
           subWithCallback assertion
         ]
-      mockOk harness
       mockPub harness $ foldl BS.append "MSG " [ subj,  " ", sid, " ", "11\r\nHello World\r\n" ]
       join . atomically $ takeTMVar lock
 
     it "subscribes to its reply before publishing" $ do
-      harness <- newNatsHarness
-      nats <- N.nats harness
-      c <- newClient nats True
-
-      handShake c
-      mockOk harness
-
-      forkIO $ mockOk harness -- OK for the sub
-      forkIO $ mockOk harness -- OK for the pub
+      (c, harness) <- newNatsHarness
+      mockOk harness -- OK for the sub
+      mockOk harness -- OK for the pub
       pub c [
         pubWithSubject "SOME.ENDPOINT",
         pubWithPayload "Hello World",
@@ -97,9 +92,23 @@ mockPub harness msg = do
   (i, o) <- atomically $ takeTMVar harness
   readIORef i >>= writeIORef i . (msg `BS.append`)
   atomically $ putTMVar harness (i, o)
+  waitForRead harness
 
 mockOk :: NatsHarness -> IO ()
 mockOk harness = do
   (i, o) <- atomically $ takeTMVar harness
   writeIORef i "+OK\r\n"
   atomically $ putTMVar harness (i, o)
+  waitForRead harness
+
+waitForRead :: NatsHarness -> IO ()
+waitForRead harness = do
+  (i, o) <- atomically $ takeTMVar harness
+  incoming <- readIORef i
+  if BS.null incoming
+    then atomically $ putTMVar harness (i, o)
+    else do
+      atomically $ putTMVar harness (i, o)
+      threadDelay 100000
+      waitForRead harness
+

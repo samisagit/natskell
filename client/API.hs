@@ -24,6 +24,9 @@ import           Unsub
 handShake :: NatsConn a => Client a -> IO ()
 handShake c@(Client conn sl) = do
   -- TODO: at some point we'll want to read the state set by INFO
+  forkIO . forever $ recvBytes conn
+  forkIO . forever $ readMessages c
+
   request sl $ sendBytes conn
     Connect
       { Types.Connect.verbose = True,
@@ -42,8 +45,6 @@ handShake c@(Client conn sl) = do
         Types.Connect.no_responders = Nothing,
         Types.Connect.headers = Nothing
       }
-  forkIO . forever $ recvBytes conn
-  void . forkIO . forever $ readMessages c
 
 pong :: NatsConn a => Client a -> IO ()
 pong (Client conn _) = sendBytes conn Pong
