@@ -2,9 +2,11 @@
 
 module Pub where
 
-import qualified Data.ByteString    as BS
+import           Client
+import qualified Data.ByteString as BS
 import           Nats.Nats
 import           Sid
+import           StrictLock
 import           Sub
 import           Types
 import           Types.Msg
@@ -18,13 +20,12 @@ applyPubOptions = foldl (flip ($))
 defaultPubOptions :: PubOptions
 defaultPubOptions = ("", "", Nothing)
 
-pub :: NatsConn a => NatsAPI a -> [PubOptions -> PubOptions] -> IO ()
-pub nats options = do
+pub :: NatsConn a => Client a -> [PubOptions -> PubOptions] -> IO ()
+pub c@(Client conn sl) options = do
   let (subject, payload, callback) = applyPubOptions defaultPubOptions options
   case callback of
     Nothing -> do
-      prepareSend nats
-      sendBytes nats $ Pub subject Nothing Nothing (Just payload)
+      request sl . sendBytes conn $ Pub subject Nothing Nothing (Just payload)
     Just cb -> do
       -- replyTo needs to be unique for each message, so many calls can be made
       -- to the same subject with different closures.
@@ -32,13 +33,12 @@ pub nats options = do
       -- The sid also isn't really a sid, it's just a valid unique string
       sid <- sidGen
       let replyTo = foldr BS.append "" ["INBOX.", subject, ".", sid]
-      sub nats [
+      sub c [
         subWithSubject replyTo,
         subWithCallback cb,
         subWithOneOff True
         ]
-      prepareSend nats
-      sendBytes nats $ Pub subject (Just replyTo) Nothing (Just payload)
+      request sl . sendBytes conn $ Pub subject (Just replyTo) Nothing (Just payload)
 
 pubWithSubject :: Subject -> PubOptions -> PubOptions
 pubWithSubject subject (_, payload, callback) = (subject, payload, callback)

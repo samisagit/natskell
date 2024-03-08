@@ -1,12 +1,12 @@
 module Sid (sidGen) where
 
-import qualified Data.ByteString as BS
-import qualified Data.Text            as Text
-import           Data.Text.Encoding   (encodeUtf8)
-import           Data.UUID.V4
+import qualified Data.ByteString    as BS
+import           Data.Hashable      (hash)
+import qualified Data.Text          as Text
+import           Data.Text.Encoding (encodeUtf8)
 import           Data.UUID
-import Data.Hashable (hash)
-import Types
+import           Data.UUID.V4
+import           Types
 
 
 sidGen :: IO SID

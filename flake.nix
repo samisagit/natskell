@@ -21,7 +21,6 @@
           buildInputs = [
             hls
             pkgs.hlint
-            pkgs.stack
             pkgs.stylish-haskell
 	    pkgs.zlib
 	    pkgs.cabal-install
