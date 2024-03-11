@@ -9,7 +9,6 @@ import           Nats.Nats
 import           Nats.NatsProper
 import           Parsers.Parsers
 import           Pub
-import           StrictLock
 import           Sub
 import           Types.Connect
 import           Types.Err
@@ -22,12 +21,12 @@ import           Unsub
 -- TODO: this name is a bit misleading, it doesn't just perform the handshake
 -- it also starts the read and write threads
 handShake :: NatsConn a => Client a -> IO ()
-handShake c@(Client conn sl) = do
+handShake c@(Client conn _) = do
   -- TODO: at some point we'll want to read the state set by INFO
   forkIO . forever $ recvBytes conn
   forkIO . forever $ readMessages c
 
-  request sl $ sendBytes conn
+  sendBytes conn
     Connect
       { Types.Connect.verbose = True,
         Types.Connect.pedantic = True,
@@ -50,13 +49,13 @@ pong :: NatsConn a => Client a -> IO ()
 pong (Client conn _) = sendBytes conn Pong
 
 readMessages :: NatsConn a => Client a -> IO ()
-readMessages c@(Client conn sl) = do
+readMessages c@(Client conn ack) = do
   msg <- readMessage conn
   case msg of
     ParsedMsg a     -> void . forkIO $ handleMsg c a
     ParsedPing Ping -> void . forkIO $ pong c
     ParsedInfo a    -> void . forkIO $ handleInfo c a
-    ParsedOk _      -> handleOk sl
+    ParsedOk _      -> handleOk ack
     ParsedPong _    -> return ()
     ParsedErr err   -> handleErr c err
 
@@ -66,8 +65,9 @@ handleErr _ err = do
   void . forkIO . print $ "error: " ++ show err
 
 -- if safe mode, unblock further sends
-handleOk :: Maybe StrictLock -> IO ()
-handleOk = ack
+handleOk :: Maybe (IO()) -> IO ()
+handleOk (Just ack) = ack
+handleOk Nothing    = return ()
 
 handleMsg :: NatsConn a => Client a -> Msg -> IO ()
 handleMsg (Client conn _) msg = do

@@ -7,7 +7,6 @@ import           Control.Concurrent
 import           Control.Monad
 import           Nats.Nats
 import           Sid
-import           StrictLock
 import           Types
 import           Types.Msg
 import           Types.Sub
@@ -23,14 +22,14 @@ defaultSubOptions = do
   return ("", \_ -> return (), False, Nothing)
 
 sub :: NatsConn a => Client a -> [SubOptions -> SubOptions] -> IO SID
-sub c@(Client conn sl) opts = do
+sub c@(Client conn _) opts = do
   hashedSid <- sidGen
   defaultOpts <- defaultSubOptions
   let (subject, callback, oneOff, timeout) = applySubOptions defaultOpts opts
   addSubscription conn hashedSid $ \m -> do
     when oneOff $ unsub c hashedSid
     callback m
-  request sl . sendBytes conn $ Sub subject Nothing hashedSid
+  sendBytes conn $ Sub subject Nothing hashedSid
   case timeout of
     Just t ->
       void .forkIO $ do

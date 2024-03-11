@@ -6,7 +6,6 @@ import           Client
 import qualified Data.ByteString as BS
 import           Nats.Nats
 import           Sid
-import           StrictLock
 import           Sub
 import           Types
 import           Types.Msg
@@ -21,11 +20,11 @@ defaultPubOptions :: PubOptions
 defaultPubOptions = ("", "", Nothing)
 
 pub :: NatsConn a => Client a -> [PubOptions -> PubOptions] -> IO ()
-pub c@(Client conn sl) options = do
+pub c@(Client conn _) options = do
   let (subject, payload, callback) = applyPubOptions defaultPubOptions options
   case callback of
     Nothing -> do
-      request sl . sendBytes conn $ Pub subject Nothing Nothing (Just payload)
+      sendBytes conn $ Pub subject Nothing Nothing (Just payload)
     Just cb -> do
       -- replyTo needs to be unique for each message, so many calls can be made
       -- to the same subject with different closures.
@@ -38,7 +37,7 @@ pub c@(Client conn sl) options = do
         subWithCallback cb,
         subWithOneOff True
         ]
-      request sl . sendBytes conn $ Pub subject (Just replyTo) Nothing (Just payload)
+      sendBytes conn $ Pub subject (Just replyTo) Nothing (Just payload)
 
 pubWithSubject :: Subject -> PubOptions -> PubOptions
 pubWithSubject subject (_, payload, callback) = (subject, payload, callback)

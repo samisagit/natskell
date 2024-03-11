@@ -52,7 +52,6 @@ library
        Unsub
        Types
        Sid
-       StrictLock
        Client
 
     hs-source-dirs:
