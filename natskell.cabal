@@ -45,56 +45,15 @@ library
 
     exposed-modules:
       API
-
-    other-modules:
-       Sub
-       Pub
-       Unsub
-       Types
-       Sid
-       Client
+      Sub
+      Pub
+      Unsub
+      Types
+      Sid
+      Client
 
     hs-source-dirs:
        client
-
-library natskell-internal
-    import:         shared
-    build-depends:
-       bytestring ^>= 0.11.3.1,
-       word8 ^>= 0.1.3,
-       aeson ^>= 2.0.3.0,
-       network-simple ^>= 0.4.5,
-       stm ^>= 2.5.0.2,
-       text ^>= 1.2.5.0,
-       containers ^>= 0.6.5.1
-
-    exposed-modules:
-       Lib.Parser
-       Lib.Builder
-       Parsers.Parsers
-       Transformers.Transformers
-       Validators.Validators
-       Types.Msg
-       Types.Ping
-       Types.Pong
-       Types.Ok
-       Types.Err
-       Types.Info
-       Types.Pub
-       Types.Connect
-       Types.Sub
-       Types.Unsub
-       Nats.Nats
-       Nats.NatsProper
-
-    hs-source-dirs:
-       internal
-       internal/Types
-       internal/Parsers
-       internal/Transformers
-       internal/Validators
-       internal/Lib
-       internal/Nats
 
 test-suite unit-test
     import:         shared

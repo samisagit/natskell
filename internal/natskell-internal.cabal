@@ -1,0 +1,73 @@
+cabal-version:          3.0
+name:                   natskell-internal
+version:                0.0.0
+synopsis:               A NATS library written in Haskell
+
+-- A longer description of the package.
+description:            Please see the README on GitHub at <github.com/samisagit/natskell#readme>
+
+-- homepage:
+
+-- A URL where users can report bugs.
+bug-reports: https://github.com/samisagit/natskell/issues
+
+license:                MIT
+license-file:           LICENSE
+author:                 samisagit
+maintainer:             sam@whiteteam.co.uk
+
+-- A copyright notice.
+-- copyright:
+
+category:               Web
+
+source-repository head
+    type:               git
+    location:           https://github.com/samisagit/natskell.git
+
+common shared
+    default-language:     Haskell2010
+    build-depends:
+       base >= 4.7 && < 4.19,
+    ghc-options:
+       -haddock -W -Wunused-packages
+
+library
+    import:         shared
+    build-depends:
+       bytestring ^>= 0.11.3.1,
+       word8 ^>= 0.1.3,
+       aeson ^>= 2.0.3.0,
+       network-simple ^>= 0.4.5,
+       stm ^>= 2.5.0.2,
+       text ^>= 1.2.5.0,
+       containers ^>= 0.6.5.1
+
+    exposed-modules:
+       Lib.Parser
+       Lib.Builder
+       Parsers.Parsers
+       Transformers.Transformers
+       Validators.Validators
+       Types.Msg
+       Types.Ping
+       Types.Pong
+       Types.Ok
+       Types.Err
+       Types.Info
+       Types.Pub
+       Types.Connect
+       Types.Sub
+       Types.Unsub
+       Nats.Nats
+       Nats.NatsProper
+
+    hs-source-dirs:
+      .
+      Types
+      Parsers
+      Transformers
+      Validators
+      Lib
+      Nats
+
