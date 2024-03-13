@@ -99,6 +99,27 @@ sys = parallel $ do
           unsub c1 sid
           takeMVar asyncWait1
 
+        it "receives others messages with headers" $ \(_, host, port) -> do
+          (c1, asyncWait1) <- testClient host port
+          (c2, asyncWait2) <- testClient host port
+
+          (lockAssure, assertAssure) <- asyncAssert (\_ -> return ())
+          sid <- sub c1 [
+            subWithSubject "EXPECT.HEADERS",
+            subWithCallback assertAssure
+            ]
+          takeMVar asyncWait1
+
+          pub c2 [
+            pubWithSubject "EXPECT.HEADERS",
+            pubWithPayload "bar",
+            pubWithHeaders [("foo", "bar"), ("more", "headers")]
+            ]
+          takeMVar asyncWait2
+          join . atomically $ takeTMVar lockAssure
+          unsub c1 sid
+          takeMVar asyncWait1
+
 compareMsg :: Msg -> Msg -> Expectation
 compareMsg want got = do
   subject want `shouldBe` subject got

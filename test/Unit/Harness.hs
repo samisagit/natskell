@@ -6,6 +6,7 @@ module Harness where
 import           API
 import           Control.Concurrent
 import           Control.Concurrent.STM
+import           Control.Monad
 import qualified Data.ByteString        as BS
 import           Data.IORef
 import qualified Data.Text              as Text
@@ -88,15 +89,13 @@ chkLastMsg socket matcher = do
 payloadAssertion :: BS.ByteString -> (Msg -> Expectation)
 payloadAssertion matcher (Msg _ _ _ msg _) = msg `shouldBe` Just matcher
 
-asyncAssert :: (Msg -> Expectation) -> IO (TMVar Expectation, Msg -> IO ())
+headerAssertion :: [(BS.ByteString, BS.ByteString)] -> (Msg -> Expectation)
+headerAssertion matcher (Msg _ _ _ _ headers) = headers `shouldBe` Just matcher
+
+asyncAssert :: [Msg -> Expectation] -> IO (TMVar Expectation, Msg -> IO ())
 asyncAssert e = do
   lock <- newEmptyTMVarIO
-  let callback msg = atomically $ putTMVar lock (e msg)
-  return (lock, callback)
-
-matcherMsg :: BS.ByteString -> IO (TMVar Expectation, Msg -> IO ())
-matcherMsg payload = do
-  (lock, callback) <- asyncAssert (payloadAssertion payload)
+  let callback msg = atomically $ putTMVar lock (forM_ e $ \assert -> assert msg)
   return (lock, callback)
 
 packStr :: String -> BS.ByteString

@@ -42,25 +42,28 @@ instance Transformer Pub.Pub where
       collapseNothing (Pub.payload d) "",
       "\r\n"
       ]
-    Just hs -> foldr BS.append "" [
-      "HPUB",
-      " ",
-      Pub.subject d,
-      " ",
-      collapseNothing (Pub.replyTo d) " ",
-      packStr' (printf "%v" (BS.length . headerString $ hs)),
-      " ",
-      packStr' (printf "%v" ((lengthNothing . Pub.payload $ d) + (BS.length . headerString $ hs))),
-      "\r\n",
-      headerString hs,
-      "\r\n",
-      collapseNothing (Pub.payload d) "",
-      "\r\n"
-      ]
+    Just hs -> let headers = headerString hs; headerLength = BS.length headers; in
+      foldr BS.append "" [
+        "HPUB",
+        " ",
+        Pub.subject d,
+        " ",
+        collapseNothing (Pub.replyTo d) " ",
+        packStr' (printf "%v" headerLength),
+        " ",
+        packStr' (printf "%v" ((lengthNothing . Pub.payload $ d) + headerLength)),
+        "\r\n",
+        headers,
+        collapseNothing (Pub.payload d) "",
+        "\r\n"
+        ]
 
 headerString :: [(BS.ByteString, BS.ByteString)] -> BS.ByteString
-headerString = BS.concat . map (\(k, v) -> foldr BS.append "" [k, ":", v, "\r\n"])
-
+headerString hs = foldl BS.append "" [
+  "NATS/1.0\r\n",
+  BS.concat . map (\(k, v) -> foldr BS.append "" [k, ":", v, "\r\n"]) $ hs,
+  "\r\n"
+  ]
 
 instance Transformer Sub.Sub where
   transform d = do

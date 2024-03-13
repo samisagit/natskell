@@ -11,20 +11,20 @@ import           Types
 import           Types.Msg
 import           Types.Pub
 
-type PubOptions = (Subject, BS.ByteString, Maybe (Msg -> IO ()))
+type PubOptions = (Subject, Payload, Maybe (Msg -> IO ()), Maybe Headers)
 
 applyPubOptions :: PubOptions -> [PubOptions -> PubOptions] -> PubOptions
 applyPubOptions = foldl (flip ($))
 
 defaultPubOptions :: PubOptions
-defaultPubOptions = ("", "", Nothing)
+defaultPubOptions = ("", "", Nothing, Nothing)
 
 pub :: NatsConn a => Client a -> [PubOptions -> PubOptions] -> IO ()
 pub c@(Client conn _) options = do
-  let (subject, payload, callback) = applyPubOptions defaultPubOptions options
+  let (subject, payload, callback, headers) = applyPubOptions defaultPubOptions options
   case callback of
     Nothing -> do
-      sendBytes conn $ Pub subject Nothing Nothing (Just payload)
+      sendBytes conn $ Pub subject Nothing headers (Just payload)
     Just cb -> do
       -- replyTo needs to be unique for each message, so many calls can be made
       -- to the same subject with different closures.
@@ -40,11 +40,13 @@ pub c@(Client conn _) options = do
       sendBytes conn $ Pub subject (Just replyTo) Nothing (Just payload)
 
 pubWithSubject :: Subject -> PubOptions -> PubOptions
-pubWithSubject subject (_, payload, callback) = (subject, payload, callback)
+pubWithSubject subject (_, payload, callback, headers) = (subject, payload, callback, headers)
 
 pubWithPayload :: BS.ByteString -> PubOptions -> PubOptions
-pubWithPayload payload (subject, _, callback) = (subject, payload, callback)
+pubWithPayload payload (subject, _, callback, headers) = (subject, payload, callback, headers)
 
 pubWithReplyCallback :: (Msg -> IO ()) -> PubOptions -> PubOptions
-pubWithReplyCallback callback (subject, payload, _) = (subject, payload, Just callback)
+pubWithReplyCallback callback (subject, payload, _, headers) = (subject, payload, Just callback, headers)
 
+pubWithHeaders :: Headers -> PubOptions -> PubOptions
+pubWithHeaders headers (subject, payload, callback, _) = (subject, payload, callback, Just headers)
