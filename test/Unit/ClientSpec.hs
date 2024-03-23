@@ -4,6 +4,7 @@
 module ClientSpec (spec) where
 
 import           API
+import           CallbackAssertions
 import           Control.Concurrent.STM
 import           Control.Monad
 import qualified Data.ByteString        as BS
@@ -19,7 +20,10 @@ cases :: Spec
 cases =  describe "Client" $ do
     it "processes a single message" $ do
       (c, harness) <- newNatsHarness
-      (lock, assertion) <- asyncAssert [payloadAssertion "Hello World"]
+      (lock, assertion) <- asyncAssert [
+        payloadAssertion $ Just "Hello World",
+        headerAssertion Nothing
+        ]
       let subj = "SOME.EVENT"
       sid <- sub
         c
@@ -70,7 +74,10 @@ cases =  describe "Client" $ do
 
     it "processes a single message with headers" $ do
       (c, harness) <- newNatsHarness
-      (lock, assertion) <- asyncAssert [payloadAssertion "Hello World", headerAssertion [("key", "val")]]
+      (lock, assertion) <- asyncAssert [
+        payloadAssertion $ Just "Hello World",
+        headerAssertion $ Just [("key", "val")]
+        ]
       let subj = "SOME.EVENT"
       sid <- sub
         c
@@ -82,7 +89,10 @@ cases =  describe "Client" $ do
 
     it "processes a single message with multiple headers" $ do
       (c, harness) <- newNatsHarness
-      (lock, assertion) <- asyncAssert [payloadAssertion "Hello World", headerAssertion [("key", "val"), ("key2", "val2")]]
+      (lock, assertion) <- asyncAssert [
+        payloadAssertion $ Just "Hello World",
+        headerAssertion $ Just [("key", "val"),("key2","val2")]
+        ]
       let subj = "SOME.EVENT"
       sid <- sub
         c

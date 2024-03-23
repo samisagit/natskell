@@ -6,13 +6,11 @@ module Harness where
 import           API
 import           Control.Concurrent
 import           Control.Concurrent.STM
-import           Control.Monad
 import qualified Data.ByteString        as BS
 import           Data.IORef
 import qualified Data.Text              as Text
 import           Data.Text.Encoding     (encodeUtf8)
 import qualified Nats.Nats              as N
-import           Test.Hspec
 
 type IncomingMessages = IORef BS.ByteString
 type OutgoingMessages = IORef [BS.ByteString]
@@ -85,18 +83,6 @@ chkLastMsg socket matcher = do
   msgList <- readIORef o
   matcher $ last msgList
   atomically $ putTMVar socket (i, o)
-
-payloadAssertion :: BS.ByteString -> (Msg -> Expectation)
-payloadAssertion matcher (Msg _ _ _ msg _) = msg `shouldBe` Just matcher
-
-headerAssertion :: [(BS.ByteString, BS.ByteString)] -> (Msg -> Expectation)
-headerAssertion matcher (Msg _ _ _ _ headers) = headers `shouldBe` Just matcher
-
-asyncAssert :: [Msg -> Expectation] -> IO (TMVar Expectation, Msg -> IO ())
-asyncAssert e = do
-  lock <- newEmptyTMVarIO
-  let callback msg = atomically $ putTMVar lock (forM_ e $ \assert -> assert msg)
-  return (lock, callback)
 
 packStr :: String -> BS.ByteString
 packStr = encodeUtf8 . Text.pack

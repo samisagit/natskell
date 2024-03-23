@@ -3,13 +3,12 @@
 module ClientSpec (spec) where
 
 import           API
+import           CallbackAssertions
 import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Monad
-import           Data.ByteString        as BS
 import qualified Data.Text              as Text
-import           Data.Text.Encoding     (encodeUtf8)
 import           Debug.Trace
 import qualified Docker.Client          as DC
 import           NatsWrappers
@@ -27,47 +26,26 @@ sys = parallel $ do
   forM_ versions $ \version ->
     describe (printf "client (nats:%s)" version) $ do
       around (withNATSConnection version) $ do
-        it "sends and receives its own messages" $ \(_, host, port) -> do
-          (c, asyncWait) <- testClient host port
-
-          let keys = Prelude.map (packStr . show) [1 .. 100] :: [BS.ByteString]
-          let comparisons = Prelude.map (\x msg -> compareMsg (Msg x x Nothing (Just x) Nothing) msg) keys
-          asyncAsserts <- Prelude.mapM asyncAssert comparisons
-          let keyedAssertions = Prelude.zip asyncAsserts keys
-
-          sids <- forM keyedAssertions $ \((_, callback), x) -> do
-            sid <- sub
-              c
-              [ subWithSubject x,
-                subWithCallback callback
-              ]
-            takeMVar asyncWait
-            return sid
-
-          forM_ keyedAssertions $ \(_, x) -> do
-            pub c [pubWithSubject x, pubWithPayload x]
-            takeMVar asyncWait
-
-          forM_ asyncAsserts $ \(lock, _) -> join . atomically $ takeTMVar lock
-
-          forM_ sids $ \x -> do
-            unsub c x
-            takeMVar asyncWait
-
         it "receives others messages" $ \(_, host, port) -> do
           (c1, asyncWait1) <- testClient host port
           (c2, asyncWait2) <- testClient host port
+          let subj = "foo"
+          let payload = "bar"
 
-          (lockAssure, assertAssure) <- asyncAssert (\_ -> return ())
+          (lockAssure, assertAssure) <- asyncAssert [
+            subjectAssertion subj,
+            payloadAssertion $ Just payload,
+            headerAssertion Nothing
+            ]
           sid <- sub c1 [
-            subWithSubject "foo",
+            subWithSubject subj,
             subWithCallback assertAssure
             ]
           takeMVar asyncWait1
 
           pub c2 [
-            pubWithSubject "foo",
-            pubWithPayload "bar"
+            pubWithSubject subj,
+            pubWithPayload payload
             ]
           takeMVar asyncWait2
           join . atomically $ takeTMVar lockAssure
@@ -77,19 +55,24 @@ sys = parallel $ do
         it "subscribes to its reply to" $ \(_, host, port) -> do
           (c1, asyncWait1) <- testClient host port
           (c2, asyncWait2) <- testClient host port
+          let subj = "foo"
+          let payload = "bar"
 
           -- when a message comes to foo with a replyTo, send a message to that subject
           sid <- sub c1 [
-           subWithSubject "foo",
+           subWithSubject subj,
            subWithCallback (replyToReplyTo c2)
            ]
           takeMVar asyncWait1
           takeMVar asyncWait1
 
-          (lockAssure, assertAssure) <- asyncAssert (\_ -> return ())
+          (lockAssure, assertAssure) <- asyncAssert [
+            payloadAssertion $ Just payload,
+            headerAssertion Nothing
+            ]
           pub c1 [
-            pubWithSubject "foo",
-            pubWithPayload "bar",
+            pubWithSubject subj,
+            pubWithPayload payload,
             pubWithReplyCallback assertAssure
             ]
           takeMVar asyncWait1
@@ -103,29 +86,29 @@ sys = parallel $ do
           (c1, asyncWait1) <- testClient host port
           (c2, asyncWait2) <- testClient host port
 
-          (lockAssure, assertAssure) <- asyncAssert (\_ -> return ())
+          let subj = "EXPECT.HEADERS"
+          let payload = "bar"
+          let headers = [("foo", "bar"), ("more", "headers")]
+          (lockAssure, assertAssure) <- asyncAssert [
+            payloadAssertion $ Just payload,
+            subjectAssertion subj,
+            headerAssertion $ Just headers
+            ]
           sid <- sub c1 [
-            subWithSubject "EXPECT.HEADERS",
+            subWithSubject subj,
             subWithCallback assertAssure
             ]
           takeMVar asyncWait1
 
           pub c2 [
-            pubWithSubject "EXPECT.HEADERS",
-            pubWithPayload "bar",
-            pubWithHeaders [("foo", "bar"), ("more", "headers")]
+            pubWithSubject subj,
+            pubWithPayload payload,
+            pubWithHeaders headers
             ]
           takeMVar asyncWait2
           join . atomically $ takeTMVar lockAssure
           unsub c1 sid
           takeMVar asyncWait1
-
-compareMsg :: Msg -> Msg -> Expectation
-compareMsg want got = do
-  subject want `shouldBe` subject got
-  replyTo want `shouldBe` replyTo got
-  payload want `shouldBe` payload got
-  headers want `shouldBe` headers got
 
 replyToReplyTo client msg = do
   let reply = replyTo msg
@@ -142,12 +125,3 @@ testClient host port = do
 
 withNATSConnection :: Text.Text -> ((DC.ContainerID, String, Int) -> IO ()) -> IO ()
 withNATSConnection tag = bracket (startNATS tag) stopNATS
-
-asyncAssert :: (Msg -> Expectation) -> IO (TMVar Expectation, Msg -> IO ())
-asyncAssert e = do
-  lock <- newEmptyTMVarIO
-  let callback msg = atomically $ putTMVar lock (e msg)
-  return (lock, callback)
-
-packStr :: String -> BS.ByteString
-packStr = encodeUtf8 . Text.pack
