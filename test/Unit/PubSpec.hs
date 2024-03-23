@@ -21,11 +21,11 @@ explicitTransformerCases = [
   (Pub "FOO.BAR" Nothing Nothing (Just "Some payload bits"), "PUB FOO.BAR 17\r\nSome payload bits\r\n"),
   (Pub "FOO.BAR" (Just "FOO.BAR.REPLY") Nothing Nothing, "PUB FOO.BAR FOO.BAR.REPLY 0\r\n\r\n"),
   (Pub "FOO.BAR" (Just "FOO.BAR.REPLY") Nothing (Just "Some payload bits"), "PUB FOO.BAR FOO.BAR.REPLY 17\r\nSome payload bits\r\n"),
-  (Pub "FOO.BAR" Nothing (Just [("key", "value")]) Nothing, "HPUB FOO.BAR 11 11\r\nkey:value\r\n\r\n\r\n"),
-  (Pub "FOO.BAR" Nothing (Just [("key", "value"), ("foo", "bar")]) Nothing, "HPUB FOO.BAR 20 20\r\nkey:value\r\nfoo:bar\r\n\r\n\r\n"),
-  (Pub "FOO.BAR" (Just "FOO.BAR.REPLY") (Just [("key", "value")]) Nothing, "HPUB FOO.BAR FOO.BAR.REPLY 11 11\r\nkey:value\r\n\r\n\r\n"),
-  (Pub "FOO.BAR" Nothing (Just [("key", "value"), ("foo", "bar")]) (Just "Some payload bits"), "HPUB FOO.BAR 20 37\r\nkey:value\r\nfoo:bar\r\n\r\nSome payload bits\r\n"),
-  (Pub "FOO.BAR" (Just "FOO.BAR.REPLY") (Just [("key", "value"), ("foo", "bar")]) (Just "Some payload bits"), "HPUB FOO.BAR FOO.BAR.REPLY 20 37\r\nkey:value\r\nfoo:bar\r\n\r\nSome payload bits\r\n")
+  (Pub "FOO.BAR" Nothing (Just [("key", "value")]) Nothing, "HPUB FOO.BAR 23 23\r\nNATS/1.0\r\nkey:value\r\n\r\n\r\n"),
+  (Pub "FOO.BAR" Nothing (Just [("key", "value"), ("foo", "bar")]) Nothing, "HPUB FOO.BAR 32 32\r\nNATS/1.0\r\nkey:value\r\nfoo:bar\r\n\r\n\r\n"),
+  (Pub "FOO.BAR" (Just "FOO.BAR.REPLY") (Just [("key", "value")]) Nothing, "HPUB FOO.BAR FOO.BAR.REPLY 23 23\r\nNATS/1.0\r\nkey:value\r\n\r\n\r\n"),
+  (Pub "FOO.BAR" Nothing (Just [("key", "value"), ("foo", "bar")]) (Just "Some payload bits"), "HPUB FOO.BAR 32 49\r\nNATS/1.0\r\nkey:value\r\nfoo:bar\r\n\r\nSome payload bits\r\n"),
+  (Pub "FOO.BAR" (Just "FOO.BAR.REPLY") (Just [("key", "value"), ("foo", "bar")]) (Just "Some payload bits"), "HPUB FOO.BAR FOO.BAR.REPLY 32 49\r\nNATS/1.0\r\nkey:value\r\nfoo:bar\r\n\r\nSome payload bits\r\n")
   ]
 
 transformerCases = parallel $ do

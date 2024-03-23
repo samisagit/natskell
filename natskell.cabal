@@ -96,6 +96,18 @@ library natskell-internal
        internal/Lib
        internal/Nats
 
+library test-common
+    import:         shared
+    build-depends:
+       natskell,
+       bytestring ^>= 0.11.3.1,
+       hspec ^>= 2.9.7,
+       stm ^>= 2.5.0.2
+    exposed-modules:
+       CallbackAssertions
+    hs-source-dirs:
+       test/Common
+
 test-suite unit-test
     import:         shared
     type:             exitcode-stdio-1.0
@@ -104,6 +116,7 @@ test-suite unit-test
     build-depends:   
        natskell,
        natskell-internal,
+       test-common,
        hspec ^>= 2.9.7,
        bytestring ^>= 0.11.3.1,
        word8 ^>= 0.1.3,
@@ -150,6 +163,7 @@ test-suite system-test
     main-is:              Spec.hs
     build-depends:   
        natskell,
+       test-common,
        hspec ^>= 2.9.7,
        bytestring ^>= 0.11.3.1,
        text ^>= 1.2.5.0,

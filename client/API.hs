@@ -42,7 +42,7 @@ handShake c@(Client conn _) = do
         Types.Connect.sig = Nothing,
         Types.Connect.jwt = Nothing,
         Types.Connect.no_responders = Nothing,
-        Types.Connect.headers = Nothing
+        Types.Connect.headers = Just True
       }
 
 pong :: NatsConn a => Client a -> IO ()
