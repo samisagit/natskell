@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Sub where
+module Sub (sub, subWithSubject, subWithCallback, subWithOneOff, subWithTimeout) where
 
 import           Client
 import           Control.Concurrent

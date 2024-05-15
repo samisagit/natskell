@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module API (module Sub, module Pub, module Unsub, Msg (..), module Client, handShake, connect) where
+module API (connect, newClient, Client, withAckCallback, handShake, module Sub, module Pub, module Unsub, Msg (..)) where
 
 import           Client
 import           Control.Concurrent
