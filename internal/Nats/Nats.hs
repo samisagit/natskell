@@ -22,6 +22,7 @@ import           Control.Exception
 import           Control.Monad
 import qualified Data.ByteString           as BS
 import qualified Data.Map                  as Map
+import           Lib.Parser
 import           Parsers.Parsers
 import           Transformers.Transformers
 import           Types.Msg
@@ -109,6 +110,7 @@ data Config = Config
     headersSupported :: Bool
   }
 
+-- TODO: this needs error case unit tests
 readBuffer :: NatsConn a => NatsAPI a -> STM ParsedMessage
 readBuffer nats = do
   bytes <- readTVar (buffer nats)
@@ -117,7 +119,16 @@ readBuffer nats = do
     -- TODO: it's also possible that we've read a message that we don't know how to parse
     -- so we should probably catch that somehow and enter a self repair mode, i.e. drop all
     -- bytes until we find a control keyword.
-    Left _            -> retry
+    Left (ParserErr a b) -> case b of
+      -- TODO: unsure why this can't reference socketReadLength directly
+      1024 -> do
+        -- overflowing buffer case - too many bytes in a single message
+        writeTVar (buffer nats) ""
+        error a
+      _ -> do
+        -- drop the first char, then find the next keyword
+        writeTVar (buffer nats) $ dropTilNextKeyword (BS.tail bytes)
+        error a
     Right (msg, rest) -> do
       writeTVar (buffer nats) rest
       return msg
@@ -125,3 +136,13 @@ readBuffer nats = do
 writeBuffer :: NatsConn a => NatsAPI a -> BS.ByteString -> IO ()
 writeBuffer nats msg = atomically . modifyTVar (buffer nats) $ \b -> b <> msg
 
+-- TODO: this should come from the parser package
+keywords :: [BS.ByteString]
+keywords = ["+OK", "-ERR", "PING", "PONG", "MSG", "HMSG", "INFO"]
+
+-- TODO: this needs unit tests aplenty
+dropTilNextKeyword :: BS.ByteString -> BS.ByteString
+dropTilNextKeyword a = do
+  case or $ BS.isPrefixOf <$> keywords <*> [a] of
+    True  -> a
+    False -> dropTilNextKeyword $ BS.tail a
