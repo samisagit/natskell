@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Pub where
+module Pub (pub, pubWithSubject, pubWithPayload, pubWithReplyCallback, pubWithHeaders) where
 
 import           Client
 import qualified Data.ByteString as BS

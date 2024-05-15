@@ -1,4 +1,4 @@
-module Unsub where
+module Unsub (unsub) where
 
 import           Client
 import           Nats.Nats
