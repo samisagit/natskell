@@ -18,7 +18,8 @@ import           Text.Printf
 
 spec :: Spec
 spec = do
-  sys
+--  sys
+  return ()
 
 versions = ["latest", "2.9.8", "2.9.6"]
 

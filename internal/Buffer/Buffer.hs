@@ -1,47 +1,29 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-deferred-out-of-scope-variables #-}
 
-module Buffer.Buffer (withBuffer) where
+module Buffer.Buffer (newBuffer, hydrate, chomp, Buffer(bytes)) where
 
-import           Control.Concurrent        (threadDelay, forkIO)
+import           Control.Concurrent        (threadDelay)
 import           Control.Monad.IO.Class    (liftIO)
 import           Control.Monad.Trans.State
 import qualified Data.ByteString           as BS
-import Control.Monad (void)
 
 data BufferStatus = EMPTY | FULL | PARTIAL
 type Puller = Int -> IO (Maybe BS.ByteString)
-type Consumer = BS.ByteString -> IO Int
 type BackOff = Int
 data Buffer = Buffer {
-  bytes::BS.ByteString,
-  status::BufferStatus,
-  puller::Puller,
-  consumer::Consumer,
-  backOff::BackOff
+  bytes    :: BS.ByteString,
+  status   :: BufferStatus,
+  puller   :: Puller,
+  backOff  :: BackOff
   }
 
 defaultLimit = 1024
 defaultBackOffMultiplier = 100000
 
--- TODO: there is no concurrency safety here, we need to lock the buffer somehow
-
-withBuffer :: Puller -> Consumer -> IO ()
-withBuffer puller consumer = do
-  let buf = Buffer BS.empty EMPTY puller consumer 0
-  void . (forkIO . void) . liftIO . runStateT loop $ buf
-
-loop :: StateT Buffer IO BS.ByteString
-loop = do
-  consume
-  hydrate
-  loop
-
-consume :: StateT Buffer IO BS.ByteString
-consume = do
-  buf <- get
-  used <- liftIO . consumer buf $ bytes buf
-  chomp used
+newBuffer :: Puller -> Buffer
+newBuffer puller = do
+  Buffer BS.empty EMPTY puller 0
 
 chomp :: Int -> StateT Buffer IO BS.ByteString
 chomp count = do
@@ -66,14 +48,14 @@ handleEmpty = do
     Just "" -> do
       liftIO . threadDelay $ backOff buf * defaultBackOffMultiplier
       put $ buf {backOff=incrementBackOffMultiplier $ backOff buf}
-      handleEmpty
+      bytes <$> get
     Just newBS -> do
       put $ buf {status=statusFromBS newBS, bytes=BS.append (bytes buf) newBS, backOff=0}
-      return newBS
+      bytes <$> get
     Nothing -> do
       liftIO . threadDelay $ backOff buf * defaultBackOffMultiplier
       put $ buf {backOff=incrementBackOffMultiplier $ backOff buf}
-      handleEmpty
+      bytes <$> get
 
 handlePartial :: StateT Buffer IO BS.ByteString
 handlePartial = do
@@ -83,14 +65,14 @@ handlePartial = do
     Just "" -> do
       liftIO . threadDelay $ backOff buf * defaultBackOffMultiplier
       put $ buf {backOff=incrementBackOffMultiplier $ backOff buf}
-      handlePartial
+      bytes <$> get
     Just newBS -> do
       put $ buf {status=statusFromBS newBS, bytes=BS.append (bytes buf) newBS, backOff=0}
-      return newBS
+      bytes <$> get
     Nothing -> do
       liftIO . threadDelay $ backOff buf * defaultBackOffMultiplier
       put $ buf {backOff=incrementBackOffMultiplier $ backOff buf}
-      handlePartial
+      bytes <$> get
 
 handleFull :: StateT Buffer IO BS.ByteString
 handleFull = do
@@ -98,10 +80,10 @@ handleFull = do
   if BS.length (bytes buf) == defaultLimit then do
     liftIO . threadDelay $ backOff buf * defaultBackOffMultiplier
     put $ buf {backOff=incrementBackOffMultiplier $ backOff buf}
-    handleFull
+    bytes <$> get
   else do
     put $ buf {status=PARTIAL}
-    handlePartial
+    bytes <$> get
 
 statusFromBS :: BS.ByteString -> BufferStatus
 statusFromBS bs
