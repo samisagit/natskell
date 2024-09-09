@@ -48,7 +48,7 @@ fuzz-test: /tmp/fuzz-test.out
 system-test: /tmp/system-test.out
 
 /tmp/system-test.out: $(wildcard internal/*) $(wildcard client/*) $(wildcard test/System/*) 
-	cabal test natskell:system-test --test-show-details=direct
+	cabal test natskell:system-test --test-show-details=direct 
 	touch /tmp/system-test.out
 
 test: /tmp/unit-test.out /tmp/fuzz-test.out /tmp/system-test.out

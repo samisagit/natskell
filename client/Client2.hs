@@ -24,6 +24,9 @@ import           Types.Sub
 import           Types.Unsub
 import           Validators.Validators     (Validator (validate))
 
+connect :: TVar Client -> IO ()
+connect = atomically . connect'
+
 sub :: TVar Client -> Subject -> (M.Msg -> IO ()) -> IO SID
 sub client subject callback = atomically $ sub' client subject callback
 
@@ -32,6 +35,28 @@ unsub client sid = atomically $ unsub' client sid
 
 pub :: TVar Client -> [PubOptions -> PubOptions] -> IO ()
 pub client options = atomically $ pub' client options
+
+connect' :: TVar Client -> STM ()
+connect' client = do
+  client' <- readTVar client
+  let client'' = addOutgoing client' $ Connect{
+    verbose = False,
+    pedantic = False,
+    tls_required = False,
+    auth_token = Nothing,
+    user = Nothing,
+    pass = Nothing,
+    name = Nothing,
+    lang = "haskell",
+    version = "0.1.0",
+    protocol = Nothing,
+    echo = Just True,
+    sig = Nothing,
+    jwt = Nothing,
+    no_responders = Nothing,
+    headers = Nothing
+    }
+  writeTVar client client''
 
 sub' :: TVar Client -> Subject -> (M.Msg -> IO ()) -> STM SID
 sub' client subject callback = do
@@ -82,26 +107,6 @@ pubWithReplyCallback callback (subject, payload, _, headers) = (subject, payload
 pubWithHeaders :: Headers -> PubOptions -> PubOptions
 pubWithHeaders headers (subject, payload, callback, _) = (subject, payload, callback, Just headers)
 
-connect :: Client -> Client
-connect client = do
-  addOutgoing client $ Connect{
-    verbose = False,
-    pedantic = False,
-    tls_required = False,
-    auth_token = Nothing,
-    user = Nothing,
-    pass = Nothing,
-    name = Nothing,
-    lang = "haskell",
-    version = "0.1.0",
-    protocol = Nothing,
-    echo = Just True,
-    sig = Nothing,
-    jwt = Nothing,
-    no_responders = Nothing,
-    headers = Nothing
-    }
-
 defaultConn :: String -> Int -> IO TCP.Socket
 defaultConn host port = do
   (sock, _) <- TCP.connectSock host $ show port
@@ -116,14 +121,16 @@ withNats opts conn callback = do
   let outbox =  []
   let sender = send conn
   let client' = client {inbox = inbox, outbox = outbox, sender = sender}
+  tClient <- newTVarIO client'
   -- consider a state enum at the top level
 
   -- TODO should wait for info first
-  let client'' = connect client'
+  waitForInfo tClient
+  connect tClient
+  sendBytes tClient
 
-  tClient <- newTVarIO client''
-
-  callback tClient -- TODO: this will need to be async so we get to loop
+  callback tClient -- TODO: this will need to be async so we get to loop, but we need to know when it's done...
+  sendBytes tClient
 
   loop tClient
 
@@ -198,13 +205,22 @@ readMessages client = do
   inbox' <- execStateT Buffer.hydrate (inbox client')
   atomically . writeTVar client $ client' {inbox = inbox'}
 
+waitForInfo :: TVar Client -> IO ()
+waitForInfo client = do
+  readMessages client
+  client' <- readTVarIO client
+  let bytes = Buffer.bytes . inbox $ client'
+  case BS.length bytes of
+    0 -> threadDelay 10000 >> waitForInfo client
+    _ -> return ()
+
 routeMessages :: TVar Client -> IO ()
 routeMessages client = do
   client' <- readTVarIO client
   let inbox' = inbox client'
   let bs = Buffer.bytes inbox'
   case BS.length bs of
-    0 -> threadDelay 1000000
+    0 -> threadDelay 10000
     _ -> do
       case genericParse bs of
         -- TODO: alter some top level state to indicate a parse error
@@ -222,6 +238,8 @@ routeMessages client = do
                 Nothing -> do
                   let r = show (Map.keys . router $ client')
                   print ("missing route for SID " ++ (show . M.sid $ a) ++ " in map " ++ r)
+            ParsedInfo a -> do
+              print . show $ a
             a -> print ("unimplemented message type: " ++ show a)
 
 sendBytes :: TVar Client -> IO ()
