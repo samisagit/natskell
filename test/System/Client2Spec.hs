@@ -27,17 +27,17 @@ sys = parallel $ do
           socket <- defaultConn host port
           lock <- newEmptyMVar
           sidBox <- newEmptyMVar
-          forkIO . withNats [] socket $ (\client -> do
+          forkIO . withNats [] socket $ \client -> do
             sub client "SOME.TOPIC" $ \x -> do
               unsub client (sid x)
               putMVar lock x
               putMVar sidBox (sid x)
-            )
+
           sleep 1
           socket' <- defaultConn host port
-          forkIO . withNats [] socket' $ (\client -> do
+          forkIO . withNats [] socket' $ \client -> do
             pub client [pubWithSubject "SOME.TOPIC", pubWithPayload "HELLO"]
-            )
+
           msg <- takeMVar lock
           sid' <- takeMVar sidBox
           msg `shouldBe` Msg "SOME.TOPIC" sid' Nothing (Just "HELLO") Nothing
@@ -45,5 +45,5 @@ sys = parallel $ do
 withNATSConnection :: Text.Text -> ((DC.ContainerID, String, Int) -> IO ()) -> IO ()
 withNATSConnection tag = bracket (startNATS tag) stopNATS
 
-sleep :: Int -> IO () 
+sleep :: Int -> IO ()
 sleep = threadDelay . (*100000)
