@@ -2,12 +2,13 @@
 {-# LANGUAGE GADTs             #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Client2 (withNats, defaultConn, NatsConn, sub, pub, unsub, pubWithSubject, pubWithPayload, pubWithReplyCallback, pubWithHeaders, M.Msg(..)) where
+module Client2 (withNats, defaultConn, NatsConn, stop, sub, pub, unsub, ping, pubWithSubject, pubWithPayload, pubWithReplyCallback, pubWithHeaders, M.Msg(..)) where
 
 import qualified Buffer.Buffer             as Buffer
 import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Exception
+import           Control.Monad
 import           Control.Monad.Trans.State
 import qualified Data.ByteString           as BS
 import qualified Data.Map                  as Map
@@ -19,10 +20,15 @@ import           Transformers.Transformers (Transformer (transform))
 import           Types
 import           Types.Connect             (Connect (..))
 import qualified Types.Msg                 as M
+import           Types.Ping
+import           Types.Pong
 import qualified Types.Pub                 as P
 import           Types.Sub
 import           Types.Unsub
+import           qualified Types.Info as I
 import           Validators.Validators     (Validator (validate))
+
+data Status = DEFAULT | CLOSING
 
 connect :: TVar Client -> IO ()
 connect = atomically . connect'
@@ -36,56 +42,101 @@ unsub client sid = atomically $ unsub' client sid
 pub :: TVar Client -> [PubOptions -> PubOptions] -> IO ()
 pub client options = atomically $ pub' client options
 
+pong :: TVar Client -> IO ()
+pong = atomically . pong'
+
+ping :: TVar Client -> IO ()
+ping = atomically . ping'
+
+stop :: TVar Client -> IO ()
+stop = atomically . stop'
+
+stop' :: TVar Client -> STM ()
+stop' client = do
+  client' <- readTVar client
+  let client'' = client' {status = CLOSING}
+  writeTVar client client''
+
+ping' :: TVar Client -> STM ()
+ping' client = do
+  client' <- readTVar client
+  case status client' of
+    CLOSING -> return () -- TODO: we should inform the user
+    _ -> do
+      let client'' = addOutgoing client' Ping
+      writeTVar client client''
+
+pong' :: TVar Client -> STM ()
+pong' client = do
+  client' <- readTVar client
+  case status client' of
+    CLOSING -> return () -- TODO: we should inform the user
+    _ -> do
+      let client'' = addOutgoing client' $ Pong{}
+      writeTVar client client''
+
 connect' :: TVar Client -> STM ()
 connect' client = do
   client' <- readTVar client
-  let client'' = addOutgoing client' $ Connect{
-    verbose = False,
-    pedantic = False,
-    tls_required = False,
-    auth_token = Nothing,
-    user = Nothing,
-    pass = Nothing,
-    name = Nothing,
-    lang = "haskell",
-    version = "0.1.0",
-    protocol = Nothing,
-    echo = Just True,
-    sig = Nothing,
-    jwt = Nothing,
-    no_responders = Nothing,
-    headers = Nothing
-    }
-  writeTVar client client''
+  case status client' of
+    CLOSING -> return () -- TODO: we should inform the user
+    _ -> do
+      let client'' = addOutgoing client' $ Connect{
+        verbose = False,
+        pedantic = False,
+        tls_required = False,
+        auth_token = Nothing,
+        user = Nothing,
+        pass = Nothing,
+        name = Nothing,
+        lang = "haskell",
+        version = "0.1.0",
+        protocol = Nothing,
+        echo = Just True,
+        sig = Nothing,
+        jwt = Nothing,
+        no_responders = Nothing,
+        headers = Nothing
+        }
+      writeTVar client client''
 
 sub' :: TVar Client -> Subject -> (M.Msg -> IO ()) -> STM SID
 sub' client subject callback = do
   client' <- readTVar client
-  let (sid, client'') = addRoute client' callback
-  let client''' = addOutgoing client'' $ Sub subject Nothing sid
-  writeTVar client client'''
-  return sid
+  case status client' of
+    CLOSING -> return "" -- TODO: we should inform the user
+    _ -> do
+      let (sid, client'') = addRoute client' callback
+      let client''' = addOutgoing client'' $ Sub subject Nothing sid
+      writeTVar client client'''
+      return sid
 
 unsub' :: TVar Client -> SID -> STM ()
 unsub' client sid = do
   client' <- readTVar client
-  let client'' = removeRoute client' sid
-  let client''' = addOutgoing client'' $ Unsub sid Nothing
-  writeTVar client client'''
+  case status client' of
+    CLOSING -> return () -- TODO: we should inform the user
+    _ -> do
+      let client'' = removeRoute client' sid
+      let client''' = addOutgoing client'' $ Unsub sid Nothing
+      writeTVar client client'''
 
 pub' :: TVar Client -> [PubOptions -> PubOptions] -> STM ()
 pub' client options = do
   client' <- readTVar client
-  let (subject, payload, callback, headers) = applyPubOptions defaultPubOptions options
-  case callback of
-    Nothing -> do
-      let client'' = addOutgoing client' $ P.Pub subject Nothing headers (Just payload)
-      writeTVar client client''
-    Just cb -> do
-      sid <- sub' client subject cb
-      let replyTo = foldr BS.append "" ["INBOX.", subject, ".", sid]
-      let client'' = addOutgoing client' $ P.Pub subject (Just replyTo) Nothing (Just payload)
-      writeTVar client client''
+  case status client' of
+    CLOSING -> return () -- TODO: we should inform the user
+    _ -> do
+      let (subject, payload, callback, headers) = applyPubOptions defaultPubOptions options
+      case callback of
+        Nothing -> do
+          let client'' = addOutgoing client' $ P.Pub subject Nothing headers (Just payload)
+          writeTVar client client''
+        Just cb -> do
+          sid <- sub' client subject cb
+          let replyTo = foldr BS.append "" ["INBOX.", subject, ".", sid]
+          let client'' = addOutgoing client' $ P.Pub subject (Just replyTo) Nothing (Just payload)
+          writeTVar client client''
 
 type PubOptions = (Subject, Payload, Maybe (M.Msg -> IO ()), Maybe Headers)
 
@@ -120,28 +171,44 @@ withNats opts conn callback = do
   let inbox = Buffer.newBuffer (recv conn)
   let outbox =  []
   let sender = send conn
-  let client' = client {inbox = inbox, outbox = outbox, sender = sender}
+  let client' = client {inbox = inbox, outbox = outbox, sender = sender, closer = close conn}
   tClient <- newTVarIO client'
-  -- consider a state enum at the top level
 
-  -- TODO should wait for info first
   waitForInfo tClient
+  routeMessages tClient
+
   connect tClient
   sendBytes tClient
 
-  callback tClient -- TODO: this will need to be async so we get to loop, but we need to know when it's done...
+  callback tClient -- TODO: this will need to be async so we get to loop, but we need to know when it's done... or we make loop async, but keep track of it to cancel on close.. that would be nicer
   sendBytes tClient
 
   loop tClient
 
 loop :: TVar Client -> IO ()
 loop c = do
+  a <- newEmptyTMVarIO
+  b <- newEmptyTMVarIO
   -- read incoming messages
-  readMessages c
-  routeMessages c
+  void $ forkIO (readMessages c >> routeMessages c >> atomically (putTMVar a ()))
   -- send outgoing messages
-  sendBytes c
-  loop c
+  void $ forkIO (sendBytes c >> atomically (putTMVar b ()))
+  --wait for them to resolve
+  atomically $ takeTMVar b
+  atomically $ takeTMVar a
+  --decide what to do next
+  client <- readTVarIO c
+  case status client of
+    CLOSING -> cleanup c
+    _       -> loop c
+
+cleanup :: TVar Client -> IO ()
+cleanup client = do
+  client' <- readTVarIO client
+  -- if we've got nothing left to send then close the conn, otherwise send first then close
+  case length . outbox $ client' of
+    0 -> closer client'
+    _ -> sendBytes client >> cleanup client
 
 -- internal workings
 
@@ -172,7 +239,10 @@ data Client = Client
     outbox         :: [BS.ByteString],
     sender         :: BS.ByteString -> IO (),
     connectionOpts :: ConnectionOptions,
-    router         :: Map.Map SID (M.Msg -> IO ())
+    router         :: Map.Map SID (M.Msg -> IO ()),
+    status         :: Status,
+    closer         :: IO (),
+    clientID       :: Maybe Int
   }
 
 initialClient :: Client
@@ -188,7 +258,10 @@ initialClient = Client {
         port = 4222,
         okAck = Nothing,
         maxPayload = 1024
-      }
+      },
+    status = DEFAULT,
+    closer = undefined,
+    clientID = Nothing
   }
 
 newClient :: [ClientOption] -> Client
@@ -238,9 +311,15 @@ routeMessages client = do
                 Nothing -> do
                   let r = show (Map.keys . router $ client')
                   print ("missing route for SID " ++ (show . M.sid $ a) ++ " in map " ++ r)
-            ParsedInfo a -> do
-              print . show $ a
+            ParsedInfo i -> setClientID (I.client_id i) client
+            ParsedPing _ -> do
+              pong client >> sendBytes client
             a -> print ("unimplemented message type: " ++ show a)
+
+setClientID :: Maybe Int -> TVar Client -> IO ()
+setClientID cid client = do
+  client' <- readTVarIO client
+  atomically . writeTVar client $ client' {clientID = cid}
 
 sendBytes :: TVar Client -> IO ()
 sendBytes client = do

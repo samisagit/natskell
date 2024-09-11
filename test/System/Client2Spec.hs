@@ -12,6 +12,7 @@ import           GHC.MVar
 import           NatsWrappers
 import           Test.Hspec
 import           Text.Printf        (printf)
+import WaitGroup
 
 spec :: Spec
 spec = do
@@ -30,6 +31,7 @@ sys = parallel $ do
           forkIO . withNats [] socket $ \client -> do
             sub client "SOME.TOPIC" $ \x -> do
               unsub client (sid x)
+              stop client
               putMVar lock x
               putMVar sidBox (sid x)
 
@@ -37,10 +39,34 @@ sys = parallel $ do
           socket' <- defaultConn host port
           forkIO . withNats [] socket' $ \client -> do
             pub client [pubWithSubject "SOME.TOPIC", pubWithPayload "HELLO"]
+            stop client
 
           msg <- takeMVar lock
           sid' <- takeMVar sidBox
           msg `shouldBe` Msg "SOME.TOPIC" sid' Nothing (Just "HELLO") Nothing
+        it "can have multiple subscriptions" $ \(_, host, port) -> do
+          socket <- defaultConn host port
+          wg <- newWaitGroup 2
+          clientBox <- newEmptyMVar
+          forkIO . withNats [] socket $ \client -> do
+            sub client "SOME.TOPIC" $ \x -> do
+              unsub client (sid x)
+              done wg
+            sub client "SOME.OTHER.TOPIC" $ \x -> do
+              unsub client (sid x)
+              putMVar clientBox client
+              done wg
+
+          sleep 1
+          socket' <- defaultConn host port
+          forkIO . withNats [] socket' $ \client -> do
+            pub client [pubWithSubject "SOME.TOPIC", pubWithPayload "HELLO"]
+            pub client [pubWithSubject "SOME.OTHER.TOPIC", pubWithPayload "HELLO"]
+            stop client
+
+          wait wg
+          client <- takeMVar clientBox
+          stop client
 
 withNATSConnection :: Text.Text -> ((DC.ContainerID, String, Int) -> IO ()) -> IO ()
 withNATSConnection tag = bracket (startNATS tag) stopNATS

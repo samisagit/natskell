@@ -115,6 +115,7 @@ library test-common
        stm ^>= 2.5.0.2
     exposed-modules:
        CallbackAssertions
+       WaitGroup
     hs-source-dirs:
        test/Common
 
