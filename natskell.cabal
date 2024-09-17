@@ -44,7 +44,8 @@ library
        network-simple ^>= 0.4.5,
        stm ^>= 2.5.0.2,
        random ^>= 1.2.1.2,
-       containers ^>= 0.6.5.1
+       containers ^>= 0.6.5.1,
+       network
 
     build-tool-depends: hspec-discover:hspec-discover
 
@@ -95,6 +96,7 @@ library natskell-internal
        Nats.NatsProper
        Buffer.Buffer
        Outbox.Outbox
+       WaitGroup
 
     hs-source-dirs:
        internal
@@ -118,6 +120,7 @@ library test-common
        WaitGroup
     hs-source-dirs:
        test/Common
+       internal/Lib
 
 test-suite unit-test
     import:         shared

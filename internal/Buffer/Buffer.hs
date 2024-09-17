@@ -9,13 +9,13 @@ import           Control.Monad.Trans.State
 import qualified Data.ByteString           as BS
 
 data BufferStatus = EMPTY | FULL | PARTIAL
-type Puller = Int -> IO (Maybe BS.ByteString)
+type Puller = Int -> IO BS.ByteString
 type BackOff = Int
 data Buffer = Buffer {
-  bytes    :: BS.ByteString,
-  status   :: BufferStatus,
-  puller   :: Puller,
-  backOff  :: BackOff
+  bytes   :: BS.ByteString,
+  status  :: BufferStatus,
+  puller  :: Puller,
+  backOff :: BackOff
   }
 
 defaultLimit = 1024
@@ -45,16 +45,12 @@ handleEmpty = do
   buf <- get
   result <- liftIO $ puller buf defaultLimit
   case result of
-    Just "" -> do
-      liftIO . threadDelay $ backOff buf * defaultBackOffMultiplier
+    "" -> do
+      liftIO . delay $ backOff buf
       put $ buf {backOff=incrementBackOffMultiplier $ backOff buf}
       bytes <$> get
-    Just newBS -> do
+    newBS -> do
       put $ buf {status=statusFromBS newBS, bytes=BS.append (bytes buf) newBS, backOff=0}
-      bytes <$> get
-    Nothing -> do
-      liftIO . threadDelay $ backOff buf * defaultBackOffMultiplier
-      put $ buf {backOff=incrementBackOffMultiplier $ backOff buf}
       bytes <$> get
 
 handlePartial :: StateT Buffer IO BS.ByteString
@@ -62,23 +58,19 @@ handlePartial = do
   buf <- get
   result <- liftIO $ puller buf (defaultLimit - BS.length (bytes buf))
   case result of
-    Just "" -> do
-      liftIO . threadDelay $ backOff buf * defaultBackOffMultiplier
+    "" -> do
+      liftIO . delay $ backOff buf
       put $ buf {backOff=incrementBackOffMultiplier $ backOff buf}
       bytes <$> get
-    Just newBS -> do
+    newBS -> do
       put $ buf {status=statusFromBS newBS, bytes=BS.append (bytes buf) newBS, backOff=0}
-      bytes <$> get
-    Nothing -> do
-      liftIO . threadDelay $ backOff buf * defaultBackOffMultiplier
-      put $ buf {backOff=incrementBackOffMultiplier $ backOff buf}
       bytes <$> get
 
 handleFull :: StateT Buffer IO BS.ByteString
 handleFull = do
   buf <- get
   if BS.length (bytes buf) == defaultLimit then do
-    liftIO . threadDelay $ backOff buf * defaultBackOffMultiplier
+    liftIO . delay $ backOff buf
     put $ buf {backOff=incrementBackOffMultiplier $ backOff buf}
     bytes <$> get
   else do
@@ -92,4 +84,18 @@ statusFromBS bs
   | otherwise = PARTIAL
 
 incrementBackOffMultiplier :: Int -> Int
-incrementBackOffMultiplier current = if current == 10 then 10 else current + 1
+incrementBackOffMultiplier current = if current == 100 then 100 else current + 1
+
+delay :: Int -> IO ()
+delay backoff = do
+  threadDelay nano
+  where modulus = backoff `mod` 10
+        nano = ((backoff - modulus) `div` 10) * defaultBackOffMultiplier
+
+--ld :: String -> IO a -> IO a
+--ld name action = do
+--  currentTime <- getCurrentTime
+--  res <- action
+--  completedTime <- getCurrentTime
+--  print $ name ++ ": " ++ show (diffUTCTime completedTime currentTime)
+--  return res

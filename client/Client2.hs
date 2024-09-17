@@ -13,19 +13,21 @@ import           Control.Monad.Trans.State
 import qualified Data.ByteString           as BS
 import qualified Data.Map                  as Map
 import qualified Network.Simple.TCP        as TCP
+import qualified Network.Socket            as NS
 import           Parsers.Parsers
 import           Sid                       (nextSID)
+import           System.IO
 import           System.Random
 import           Transformers.Transformers (Transformer (transform))
 import           Types
 import           Types.Connect             (Connect (..))
+import qualified Types.Info                as I
 import qualified Types.Msg                 as M
 import           Types.Ping
 import           Types.Pong
 import qualified Types.Pub                 as P
 import           Types.Sub
 import           Types.Unsub
-import           qualified Types.Info as I
 import           Validators.Validators     (Validator (validate))
 
 data Status = DEFAULT | CLOSING
@@ -158,10 +160,21 @@ pubWithReplyCallback callback (subject, payload, _, headers) = (subject, payload
 pubWithHeaders :: Headers -> PubOptions -> PubOptions
 pubWithHeaders headers (subject, payload, callback, _) = (subject, payload, callback, Just headers)
 
-defaultConn :: String -> Int -> IO TCP.Socket
+defaultConn :: String -> Int -> IO Handle
 defaultConn host port = do
   (sock, _) <- TCP.connectSock host $ show port
-  return sock
+  NS.setSocketOption sock NS.NoDelay 1
+  NS.setSocketOption sock NS.Cork 0
+  NS.setSocketOption sock NS.RecvBuffer 1
+  NS.setSocketOption sock NS.SendBuffer 1
+  handle <- NS.socketToHandle sock ReadWriteMode
+  hSetBuffering handle NoBuffering
+  return handle
+
+instance NatsConn Handle where
+  send = BS.hPut
+  recv = BS.hGetNonBlocking
+  close = hClose
 
 withNats :: NatsConn c => [ClientOption] -> c -> (TVar Client -> IO x) -> IO ()
 withNats opts conn callback = do
@@ -183,19 +196,24 @@ withNats opts conn callback = do
   callback tClient -- TODO: this will need to be async so we get to loop, but we need to know when it's done... or we make loop async, but keep track of it to cancel on close.. that would be nicer
   sendBytes tClient
 
-  loop tClient
+  loop tClient -- TODO: ideally we want two loops, one for reading and one for writing
 
 loop :: TVar Client -> IO ()
 loop c = do
+  c' <- readTVarIO c
   a <- newEmptyTMVarIO
   b <- newEmptyTMVarIO
   -- read incoming messages
-  void $ forkIO (readMessages c >> routeMessages c >> atomically (putTMVar a ()))
+  void . forkIO $ do
+    case status c' of
+      CLOSING -> routeMessages c
+      _       -> readMessages c >> routeMessages c
+    atomically (putTMVar a ())
   -- send outgoing messages
   void $ forkIO (sendBytes c >> atomically (putTMVar b ()))
   --wait for them to resolve
-  atomically $ takeTMVar b
   atomically $ takeTMVar a
+  atomically $ takeTMVar b
   --decide what to do next
   client <- readTVarIO c
   case status client of
@@ -205,22 +223,22 @@ loop c = do
 cleanup :: TVar Client -> IO ()
 cleanup client = do
   client' <- readTVarIO client
-  -- if we've got nothing left to send then close the conn, otherwise send first then close
-  case length . outbox $ client' of
-    0 -> closer client'
-    _ -> sendBytes client >> cleanup client
+  -- if we've got nothing left to send or route then close the conn, otherwise send/route first then close
+  case flushed client' of
+    True -> closer client'
+    _    -> loop client
+
+  where
+    flushed c = out c && in' c
+    out c = null (outbox c)
+    in' c = (BS.length . Buffer.bytes . inbox $ c) == 0
 
 -- internal workings
 
 class NatsConn a where
-  recv :: a -> Int -> IO (Maybe BS.ByteString)
+  recv :: a -> Int -> IO BS.ByteString
   send :: a -> BS.ByteString -> IO ()
   close :: a -> IO ()
-
-instance NatsConn TCP.Socket where
-  recv = TCP.recv
-  send = TCP.send
-  close = TCP.closeSock
 
 type ClientOption = Client -> Client
 
@@ -272,11 +290,12 @@ apply :: [a -> a] -> a -> a
 apply (x:xs) a = x (apply xs a)
 apply [] a     = a
 
+-- there is a problem here, we're assuming the first read (client') won't have changed while we run hydrate, then we write back the TVar
 readMessages :: TVar Client -> IO ()
 readMessages client = do
   client' <- readTVarIO client
   inbox' <- execStateT Buffer.hydrate (inbox client')
-  atomically . writeTVar client $ client' {inbox = inbox'}
+  atomically . modifyTVar client $ \c -> c {inbox = inbox'}
 
 waitForInfo :: TVar Client -> IO ()
 waitForInfo client = do
@@ -301,7 +320,7 @@ routeMessages client = do
         Right (msg, rest) -> do
           -- remove the parsed message from the buffer
           inbox'' <- execStateT (Buffer.chomp (BS.length bs - BS.length rest)) inbox'
-          atomically . writeTVar client $ client' {inbox = inbox''}
+          atomically . modifyTVar client $ \c -> c {inbox = inbox''}
 
           -- route the message
           case msg of
@@ -313,13 +332,12 @@ routeMessages client = do
                   print ("missing route for SID " ++ (show . M.sid $ a) ++ " in map " ++ r)
             ParsedInfo i -> setClientID (I.client_id i) client
             ParsedPing _ -> do
-              pong client >> sendBytes client
+              pong client
             a -> print ("unimplemented message type: " ++ show a)
 
 setClientID :: Maybe Int -> TVar Client -> IO ()
 setClientID cid client = do
-  client' <- readTVarIO client
-  atomically . writeTVar client $ client' {clientID = cid}
+  atomically . modifyTVar client $ \c -> c {clientID = cid}
 
 sendBytes :: TVar Client -> IO ()
 sendBytes client = do
@@ -328,7 +346,10 @@ sendBytes client = do
   case msgs of
     [] -> return ()
     msgs  -> do
-        let handler = (\e -> print (show e) >> (atomically . replaceOutbox client $ msgs)) :: SomeException -> IO ()
+        let handler = (\e -> do
+              print (show e)
+              atomically . replaceOutbox client $ msgs
+              ) :: SomeException -> IO ()
         catch (sender client' $ BS.concat msgs) handler
 
 emptyOutbox :: TVar Client -> STM [BS.ByteString]
@@ -360,3 +381,10 @@ removeRoute client sid = do
   let router' = router client
   client { router = Map.delete sid router' }
 
+--ld :: String -> IO a -> IO a
+--ld name action = do
+--  currentTime <- getCurrentTime
+--  res <- action
+--  completedTime <- getCurrentTime
+--  print $ name ++ ": " ++ show (diffUTCTime completedTime currentTime)
+--  return res
