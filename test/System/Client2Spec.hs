@@ -12,7 +12,7 @@ import           GHC.MVar
 import           NatsWrappers
 import           Test.Hspec
 import           Text.Printf        (printf)
-import WaitGroup
+import           WaitGroup
 
 spec :: Spec
 spec = do
@@ -44,17 +44,24 @@ sys = parallel $ do
           msg <- takeMVar lock
           sid' <- takeMVar sidBox
           msg `shouldBe` Msg "SOME.TOPIC" sid' Nothing (Just "HELLO") Nothing
+      around (withNATSConnection version) $ do
         it "can have multiple subscriptions" $ \(_, host, port) -> do
           socket <- defaultConn host port
           wg <- newWaitGroup 2
           clientBox <- newEmptyMVar
           forkIO . withNats [] socket $ \client -> do
             sub client "SOME.TOPIC" $ \x -> do
+              putMVar clientBox client
               unsub client (sid x)
               done wg
             sub client "SOME.OTHER.TOPIC" $ \x -> do
               unsub client (sid x)
-              putMVar clientBox client
+              done wg
+            sub client "SOME.THIRD.TOPIC" $ \x -> do
+              unsub client (sid x)
+              done wg
+            sub client "SOME.FOURTH.TOPIC" $ \x -> do
+              unsub client (sid x)
               done wg
 
           sleep 1
@@ -62,6 +69,8 @@ sys = parallel $ do
           forkIO . withNats [] socket' $ \client -> do
             pub client [pubWithSubject "SOME.TOPIC", pubWithPayload "HELLO"]
             pub client [pubWithSubject "SOME.OTHER.TOPIC", pubWithPayload "HELLO"]
+            pub client [pubWithSubject "SOME.THIRD.TOPIC", pubWithPayload "HELLO"]
+            pub client [pubWithSubject "SOME.FOURTH.TOPIC", pubWithPayload "HELLO"]
             stop client
 
           wait wg
