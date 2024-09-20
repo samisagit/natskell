@@ -110,7 +110,6 @@ library test-common
     exposed-modules:
        WaitGroup
     hs-source-dirs:
-       test/Common
        internal/Lib
 
 test-suite unit-test
