@@ -6,8 +6,8 @@ import qualified Data.Text          as Text
 import           Data.Text.Encoding (encodeUtf8)
 import           Data.UUID
 import           Data.UUID.V4
+import           System.Random
 import           Types
-import System.Random
 
 sidGen :: IO SID
 sidGen = do

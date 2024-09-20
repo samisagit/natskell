@@ -5,7 +5,7 @@ module BufferSpec where
 import           Buffer.Buffer
 import           Control.Concurrent.MVar
 import           Control.Monad.Trans.State
-import qualified Data.ByteString         as BS
+import qualified Data.ByteString           as BS
 import           Test.Hspec
 
 spec :: Spec
