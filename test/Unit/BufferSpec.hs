@@ -46,13 +46,13 @@ newMock bs = do
   pullCount <- newMVar 0
   return $ Mock pullable pullCount
 
-pull :: Mock -> Int -> IO (Maybe BS.ByteString)
+pull :: Mock -> Int -> IO BS.ByteString
 pull mock x = do
   pullable <- takeMVar $ pullableData mock
   let (pulled, rest) = BS.splitAt x pullable
   putMVar (pullableData mock) rest
   modifyMVar_ (pullCount mock) $ \x -> return $ x + 1
-  return $ Just pulled
+  return pulled
 
 push :: Mock -> BS.ByteString -> IO ()
 push mock bs = do
