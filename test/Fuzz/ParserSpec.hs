@@ -222,10 +222,7 @@ stringIsAscii :: BS.ByteString -> Bool
 stringIsAscii = all isAscii . B.unpack
 
 stringIsNum :: BS.ByteString -> Bool
-stringIsNum = all ((== True) . charIsDigit) . B.unpack
-
-charIsDigit :: Char -> Bool
-charIsDigit = isJust . maybeIntId . readMaybe . (:[])
+stringIsNum = all (isJust . maybeIntId . readMaybe . (:[])) . B.unpack
 
 maybeIntId :: Maybe Int -> Maybe Int
 maybeIntId = id
