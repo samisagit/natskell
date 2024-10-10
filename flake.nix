@@ -26,6 +26,7 @@
 	    pkgs.cabal-install
 	    pkgs.haskell.compiler.ghc925
             pkgs.haskellPackages.hspec-discover
+	    pkgs.nodejs_22 # because copilot
           ];
           NIX_PATH = "nixpkgs=" + pkgs.path;
         };
