@@ -15,8 +15,6 @@
         };
         hls = pkgs.haskell-language-server.override{supportedGhcVersions = [ "925" ];};
       in {
-	defaultPackage = pkgs.hello;
-
         devShell = pkgs.mkShell{ 
           buildInputs = [
             hls
@@ -30,5 +28,48 @@
           ];
           NIX_PATH = "nixpkgs=" + pkgs.path;
         };
+
+	apps.default = let
+    	  build = pkgs.writeShellApplication {
+    	    name = "build";
+    	    runtimeInputs = [pkgs.cabal-install pkgs.haskell.compiler.ghc925];
+    	    text = ''
+	      cabal update
+	      cabal build natskell
+    	    '';
+    	  };
+    	in {
+    	  type = "app";
+    	  program = "${build}/bin/build";
+    	};
+
+	apps.test = let
+    	  test = pkgs.writeShellApplication {
+    	    name = "test";
+    	    runtimeInputs = [pkgs.cabal-install pkgs.haskell.compiler.ghc925 pkgs.haskellPackages.hspec-discover pkgs.zlib];
+    	    text = ''
+	      cabal update
+	      cabal test --test-show-details=direct
+    	    '';
+    	  };
+    	in {
+    	  type = "app";
+    	  program = "${test}/bin/test";
+    	};
+
+	apps.lint = let
+    	  lint = pkgs.writeShellApplication {
+    	    name = "lint";
+    	    runtimeInputs = [pkgs.ghc pkgs.haskellPackages.hlint pkgs.haskellPackages.stylish-haskell];
+    	    text = ''
+	      stylish-haskell -r -c stylish.yaml .
+	      hlint --git
+	      cabal check
+    	    '';
+    	  };
+    	in {
+    	  type = "app";
+    	  program = "${lint}/bin/lint";
+    	};
       });
 }
