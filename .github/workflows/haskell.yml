@@ -36,4 +36,4 @@ jobs:
     - uses: cachix/cachix-action@v14
       with:
         name: samisagit-natskell
-    - run: nix develop .#ci --command bash -c "cabal update && make test"
+    - run: nix develop --command bash -c "cabal update && make test"
