@@ -16,7 +16,17 @@ jobs:
     - uses: cachix/cachix-action@v14
       with:
         name: samisagit-natskell
-    - run: nix run .#lint
+    - run: nix develop .#ci --command bash -c "make lint"
+  cabal:
+    name: cabal_check
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: cachix/install-nix-action@v25
+    - uses: cachix/cachix-action@v14
+      with:
+        name: samisagit-natskell
+    - run: nix develop .#ci --command bash -c "cabal check"
   test:
     name: test
     runs-on: ubuntu-latest
@@ -26,4 +36,4 @@ jobs:
     - uses: cachix/cachix-action@v14
       with:
         name: samisagit-natskell
-    - run: nix run .#test
+    - run: nix develop .#ci --command bash -c "cabal update && make test"
