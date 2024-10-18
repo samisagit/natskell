@@ -32,12 +32,21 @@
         };
         devShells.ci = pkgs.mkShell{ 
           buildInputs = [
+#            pkgs.hlint
+#            pkgs.stylish-haskell
+#	    pkgs.zlib
+#	    pkgs.cabal-install
+#	    pkgs.haskell.compiler.ghc925
+#            pkgs.haskellPackages.hspec-discover
+
+            hls
             pkgs.hlint
             pkgs.stylish-haskell
 	    pkgs.zlib
 	    pkgs.cabal-install
 	    pkgs.haskell.compiler.ghc925
             pkgs.haskellPackages.hspec-discover
+	    pkgs.nodejs_22 # because copilot
           ];
           NIX_PATH = "nixpkgs=" + pkgs.path;
         };
