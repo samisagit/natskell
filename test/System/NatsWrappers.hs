@@ -21,8 +21,8 @@ startNATS :: Text.Text -> IO (DC.ContainerID, String, Int)
 startNATS tag = do
   ensureImage "nats" tag
   (cid, d) <- runNATSContainer tag
-  let health = exposedService d 1 -- WTF, stack test need `0`, cabal test needs `1`
-  let nats = exposedService d 2
+  let health = exposedService d 8222
+  let nats = exposedService d 4222
   ensureNATS health 10
   syncFile cid
   return (cid, Text.unpack . fst $ nats, snd nats)
@@ -154,8 +154,8 @@ ensureNATS service retryCount = do
             ensureNATS service $ retryCount - 1
 
 exposedService :: DCT.ContainerDetails -> Int -> (Text.Text, Int)
-exposedService cd n = (DC.hostIp service, fromIntegral . DC.hostPost $ service)
+exposedService cd containerPort = (DC.hostIp service, fromIntegral . DC.hostPost $ service)
   where
-    networkPortA = DCT.networkSettingsPorts (DCT.networkSettings cd) !! n
-    service = head $ DCT.hostPorts networkPortA
+    portBinding = head $ filter (\x -> (fromIntegral . DC.containerPort $ x) == containerPort) (DCT.networkSettingsPorts (DCT.networkSettings cd))
+    service = head $ DC.hostPorts portBinding
 

@@ -30,25 +30,19 @@ haddock:
 unit-test: /tmp/unit-test.out
 
 /tmp/unit-test.out: $(wildcard internal/*) $(wildcard client/*) $(wildcard test/Unit/*)
-	cabal test natskell:unit-test --test-show-details=direct
+	cabal test natskell:unit-test --test-show-details=direct --enable-tests
 	touch /tmp/unit-test.out
-
-unit-test-profile: /tmp/unit-test-profile.out
-
-/tmp/unit-test-profile.out: $(wildcard internal/*) $(wildcard client/*) $(wildcard test/Unit/*)
-	cabal test natskell:unit-test --test-show-details=direct
-	touch /tmp/unit-test-profile.out
 
 fuzz-test: /tmp/fuzz-test.out
 
 /tmp/fuzz-test.out: $(wildcard internal/*) $(wildcard client/*) $(wildcard test/Fuzz/*)
-	cabal test natskell:fuzz-test --test-show-details=direct
+	cabal test natskell:fuzz-test --test-show-details=direct --enable-tests
 	touch /tmp/fuzz-test.out
 
 system-test: /tmp/system-test.out
 
 /tmp/system-test.out: $(wildcard internal/*) $(wildcard client/*) $(wildcard test/System/*) 
-	cabal test natskell:system-test --test-show-details=direct 
+	cabal test natskell:system-test --test-show-details=direct --enable-tests
 	touch /tmp/system-test.out
 
 test: /tmp/unit-test.out /tmp/fuzz-test.out /tmp/system-test.out
