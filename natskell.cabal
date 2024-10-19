@@ -28,7 +28,7 @@ source-repository head
 common shared
     default-language:     Haskell2010
     build-depends:
-       base >= 4.7 && < 4.19,
+       base,
     ghc-options:
        -haddock -W -Wunused-packages
 
@@ -36,15 +36,15 @@ library
     import:         shared
     build-depends:
        natskell-internal,
-       bytestring ^>= 0.11.3.1,
-       uuid ^>= 1.3.15,
-       hashable ^>= 1.4.2.0,
-       text ^>= 1.2.5.0,
-       transformers ^>= 0.5.6.2,
-       network-simple ^>= 0.4.5,
-       stm ^>= 2.5.0.2,
-       random ^>= 1.2.1.2,
-       containers ^>= 0.6.5.1,
+       bytestring,
+       uuid,
+       hashable,
+       text,
+       transformers,
+       network-simple,
+       stm,
+       random,
+       containers,
        network
 
     build-tool-depends: hspec-discover:hspec-discover
@@ -62,14 +62,14 @@ library
 library natskell-internal
     import:         shared
     build-depends:
-       bytestring ^>= 0.11.3.1,
-       word8 ^>= 0.1.3,
-       aeson ^>= 2.0.3.0,
-       network-simple ^>= 0.4.5,
-       stm ^>= 2.5.0.2,
-       text ^>= 1.2.5.0,
-       containers ^>= 0.6.5.1,
-       transformers ^>= 0.5.6.2
+       bytestring,
+       word8,
+       aeson,
+       network-simple,
+       stm,
+       text,
+       containers,
+       transformers
 
     exposed-modules:
        Lib.Parser
@@ -106,7 +106,7 @@ library natskell-internal
 library test-common
     import:         shared
     build-depends:
-       stm ^>= 2.5.0.2
+       stm
     exposed-modules:
        WaitGroup
     hs-source-dirs:
@@ -120,12 +120,12 @@ test-suite unit-test
     build-depends:   
 --       natskell, this is needed when we test the client in a unit going forward
        natskell-internal,
-       hspec ^>= 2.9.7,
-       bytestring ^>= 0.11.3.1,
-       word8 ^>= 0.1.3,
-       aeson ^>= 2.0.3.0,
-       transformers ^>= 0.5.6.2,
-       text ^>= 1.2.5.0
+       hspec,
+       bytestring,
+       word8,
+       aeson,
+       transformers,
+       text
 
     other-modules:
        ParserSpec
@@ -149,10 +149,10 @@ test-suite fuzz-test
     main-is:              Spec.hs
     build-depends:    
        natskell-internal,
-       hspec ^>= 2.9.7,
-       bytestring ^>= 0.11.3.1,
-       word8 ^>= 0.1.3,
-       QuickCheck ^>= 2.14.2
+       hspec,
+       bytestring,
+       word8,
+       QuickCheck
     other-modules:
        ParserSpec
        ValidatorsSpec
@@ -165,12 +165,12 @@ test-suite system-test
     build-depends:   
        natskell,
        test-common,
-       hspec ^>= 2.9.7,
-       bytestring ^>= 0.11.3.1,
-       text ^>= 1.2.5.0,
-       docker ^>= 0.7.0.1,
-       HTTP ^>= 4000.4.1,
-       conduit-extra ^>= 1.3.6
+       hspec,
+       bytestring,
+       text,
+       docker,
+       HTTP,
+       conduit-extra
 
     other-modules:
        NatsWrappers
