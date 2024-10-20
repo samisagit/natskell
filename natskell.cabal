@@ -31,6 +31,7 @@ common shared
        base,
     ghc-options:
        -haddock -W -Wunused-packages
+    pkgconfig-depends: zlib
 
 library
     import:         shared
