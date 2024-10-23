@@ -16,7 +16,7 @@ jobs:
     - uses: cachix/cachix-action@v14
       with:
         name: samisagit-natskell
-    - run: nix develop .#ci --command bash -c "make lint"
+    - run: nix run .#lint
   cabal:
     name: cabal_check
     runs-on: ubuntu-latest
@@ -26,9 +26,30 @@ jobs:
     - uses: cachix/cachix-action@v14
       with:
         name: samisagit-natskell
-    - run: nix develop .#ci --command bash -c "cabal check"
-  test:
-    name: test
+    - run: nix run .#cabal-check
+  stack:
+    name: stack_test
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - resolver: lts-20.26 # latest version with valid docker client
+            experimental: false
+          - resolver: lts-22.27 # latest resolver on Nix input ATOW
+            experimental: true
+          - resolver: nightly
+            experimental: true
+    steps:
+    - uses: actions/checkout@v4
+    - uses: cachix/install-nix-action@v20
+    - uses: cachix/cachix-action@v14
+      with:
+        name: samisagit-natskell
+    - run: RESOLVER=${{matrix.resolver}} nix run .#stack-test
+  cabal-test:
+    name: cabal_test
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -36,4 +57,4 @@ jobs:
     - uses: cachix/cachix-action@v14
       with:
         name: samisagit-natskell
-    - run: nix develop .#ci --command bash -c "cabal update && make test"
+    - run: nix run .#cabal-test
