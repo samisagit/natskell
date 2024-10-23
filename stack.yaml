@@ -65,3 +65,8 @@ packages:
 #
 # Allow a newer minor version of GHC than the snapshot specifies
 # compiler-check: newer-minor
+nix:
+  enable: true
+  packages: [zlib.dev, zlib.out, pkg-config]
+  path:
+    - "nixpkgs=https://github.com/NixOS/nixpkgs/archive/24.05.tar.gz"
