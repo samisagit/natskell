@@ -32,6 +32,7 @@ import           Validators.Validators
 socketReadLength :: Int
 socketReadLength = 1024
 
+-- TODO - a withNats function that runs a state monad to maintain the nats connection would be more useful
 nats :: NatsConn a => a -> IO (NatsAPI a)
 nats socket = do
   sock   <- newTMVarIO socket
