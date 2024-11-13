@@ -4,12 +4,10 @@
 
 module Client (withNats, defaultConn, NatsConn, stop, sub, pub, unsub, ping, pubWithSubject, pubWithPayload, pubWithReplyCallback, pubWithHeaders, M.Msg(..)) where
 
-import qualified Buffer.Buffer             as Buffer
 import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Monad
-import           Control.Monad.Trans.State
 import qualified Data.ByteString           as BS
 import qualified Data.Map                  as Map
 import qualified Network.Simple.TCP        as TCP
@@ -29,6 +27,7 @@ import qualified Types.Pub                 as P
 import           Types.Sub
 import           Types.Unsub
 import           Validators.Validators     (Validator (validate))
+import           WaitGroup
 
 data Status = DEFAULT | CLOSING
 
@@ -76,10 +75,7 @@ withNats opts conn callback = do
   -- apply initial opts and set puller
   let client = newClient opts
 
-  let inbox = Buffer.newBuffer (recv conn)
-  let outbox =  []
-  let sender = send conn
-  let client' = client {inbox = inbox, outbox = outbox, sender = sender, closer = close conn}
+  let client' = client {inbox = BS.empty, outbox = [], sender = send conn, receiver = recv conn, closer = close conn}
   tClient <- newTVarIO client'
 
   waitForInfo tClient
@@ -96,19 +92,17 @@ withNats opts conn callback = do
 loop :: TVar Client -> IO ()
 loop c = do
   c' <- readTVarIO c
-  a <- newEmptyTMVarIO
-  b <- newEmptyTMVarIO
+  wg <- newWaitGroup 2
   -- read incoming messages
   void . forkIO $ do
     case status c' of
       CLOSING -> routeMessages c
       _       -> readMessages c >> routeMessages c
-    atomically (putTMVar a ())
+    done wg
   -- send outgoing messages
-  void $ forkIO (sendBytes c >> atomically (putTMVar b ()))
+  void $ forkIO (sendBytes c >> done wg)
   --wait for them to resolve
-  atomically $ takeTMVar a
-  atomically $ takeTMVar b
+  wait wg
   --decide what to do next
   client <- readTVarIO c
   case status client of
@@ -126,43 +120,42 @@ cleanup client = do
   where
     flushed c = out c && in' c
     out c = null (outbox c)
-    in' c = (BS.length . Buffer.bytes . inbox $ c) == 0
+    in' c = BS.null (inbox c)
 
 class NatsConn a where
   recv :: a -> Int -> IO BS.ByteString
   send :: a -> BS.ByteString -> IO ()
   close :: a -> IO ()
 
+byteLimit = 1024
+
 readMessages :: TVar Client -> IO ()
 readMessages client = do
   client' <- readTVarIO client
-  inbox' <- execStateT Buffer.hydrate (inbox client')
-  atomically . modifyTVar client $ \c -> c {inbox = inbox'}
+  let byteSpace = byteLimit - BS.length (inbox client') -- this could be stale, but the inbox shouldn't have grown since we last checked
+  when (byteSpace < 1) $ return ()
+  newBytes <- receiver client' byteSpace
+  atomically . modifyTVar client $ \c -> c {inbox = BS.append (inbox c) newBytes}
 
 waitForInfo :: TVar Client -> IO ()
 waitForInfo client = do
   readMessages client
   client' <- readTVarIO client
-  let bytes = Buffer.bytes . inbox $ client'
-  case BS.length bytes of
+  case BS.length . inbox $ client' of
     0 -> threadDelay 10000 >> waitForInfo client
     _ -> return ()
 
 routeMessages :: TVar Client -> IO ()
 routeMessages client = do
   client' <- readTVarIO client
-  let inbox' = inbox client'
-  let bs = Buffer.bytes inbox'
-  case BS.length bs of
+  case BS.length . inbox $ client' of
     0 -> threadDelay 10000
     _ -> do
-      case genericParse bs of
+      case genericParse . inbox $ client' of
         -- TODO: alter some top level state to indicate a parse error
         Left err -> error (show err)
         Right (msg, rest) -> do
-          -- remove the parsed message from the buffer
-          inbox'' <- execStateT (Buffer.chomp (BS.length bs - BS.length rest)) inbox'
-          atomically . modifyTVar client $ \c -> c {inbox = inbox''}
+          atomically . modifyTVar client $ \c -> c {inbox = BS.drop ((BS.length . inbox $ client') - BS.length rest) (inbox c)} -- we can't just use rest because inbox could have grown since we last checked
 
           -- route the message
           case msg of
@@ -281,9 +274,10 @@ data ConnectionOptions = ConnectionOptions
 data Client = Client
   {
     stdGen         :: StdGen,
-    inbox          :: Buffer.Buffer,
+    inbox          :: BS.ByteString,
     outbox         :: [BS.ByteString],
     sender         :: BS.ByteString -> IO (),
+    receiver       :: Int -> IO BS.ByteString,
     connectionOpts :: ConnectionOptions,
     router         :: Map.Map SID (M.Msg -> IO ()),
     status         :: Status,
@@ -294,9 +288,10 @@ data Client = Client
 initialClient :: Client
 initialClient = Client {
     stdGen = mkStdGen 0,
-    inbox = undefined,
-    outbox = undefined,
+    inbox = BS.empty,
+    outbox = [],
     sender = undefined,
+    receiver = undefined,
     router = Map.empty,
     connectionOpts = ConnectionOptions
       {

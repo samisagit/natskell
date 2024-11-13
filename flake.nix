@@ -42,7 +42,6 @@
 	      pkgs.cabal-install
 	      pkgs.haskell.compiler.ghc925
 	      pkgs.pkg-config
-	      pkgs.cabal-install
             ];
             text = ''
             export PKG_CONFIG_PATH="${pkgs.zlib.dev}/lib/pkgconfig"
@@ -62,7 +61,6 @@
 	      pkgs.zlib
 	      pkgs.cabal-install
 	      pkgs.pkg-config
-	      pkgs.cabal-install
             ];
             text = ''
             export PKG_CONFIG_PATH="${pkgs.zlib.dev}/lib/pkgconfig"
@@ -72,6 +70,25 @@
         in {
           type = "app";
           program = "${cabal-check}/bin/cabal-check";
+        };
+
+        apps.repl = let
+          repl = pkgs.writeShellApplication {
+            name = "repl";
+            runtimeInputs = [
+	      pkgs.zlib
+	      pkgs.cabal-install
+	      pkgs.pkg-config
+	      pkgs.ghcid
+            ];
+            text = ''
+            export PKG_CONFIG_PATH="${pkgs.zlib.dev}/lib/pkgconfig"
+	    ghcid -c "cabal repl natskell"
+	    '';
+          };
+        in {
+          type = "app";
+          program = "${repl}/bin/repl";
         };
 
         apps.lint = let

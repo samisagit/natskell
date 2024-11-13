@@ -93,7 +93,6 @@ library natskell-internal
     Types.Unsub
     Nats.Nats
     Nats.NatsProper
-    Buffer.Buffer
     Outbox.Outbox
     WaitGroup
 
@@ -105,7 +104,6 @@ library natskell-internal
     internal/Validators
     internal/Lib
     internal/Nats
-    internal/Buffer
 
 library test-common
     import:         shared
@@ -143,7 +141,6 @@ test-suite unit-test
     ConnectSpec
     SubSpec
     UnsubSpec
-    BufferSpec
     Fixtures
 
 test-suite fuzz-test
