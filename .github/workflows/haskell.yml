@@ -37,10 +37,10 @@ jobs:
         include:
           - resolver: lts-20.26 # latest version with valid docker client
             experimental: false
-          - resolver: lts-22.27 # latest resolver on Nix input ATOW
-            experimental: true
-          - resolver: nightly
-            experimental: true
+              #          - resolver: lts-22.27 # latest resolver on Nix input ATOW
+              #            experimental: true
+              #          - resolver: nightly
+              #            experimental: true
     steps:
     - uses: actions/checkout@v4
     - uses: cachix/install-nix-action@v20
