@@ -41,7 +41,6 @@ library
     bytestring < 0.13,
     containers < 0.7,
     hashable  < 1.5,
-    transformers  < 0.6,
     stm  < 2.6,
     text  < 2.2,
     network  < 3.3,
@@ -72,8 +71,7 @@ library natskell-internal
     network-simple,
     stm,
     text,
-    containers,
-    transformers
+    containers
 
   exposed-modules:
     Lib.Parser

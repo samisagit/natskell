@@ -89,6 +89,7 @@ withNats opts conn callback = do
 
   loop tClient -- TODO: ideally we want two loops, one for reading and one for writing
 
+{-# SCC loop #-}
 loop :: TVar Client -> IO ()
 loop c = do
   c' <- readTVarIO c
@@ -129,13 +130,14 @@ class NatsConn a where
 
 byteLimit = 1024
 
+{-# SCC readMessages #-}
 readMessages :: TVar Client -> IO ()
 readMessages client = do
   client' <- readTVarIO client
   let byteSpace = byteLimit - BS.length (inbox client') -- this could be stale, but the inbox shouldn't have grown since we last checked
-  when (byteSpace < 1) $ return ()
-  newBytes <- receiver client' byteSpace
-  atomically . modifyTVar client $ \c -> c {inbox = BS.append (inbox c) newBytes}
+  if byteSpace < 1 then return () else do -- TODO: there is no delay here.. could pin a core when there's no messages
+    newBytes <- receiver client' byteSpace
+    atomically . modifyTVar client $ \c -> c {inbox = BS.append (inbox c) newBytes}
 
 waitForInfo :: TVar Client -> IO ()
 waitForInfo client = do
@@ -145,11 +147,12 @@ waitForInfo client = do
     0 -> threadDelay 10000 >> waitForInfo client
     _ -> return ()
 
+{-# SCC routeMessages #-}
 routeMessages :: TVar Client -> IO ()
 routeMessages client = do
   client' <- readTVarIO client
   case BS.length . inbox $ client' of
-    0 -> threadDelay 10000
+    0 -> return ()
     _ -> do
       case genericParse . inbox $ client' of
         -- TODO: alter some top level state to indicate a parse error
@@ -170,11 +173,12 @@ routeMessages client = do
               pong client
             a -> print ("unimplemented message type: " ++ show a)
 
+{-# SCC sendBytes #-}
 sendBytes :: TVar Client -> IO ()
 sendBytes client = do
   (client', msgs) <- atomically . modifyWithResult emptyOutbox $ client
   case msgs of
-    [] -> return ()
+    [] -> return () -- TODO: there is no delay here.. could pin a core when there's no messages
     msgs  -> do
         let handler = (\e -> do
               print (show e)

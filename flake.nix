@@ -46,12 +46,33 @@
             text = ''
             export PKG_CONFIG_PATH="${pkgs.zlib.dev}/lib/pkgconfig"
 	    cabal update
-	    cabal test --enable-tests
+	    cabal test --enable-tests --test-show-details=direct
 	    '';
           };
         in {
           type = "app";
           program = "${cabal-test}/bin/cabal-test";
+        };
+
+        apps.cabal-sys-test = let
+          cabal-sys-test = pkgs.writeShellApplication {
+            name = "cabal-sys-test";
+            runtimeInputs = [
+              pkgs.haskellPackages.hspec-discover
+	      pkgs.zlib
+	      pkgs.cabal-install
+	      pkgs.haskell.compiler.ghc925
+	      pkgs.pkg-config
+            ];
+            text = ''
+            export PKG_CONFIG_PATH="${pkgs.zlib.dev}/lib/pkgconfig"
+	    cabal update
+	    cabal test natskell:system-test --enable-tests --test-show-details=direct
+	    '';
+          };
+        in {
+          type = "app";
+          program = "${cabal-sys-test}/bin/cabal-sys-test";
         };
 
         apps.cabal-check = let
