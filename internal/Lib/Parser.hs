@@ -64,7 +64,6 @@ char c = Parser charP
       | otherwise = Left (ParserErr (errString bs) (BS.length bs))
     errString bs = w8sToString [BS.head bs] ++ " does not match " ++ w8sToString [c] ++ " in " ++ C.unpack bs
 
-
 charIn :: [W8.Word8] -> Parser W8.Word8
 charIn opts = Parser charP
   where

@@ -48,16 +48,20 @@ library
     network-simple  < 0.5,
     random  < 1.3,
     uuid  < 1.4,
-    text  < 1.3
+    text  < 1.3,
+    conduit < 1.4
 
   build-tool-depends: hspec-discover:hspec-discover
 
   exposed-modules:
     Client
+    -- remove this when we have client tests
+    Streaming
 
   other-modules:
      Types
      Sid
+     Broadcasting
 
   hs-source-dirs:
        client
@@ -118,13 +122,13 @@ test-suite unit-test
   hs-source-dirs:   test/Unit
   main-is:          Spec.hs
   build-depends:   
---       natskell, this is needed when we test the client in a unit going forward
+    natskell,
     natskell-internal,
     hspec,
     bytestring,
     word8,
     aeson,
-    transformers,
+    stm,
     text
 
   other-modules:
@@ -140,6 +144,7 @@ test-suite unit-test
     SubSpec
     UnsubSpec
     Fixtures
+    StreamingSpec
 
 test-suite fuzz-test
   import:         shared

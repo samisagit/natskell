@@ -59,24 +59,24 @@ steps:
   # - "," in fields is always aligned with "{"
   # - "}" is likewise always aligned with "{"
   #
-  # - records:
+  - records:
   #     # How to format equals sign between type constructor and data constructor.
   #     # Possible values:
   #     # - "same_line" -- leave "=" AND data constructor on the same line as the type constructor.
   #     # - "indent N" -- insert a new line and N spaces from the beginning of the next line.
-  #     equals: "indent 2"
+    equals: "same_line"
   #
   #     # How to format first field of each record constructor.
   #     # Possible values:
   #     # - "same_line" -- "{" and first field goes on the same line as the data constructor.
   #     # - "indent N" -- insert a new line and N spaces from the beginning of the data constructor
-  #     first_field: "indent 2"
+    first_field: "indent 2"
   #
   #     # How many spaces to insert between the column with "," and the beginning of the comment in the next line.
-  #     field_comment: 2
+    field_comment: 2
   #
   #     # How many spaces to insert before "deriving" clause. Deriving clauses are always on separate lines.
-  #     deriving: 2
+    deriving: 2
   #
   #     # How many spaces to insert before "via" clause counted from indentation of deriving clause
   #     # Possible values:
@@ -218,7 +218,7 @@ steps:
       #   >     )
       #
       # Default: inline
-      long_list_align: inline
+      long_list_align: multiline
 
       # Align empty list (importing instances)
       #
@@ -324,7 +324,7 @@ steps:
       #   > import Control.Monad.MonadError
       #
       # Default: false
-      group_imports: false
+      group_imports: true
 
       # A list of rules specifying how to group modules and how to
       # order the groups.
@@ -434,10 +434,10 @@ steps:
       language_prefix: LANGUAGE
 
   # Replace tabs by spaces. This is disabled by default.
-  # - tabs:
-  #     # Number of spaces to use for each tab. Default: 8, as specified by the
-  #     # Haskell report.
-  #     spaces: 8
+  - tabs:
+      # Number of spaces to use for each tab. Default: 8, as specified by the
+      # Haskell report.
+      spaces: 8
 
   # Remove trailing whitespace
   - trailing_whitespace: {}

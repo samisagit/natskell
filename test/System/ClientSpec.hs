@@ -2,16 +2,15 @@
 
 module ClientSpec (spec) where
 import           Client
-import           Control.Concurrent (forkIO)
 import           Control.Exception
-import           Control.Monad      (forM_)
-import qualified Data.Text          as Text
-import qualified Docker.Client      as DC
-import           GHC.Conc           (threadDelay)
+import           Control.Monad     (forM_)
+import           Data.Maybe
+import qualified Data.Text         as Text
+import qualified Docker.Client     as DC
 import           GHC.MVar
 import           NatsWrappers
 import           Test.Hspec
-import           Text.Printf        (printf)
+import           Text.Printf       (printf)
 import           WaitGroup
 
 spec :: Spec
@@ -24,61 +23,43 @@ sys = parallel $ do
   forM_ versions $ \version ->
     describe (printf "client 2 (nats:%s)" version) $ do
       around (withNATSConnection version) $ do
-        it "receives others messages" $ \(_, host, port) -> do
+        it "PING results in PONG" $ \(_, host, port) -> do
+          socket <- defaultConn host port
+          c <- newClient socket
+          wg <- newWaitGroup 1
+          ping c $ done wg
+          wait wg
+        it "messages are sent and received" $ \(_, host, port) -> do
+          let topic = "SOME.TOPIC"
+          let payload = "HELLO"
           socket <- defaultConn host port
           lock <- newEmptyMVar
           sidBox <- newEmptyMVar
-          forkIO . withNats [] socket $ \client -> do
-            sub client "SOME.TOPIC" $ \x -> do
-              unsub client (sid x)
-              stop client
-              putMVar lock x
-              putMVar sidBox (sid x)
-
-          sleep 1
+          wg <- newWaitGroup 1
+          assertClient <- newClient socket
+          subscribe assertClient topic $ \msg -> do
+            -- TODO: unsubscribe assertClient (sid msg)
+            putMVar lock msg
+            putMVar sidBox (sid msg)
+            done wg
           socket' <- defaultConn host port
-          forkIO . withNats [] socket' $ \client -> do
-            pub client [pubWithSubject "SOME.TOPIC", pubWithPayload "HELLO"]
-            stop client
-
+          promptClient <- newClient socket'
+          publish promptClient topic [pubWithPayload payload]
+          wait wg
           msg <- takeMVar lock
           sid' <- takeMVar sidBox
-          msg `shouldBe` Msg "SOME.TOPIC" sid' Nothing (Just "HELLO") Nothing
-      around (withNATSConnection version) $ do
-        it "can have multiple subscriptions" $ \(_, host, port) -> do
+          msg `shouldBe` Msg topic sid' Nothing (Just payload) Nothing
+        it "replies are routed correctly" $ \(_, host, port) -> do
+          let topic = "REQ.TOPIC"
           socket <- defaultConn host port
-          wg <- newWaitGroup 2
-          clientBox <- newEmptyMVar
-          forkIO . withNats [] socket $ \client -> do
-            sub client "SOME.TOPIC" $ \x -> do
-              putMVar clientBox client
-              unsub client (sid x)
-              done wg
-            sub client "SOME.OTHER.TOPIC" $ \x -> do
-              unsub client (sid x)
-              done wg
-            sub client "SOME.THIRD.TOPIC" $ \x -> do
-              unsub client (sid x)
-              done wg
-            sub client "SOME.FOURTH.TOPIC" $ \x -> do
-              unsub client (sid x)
-              done wg
-
-          sleep 1
+          remoteClient <- newClient socket
+          subscribe remoteClient topic $ \msg -> do
+            publish remoteClient (fromJust . replyTo $ msg) [pubWithPayload "WORLD"]
           socket' <- defaultConn host port
-          forkIO . withNats [] socket' $ \client -> do
-            pub client [pubWithSubject "SOME.TOPIC", pubWithPayload "HELLO"]
-            pub client [pubWithSubject "SOME.OTHER.TOPIC", pubWithPayload "HELLO"]
-            pub client [pubWithSubject "SOME.THIRD.TOPIC", pubWithPayload "HELLO"]
-            pub client [pubWithSubject "SOME.FOURTH.TOPIC", pubWithPayload "HELLO"]
-            stop client
-
+          promptClient <- newClient socket'
+          wg <- newWaitGroup 1
+          publish promptClient topic [pubWithReplyCallback (\_ -> done wg), pubWithPayload "HELLO"]
           wait wg
-          client <- takeMVar clientBox
-          stop client
 
 withNATSConnection :: Text.Text -> ((DC.ContainerID, String, Int) -> IO ()) -> IO ()
 withNATSConnection tag = bracket (startNATS tag) stopNATS
-
-sleep :: Int -> IO ()
-sleep = threadDelay . (*100000)
