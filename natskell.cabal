@@ -72,14 +72,11 @@ library natskell-internal
     bytestring,
     aeson  < 2.3,
     word8  < 0.2,
-    network-simple,
     stm,
-    text,
-    containers
+    text
 
   exposed-modules:
     Lib.Parser
-    Lib.Builder
     Parsers.Parsers
     Transformers.Transformers
     Validators.Validators
@@ -93,9 +90,6 @@ library natskell-internal
     Types.Connect
     Types.Sub
     Types.Unsub
-    Nats.Nats
-    Nats.NatsProper
-    Outbox.Outbox
     WaitGroup
 
   hs-source-dirs:
@@ -105,7 +99,6 @@ library natskell-internal
     internal/Transformers
     internal/Validators
     internal/Lib
-    internal/Nats
 
 library test-common
     import:         shared

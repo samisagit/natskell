@@ -21,7 +21,7 @@ steps:
       separate_lists: true
       space_surround: false
       post_qualify: false
-      group_imports: true
+      group_imports: false
       group_rules:
         - match: ".*"
           sub_group: "^[^.]+"

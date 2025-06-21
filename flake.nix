@@ -149,6 +149,21 @@
           program = "${lint}/bin/lint";
         };
 
+        apps.fmt = let
+          fmt = pkgs.writeShellApplication {
+            name = "fmt";
+            runtimeInputs = [
+              pkgs.stylish-haskell
+            ];
+            text = ''
+	    stylish-haskell -ri -c stylish.yaml .
+	    '';
+          };
+        in {
+          type = "app";
+          program = "${fmt}/bin/fmt";
+        };
+
         devShells.default = pkgs.mkShell{ 
           buildInputs = [
             hls
