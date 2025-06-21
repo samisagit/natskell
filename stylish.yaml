@@ -3,7 +3,7 @@ steps:
   - records:
       equals: "same_line"
       first_field: "indent 2"
-      field_comment: 2
+      field_comment: 0
       deriving: 2
       via: "indent 2"
   - simple_align:

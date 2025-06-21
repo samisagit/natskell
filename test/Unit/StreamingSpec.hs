@@ -7,16 +7,32 @@ module StreamingSpec where
 import           Control.Concurrent
 import           Control.Concurrent.STM
 import qualified Control.Monad
-import           Data.ByteString        (ByteString, append, hPut, head, pack,
-                                         tail)
+import           Data.ByteString
+    ( ByteString
+    , append
+    , hPut
+    , head
+    , pack
+    , tail
+    )
 import           Data.Char              (chr)
 import           Data.Word8             (isUpper)
-import           Prelude                hiding (head, last, null, replicate,
-                                         tail)
+import           Prelude                hiding
+    ( head
+    , last
+    , null
+    , replicate
+    , tail
+    )
 import           Streaming
-import           System.IO              (Handle, SeekMode (AbsoluteSeek),
-                                         hClose, hSeek, hTell,
-                                         openBinaryTempFile)
+import           System.IO
+    ( Handle
+    , SeekMode (AbsoluteSeek)
+    , hClose
+    , hSeek
+    , hTell
+    , openBinaryTempFile
+    )
 import           Test.Hspec
 
 -- DISCLAIMER: These tests use a temp file to simulate a socket, which means when the end of the file is reached we get EOF.

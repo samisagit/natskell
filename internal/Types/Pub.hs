@@ -8,11 +8,11 @@ import           Prelude               hiding (concat, length, null)
 import           Validators.Validators
 
 data Pub = Pub
-  { subject :: ByteString,
-    replyTo :: Maybe ByteString,
-    headers :: Maybe [(ByteString, ByteString)],
-    payload :: Maybe ByteString
-  }
+             { subject :: ByteString
+             , replyTo :: Maybe ByteString
+             , headers :: Maybe [(ByteString, ByteString)]
+             , payload :: Maybe ByteString
+             }
   deriving (Eq, Show)
 
 instance Validator Pub where

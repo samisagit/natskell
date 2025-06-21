@@ -12,24 +12,23 @@ import           GHC.Generics
 import           Validators.Validators
 
 data Connect = Connect
-  {
-    verbose       :: Bool,
-    pedantic      :: Bool,
-    tls_required  :: Bool,
-    auth_token    :: Maybe BS.ByteString,
-    user          :: Maybe BS.ByteString,
-    pass          :: Maybe BS.ByteString,
-    name          :: Maybe BS.ByteString,
-    lang          :: BS.ByteString,
-    version       :: BS.ByteString,
-    protocol      :: Maybe Int,
-    echo          :: Maybe Bool,
-    sig           :: Maybe BS.ByteString,
-    jwt           :: Maybe BS.ByteString,
-    no_responders :: Maybe Bool,
-    headers       :: Maybe Bool
-  }
-  deriving (Eq, Show, Generic)
+                 { verbose       :: Bool
+                 , pedantic      :: Bool
+                 , tls_required  :: Bool
+                 , auth_token    :: Maybe BS.ByteString
+                 , user          :: Maybe BS.ByteString
+                 , pass          :: Maybe BS.ByteString
+                 , name          :: Maybe BS.ByteString
+                 , lang          :: BS.ByteString
+                 , version       :: BS.ByteString
+                 , protocol      :: Maybe Int
+                 , echo          :: Maybe Bool
+                 , sig           :: Maybe BS.ByteString
+                 , jwt           :: Maybe BS.ByteString
+                 , no_responders :: Maybe Bool
+                 , headers       :: Maybe Bool
+                 }
+  deriving (Eq, Generic, Show)
 
 instance ToJSON Connect where
   toJSON = genericToJSON defaultOptions

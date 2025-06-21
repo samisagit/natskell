@@ -11,14 +11,17 @@ import           Control.Concurrent (threadDelay)
 import           Control.Exception  (IOException, try)
 import           Data.ByteString    (ByteString, append, hGetSome, null)
 import           Prelude            hiding (null)
-import           System.IO          (BufferMode (NoBuffering), Handle,
-                                     hSetBuffering)
+import           System.IO
+    ( BufferMode (NoBuffering)
+    , Handle
+    , hSetBuffering
+    )
 data ParserState = OK
-                   | MissingData      -- Reached end of input, content valid so far
-                   | OverflowingData  -- Reached max message size, valid so far
-                   | InvalidPrefix    -- Met error before end of input
-                   | Drained          -- There is nothing to consume and no partial message in memory
-                   | StreamEnded      -- A message was received that signalled the end of incoming data`
+                 | MissingData -- Reached end of input, content valid so far
+                 | OverflowingData -- Reached max message size, valid so far
+                 | InvalidPrefix -- Met error before end of input
+                 | Drained -- There is nothing to consume and no partial message in memory
+                 | StreamEnded
 
 class SelfHealer value err where
   heal :: value -> err -> (value, ParserState)
@@ -68,7 +71,7 @@ streamParser parser = loop ""
     handleChunk bs = do
       case parser bs of
         Left err -> do
-          liftIO $ putStrLn $ "Parser error: " ++ show err
+          liftIO . putStrLn $ "Parser error: " ++ show err
           let (fixed, state) = heal bs err
           -- TODO: if the heal failed, we shouldn't just continue
           handleChunk fixed

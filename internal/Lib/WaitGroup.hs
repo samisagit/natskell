@@ -2,7 +2,10 @@ module WaitGroup where
 
 import           Control.Concurrent.STM
 
-data WaitGroup = WaitGroup{count :: TVar Int, lock :: TMVar ()}
+data WaitGroup = WaitGroup
+                   { count :: TVar Int
+                   , lock  :: TMVar ()
+                   }
 
 newWaitGroup :: Int -> IO WaitGroup
 newWaitGroup n = do

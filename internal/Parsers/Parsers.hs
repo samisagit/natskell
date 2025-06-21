@@ -18,12 +18,12 @@ import           Types.Pong
 
 -- TODO do we need the wrapping type
 data ParsedMessage = ParsedPing Ping
-  | ParsedPong Pong
-  | ParsedOk Ok
-  | ParsedErr Err
-  | ParsedInfo Info
-  | ParsedMsg Msg
-  deriving (Show, Eq)
+                   | ParsedPong Pong
+                   | ParsedOk Ok
+                   | ParsedErr Err
+                   | ParsedInfo Info
+                   | ParsedMsg Msg
+  deriving (Eq, Show)
 
 genericParse :: ByteString -> Either ParserErr (ParsedMessage, ByteString)
 genericParse a = case result of

@@ -16,40 +16,39 @@ module Client (
   ping,
   ) where
 
-import           Broadcasting                   as B
+import           Broadcasting              as B
 import           Control.Concurrent
 import           Control.Concurrent.STM
-import           Control.Concurrent.STM.TBQueue
-import           Control.Monad                  (void)
-import qualified Data.ByteString                as BS
-import           Data.Map                       (Map, insert, lookup)
-import           Lib.Parser                     (ParserErr (..))
-import qualified Network.Simple.TCP             as TCP
-import qualified Network.Socket                 as NS
+import           Control.Monad             (void)
+import qualified Data.ByteString           as BS
+import           Data.Map                  (Map, insert, lookup)
+import           Lib.Parser                (ParserErr (..))
+import qualified Network.Simple.TCP        as TCP
+import qualified Network.Socket            as NS
 import           Parsers.Parsers
-import           Sid                            (nextSID)
-import           Streaming                      as S
+import           Sid                       (nextSID)
+import           Streaming                 as S
 import           System.IO
-import           Transformers.Transformers      (Transformer (transform))
+import           Transformers.Transformers (Transformer (transform))
 import           Types
-import           Types.Connect                  (Connect (..))
+import           Types.Connect             (Connect (..))
 -- import qualified Types.Info                as I
-import qualified Types.Msg                      as M
+import qualified Types.Msg                 as M
 import           Types.Ping
 import           Types.Pong
-import qualified Types.Pub                      as P
+import qualified Types.Pub                 as P
 import           Types.Sub
 -- import           Types.Unsub
-import           Prelude                        hiding (lookup)
-import           System.Random                  (StdGen, newStdGen)
+import           Prelude                   hiding (lookup)
+import           System.Random             (StdGen, newStdGen)
 import           WaitGroup
 
-data Client = Client {
-  queue     :: TBQueue QueueItem,
-  routes    :: TVar (Map Subject (M.Msg -> IO ())),
-  pings     :: TVar [IO ()],
-  randomGen :: TVar StdGen
-  }
+data Client = Client
+                { queue     :: TBQueue QueueItem
+                , routes    :: TVar (Map Subject (M.Msg -> IO ()))
+                , pings     :: TVar [IO ()]
+                , randomGen :: TVar StdGen
+                }
 
 instance SelfHealer BS.ByteString ParserErr where
   heal bs _  = (BS.tail bs, OK) -- TODO: this is a test implementation, should be replaced with a proper healing mechanism
@@ -106,7 +105,7 @@ sequenceActions actionsVar = do
 router :: Client -> M.Msg -> IO ()
 router client msg = do
   let sid = M.sid msg
-  callbacks <- atomically $ readTVar (routes client)
+  callbacks <- readTVarIO (routes client)
   case lookup sid callbacks of
     Just callback -> callback msg
     Nothing       -> putStrLn $ "No callback for SID: " ++ show sid
@@ -160,7 +159,7 @@ subscribe client subject callback = do
 ping :: Client -> IO () -> IO ()
 ping client action = do
   atomically $ modifyTVar' (pings client) (action :)
-  atomically $ writeTBQueue (queue client) (QueueItem (Ping))
+  atomically $ writeTBQueue (queue client) (QueueItem Ping)
 
 applyPubOptions :: PubOptions -> [PubOptions -> PubOptions] -> PubOptions
 applyPubOptions = foldl (flip ($))
