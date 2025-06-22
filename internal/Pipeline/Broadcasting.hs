@@ -1,6 +1,6 @@
 {-# LANGUAGE GADTs #-}
 
-module Broadcasting where
+module Pipeline.Broadcasting where
 
 import           Conduit
 import           Control.Concurrent.STM

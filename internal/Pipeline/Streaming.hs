@@ -4,7 +4,7 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 
-module Streaming where
+module Pipeline.Streaming where
 
 import           Conduit
 import           Control.Concurrent (threadDelay)

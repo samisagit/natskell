@@ -17,7 +17,6 @@ module Client (
   ping,
   ) where
 
-import           Broadcasting              as B
 import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Monad             (void)
@@ -27,8 +26,9 @@ import           Lib.Parser                (ParserErr (..))
 import qualified Network.Simple.TCP        as TCP
 import qualified Network.Socket            as NS
 import           Parsers.Parsers
+import           Pipeline.Broadcasting     as B
+import           Pipeline.Streaming        as S
 import           Sid                       (nextSID)
-import           Streaming                 as S
 import           System.IO
 import           Transformers.Transformers (Transformer (transform))
 import           Types
@@ -147,7 +147,7 @@ subscribe' isReply client subject callback = do
     writeTVar (randomGen client) stdGen
     return rand
   let cb = if isReply
-        then \m -> (callback m >> unsubscribe client sid)
+        then \m -> callback m >> unsubscribe client sid
         else callback
   atomically $ modifyTVar' (routes client) (insert sid cb)
   let sub = Sub {
@@ -161,7 +161,7 @@ subscribe' isReply client subject callback = do
   return sid
 
 subscribe :: Client -> Subject -> (M.Msg -> IO ()) -> IO SID
-subscribe client subject callback = subscribe' False client subject callback
+subscribe = subscribe' False
 
 unsubscribe :: Client -> SID -> IO ()
 unsubscribe client sid = do

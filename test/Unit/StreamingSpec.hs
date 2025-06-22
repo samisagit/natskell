@@ -17,6 +17,7 @@ import           Data.ByteString
     )
 import           Data.Char              (chr)
 import           Data.Word8             (isUpper)
+import           Pipeline.Streaming
 import           Prelude                hiding
     ( head
     , last
@@ -24,7 +25,6 @@ import           Prelude                hiding
     , replicate
     , tail
     )
-import           Streaming
 import           System.IO
     ( Handle
     , SeekMode (AbsoluteSeek)

@@ -48,20 +48,16 @@ library
     network-simple  < 0.5,
     random  < 1.3,
     uuid  < 1.4,
-    text  < 1.3,
-    conduit < 1.4
+    text  < 1.3
 
   build-tool-depends: hspec-discover:hspec-discover
 
   exposed-modules:
     Client
-    -- remove this when we have client tests
-    Streaming
 
   other-modules:
      Types
      Sid
-     Broadcasting
 
   hs-source-dirs:
        client
@@ -69,6 +65,7 @@ library
 library natskell-internal
   import:         shared
   build-depends:
+    conduit < 1.4,
     bytestring,
     aeson  < 2.3,
     word8  < 0.2,
@@ -91,6 +88,8 @@ library natskell-internal
     Types.Sub
     Types.Unsub
     WaitGroup
+    Pipeline.Broadcasting
+    Pipeline.Streaming
 
   hs-source-dirs:
     internal
@@ -99,6 +98,7 @@ library natskell-internal
     internal/Transformers
     internal/Validators
     internal/Lib
+    internal/Pipeline
 
 library test-common
     import:         shared
