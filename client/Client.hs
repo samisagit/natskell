@@ -93,7 +93,8 @@ newClient handle = do
         ParsedInfo _ -> connect handle >> done wg
         ParsedPing _ -> pong handle
         ParsedPong _ -> sequenceActions (pings client)
-        _            -> print ("unimplemented message type: " ++ show msg)
+        ParsedErr  _ -> print ("error reported: " ++ show msg)
+        ParsedOk   _ -> return ()
 
 sequenceActions :: TVar [IO ()] -> IO ()
 sequenceActions actionsVar = do
@@ -125,8 +126,7 @@ publish client subject opts = do
         writeTVar (randomGen client) stdGen
         return rand
       let replyTo = BS.append "RES." rand
-      -- TODO: we should grab the SID and unsub when the callback completes
-      subscribe' True client replyTo cb
+      request client replyTo cb
       return (Just replyTo)
     Nothing -> return Nothing
 
@@ -162,6 +162,9 @@ subscribe' isReply client subject callback = do
 
 subscribe :: Client -> Subject -> (M.Msg -> IO ()) -> IO SID
 subscribe = subscribe' False
+
+request :: Client -> Subject -> (M.Msg -> IO ()) -> IO SID
+request = subscribe' True
 
 unsubscribe :: Client -> SID -> IO ()
 unsubscribe client sid = do
