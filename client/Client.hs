@@ -13,6 +13,7 @@ module Client (
   M.Msg(..),
   publish,
   subscribe,
+  unsubscribe,
   ping,
   ) where
 
@@ -21,7 +22,7 @@ import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Monad             (void)
 import qualified Data.ByteString           as BS
-import           Data.Map                  (Map, insert, lookup)
+import           Data.Map                  (Map, delete, insert, lookup)
 import           Lib.Parser                (ParserErr (..))
 import qualified Network.Simple.TCP        as TCP
 import qualified Network.Socket            as NS
@@ -33,14 +34,14 @@ import           Transformers.Transformers (Transformer (transform))
 import           Types
 import           Types.Connect             (Connect (..))
 -- import qualified Types.Info                as I
+import           Prelude                   hiding (lookup)
+import           System.Random             (StdGen, newStdGen)
 import qualified Types.Msg                 as M
 import           Types.Ping
 import           Types.Pong
 import qualified Types.Pub                 as P
 import           Types.Sub
--- import           Types.Unsub
-import           Prelude                   hiding (lookup)
-import           System.Random             (StdGen, newStdGen)
+import qualified Types.Unsub               as Unsub
 import           WaitGroup
 
 data Client = Client
@@ -125,7 +126,7 @@ publish client subject opts = do
         return rand
       let replyTo = BS.append "RES." rand
       -- TODO: we should grab the SID and unsub when the callback completes
-      subscribe client replyTo cb
+      subscribe' True client replyTo cb
       return (Just replyTo)
     Nothing -> return Nothing
 
@@ -138,14 +139,17 @@ publish client subject opts = do
 
   atomically $ writeTBQueue (queue client) (QueueItem msg)
 
-subscribe :: Client -> Subject -> (M.Msg -> IO ()) -> IO SID
-subscribe client subject callback = do
+subscribe' :: Bool -> Client -> Subject -> (M.Msg -> IO ()) -> IO SID
+subscribe' isReply client subject callback = do
   sid <- atomically $ do
     rg <- readTVar (randomGen client)
     let (rand, stdGen) = nextSID rg
     writeTVar (randomGen client) stdGen
     return rand
-  atomically $ modifyTVar' (routes client) (insert sid callback)
+  let cb = if isReply
+        then \m -> (callback m >> unsubscribe client sid)
+        else callback
+  atomically $ modifyTVar' (routes client) (insert sid cb)
   let sub = Sub {
     subject = subject,
     queueGroup = Nothing,
@@ -155,6 +159,19 @@ subscribe client subject callback = do
   atomically $ writeTBQueue (queue client) (QueueItem sub)
 
   return sid
+
+subscribe :: Client -> Subject -> (M.Msg -> IO ()) -> IO SID
+subscribe client subject callback = subscribe' False client subject callback
+
+unsubscribe :: Client -> SID -> IO ()
+unsubscribe client sid = do
+  atomically $ modifyTVar' (routes client) (delete sid)
+  let unsub = Unsub.Unsub {
+    Unsub.sid = sid,
+    Unsub.maxMsg = Nothing
+  }
+
+  atomically $ writeTBQueue (queue client) (QueueItem unsub)
 
 ping :: Client -> IO () -> IO ()
 ping client action = do

@@ -21,7 +21,7 @@ versions = ["latest", "2.9.8", "2.9.6"]
 
 sys = parallel $ do
   forM_ versions $ \version ->
-    describe (printf "client 2 (nats:%s)" version) $ do
+    describe (printf "client (nats:%s)" version) $ do
       around (withNATSConnection version) $ do
         it "PING results in PONG" $ \(_, host, port) -> do
           socket <- defaultConn host port
@@ -38,7 +38,7 @@ sys = parallel $ do
           wg <- newWaitGroup 1
           assertClient <- newClient socket
           subscribe assertClient topic $ \msg -> do
-            -- TODO: unsubscribe assertClient (sid msg)
+            unsubscribe assertClient (sid msg)
             putMVar lock msg
             putMVar sidBox (sid msg)
             done wg
@@ -55,6 +55,7 @@ sys = parallel $ do
           remoteClient <- newClient socket
           subscribe remoteClient topic $ \msg -> do
             publish remoteClient (fromJust . replyTo $ msg) [pubWithPayload "WORLD"]
+            unsubscribe remoteClient (sid msg)
           socket' <- defaultConn host port
           promptClient <- newClient socket'
           wg <- newWaitGroup 1
