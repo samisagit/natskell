@@ -7,38 +7,9 @@ permissions:
   contents: read
 
 jobs:
-  lint:
-    name: lint
+  check:
+    name: check
     runs-on: self-hosted
     steps:
     - uses: actions/checkout@v4
-    - run: nix run .#lint
-  cabal:
-    name: cabal_check
-    runs-on: self-hosted
-    steps:
-    - uses: actions/checkout@v4
-    - run: nix run .#cabal-check
-  stack:
-    name: stack_test
-    runs-on: self-hosted
-    continue-on-error: ${{ matrix.experimental }}
-    strategy:
-      fail-fast: true
-      matrix:
-        include:
-          - resolver: lts-20.26 # latest version with valid docker client
-            experimental: false
-              #          - resolver: lts-22.27 # latest resolver on Nix input ATOW
-              #            experimental: true
-              #          - resolver: nightly
-              #            experimental: true
-    steps:
-    - uses: actions/checkout@v4
-    - run: RESOLVER=${{matrix.resolver}} nix run .#stack-test
-  cabal-test:
-    name: cabal_test
-    runs-on: self-hosted
-    steps:
-    - uses: actions/checkout@v4
-    - run: nix run .#cabal-test
+    - run: nix flake check
