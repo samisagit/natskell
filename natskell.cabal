@@ -151,21 +151,25 @@ test-suite fuzz-test
     ParserSpec
     ValidatorsSpec
 
---test-suite system-test
---  import:         shared
---  type:                 exitcode-stdio-1.0
---  hs-source-dirs:       test/System
---  main-is:              Spec.hs
---  build-depends:   
---    natskell,
---    test-common,
---    hspec,
---    bytestring,
---    text,
---    docker,
---    HTTP,
---    conduit-extra
---
---  other-modules:
---    NatsWrappers
---    ClientSpec
+test-suite system-test
+  import: shared
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test/System
+  main-is: Spec.hs
+  other-modules:
+    ClientSpec
+
+  if flag(integration)
+    buildable: True
+    build-depends:
+      natskell,
+      test-common,
+      hspec,
+      testcontainers
+  else
+    buildable: False
+
+flag integration
+  description: Enable integration tests
+  manual: True
+  default: False

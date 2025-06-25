@@ -15,11 +15,10 @@
         };
         hsPkgs = pkgs.haskellPackages;
 
-        src = builtins.path { path = ./.; name = "natskell-src"; };
-
+        src = ./.;
         drv = hsPkgs.callCabal2nix "natskell" src {};
 
-        testEnv = hsPkgs.shellFor {
+        buildEnv = hsPkgs.shellFor {
           packages = p: [ drv ];
           nativeBuildInputs = [
             hsPkgs.cabal-install
@@ -27,14 +26,29 @@
             hsPkgs.hspec-discover
             hsPkgs.stylish-haskell
             hsPkgs.hlint
-            pkgs.pkg-config
-            pkgs.zlib.dev
+          ];
+        };
+
+        devEnv = hsPkgs.shellFor {
+          packages = p: [ drv ];
+          nativeBuildInputs = [
+            hsPkgs.cabal-install
+            hsPkgs.ghc
+            hsPkgs.hspec-discover
+            hsPkgs.stylish-haskell
+            hsPkgs.hlint
+            #hsPkgs.hls
+	    pkgs.docker
+	    pkgs.pkg-config
+	    pkgs.zlib.dev
+    	    pkgs.nodejs_22 # because copilot
           ];
         };
 
         withCabalEnv = cmd: ''
-          # don't allow cabal to attempt writes in a sandboxed environment
+          # don't allow cabal to resolve remote packages
           export CABAL_CONFIG=/dev/null
+          # don't allow cabal to attempt writes in a sandboxed environment
           export HOME=$TMPDIR
           export XDG_CONFIG_HOME=$TMPDIR
 
@@ -48,34 +62,45 @@
           touch $out
         '';
 
-        testNames = [ "unit-test" "fuzz-test" ];
+        unitTest = pkgs.runCommand "unit-test" {
+          inherit (buildEnv) buildInputs nativeBuildInputs;
+        } (withCabalEnv ''cabal v2-test natskell:test:unit-test --only'');
 
-        testDerivations = pkgs.lib.genAttrs testNames (name:
-          pkgs.runCommand name {
-            inherit (testEnv) buildInputs nativeBuildInputs;
-          } (withCabalEnv ''cabal v2-test natskell:test:${name} --only'')
-        );
+        fuzzTest = pkgs.runCommand "fuzz-test" {
+          inherit (buildEnv) buildInputs nativeBuildInputs;
+        } (withCabalEnv ''cabal v2-test natskell:test:fuzz-test --only'');
 
         cabalCheck = pkgs.runCommand "cabal-check" {
-          inherit (testEnv) buildInputs nativeBuildInputs;
+          inherit (buildEnv) buildInputs nativeBuildInputs;
         } (withCabalEnv "cabal check");
 
         lintCheck = pkgs.runCommand "lint-check" {
-          inherit (testEnv) buildInputs nativeBuildInputs;
+          inherit (buildEnv) buildInputs nativeBuildInputs;
         } (withCabalEnv "find . -name \"*.hs\" -print0 | xargs -0 hlint");
 
         fmtCheck = pkgs.runCommand "fmt-check" {
-          inherit (testEnv) buildInputs nativeBuildInputs;
+          inherit (buildEnv) buildInputs nativeBuildInputs;
         } (withCabalEnv "stylish-haskell -r -c stylish.yaml .");
 
+	sdist = pkgs.runCommand "sdist" {
+          inherit (buildEnv) buildInputs nativeBuildInputs;
+        } (withCabalEnv ''
+          cabal sdist
+          mkdir -p $out
+          cp -v dist-newstyle/sdist/*.tar.gz $out/
+        '');
+
       in {
-        packages.default = drv;
+        packages.default = sdist;
+
+	devShells.default = devEnv;
+
         checks = {
           cabal-check = cabalCheck;
-          unit-test = testDerivations."unit-test";
-          fuzz-test = testDerivations."fuzz-test";
-	  lint-check = lintCheck;
-	  fmt-check = fmtCheck;
+          unit-test = unitTest;
+          fuzz-test = fuzzTest;
+          lint-check = lintCheck;
+          fmt-check = fmtCheck;
         };
       });
 }

@@ -13,3 +13,16 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - run: nix flake check
+  system-test:
+    name: system-test
+    runs-on: self-hosted
+    steps:
+    - uses: actions/checkout@v4
+    - run: nix develop --command bash -c "cabal update && cabal v2-test natskell:test:system-test --only -f+integration"
+  build:
+    name: build
+    needs: [check, system-test]
+    runs-on: self-hosted
+    steps:
+    - uses: actions/checkout@v4
+    - run: nix build
