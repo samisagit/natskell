@@ -75,3 +75,4 @@ sys = parallel $ do
         wg <- newWaitGroup 1
         publish promptClient topic [pubWithReplyCallback (\_ -> done wg), pubWithPayload "HELLO"]
         wait wg
+

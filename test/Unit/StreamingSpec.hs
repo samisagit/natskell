@@ -17,6 +17,14 @@ import           Data.ByteString
     )
 import           Data.Char              (chr)
 import           Data.Word8             (isUpper)
+import           GHC.IO.Handle
+    ( BufferMode (NoBuffering)
+    , Handle
+    , hClose
+    , hSetBuffering
+    )
+import           GHC.IO.IOMode
+import           Network.Socket
 import           Pipeline.Streaming
 import           Prelude                hiding
     ( head
@@ -25,20 +33,7 @@ import           Prelude                hiding
     , replicate
     , tail
     )
-import           System.IO
-    ( Handle
-    , SeekMode (AbsoluteSeek)
-    , hClose
-    , hSeek
-    , hTell
-    , openBinaryTempFile
-    )
 import           Test.Hspec
-
--- DISCLAIMER: These tests use a temp file to simulate a socket, which means when the end of the file is reached we get EOF.
--- This causes behaviour most similar to a socket closing from the server end, which wouldn't happen in the happy path of a real scenario.
--- The conduit code is written to handle this case, but it means in the context of the test there is a lot of polling going on when there
--- is no more content to consume
 
 instance SelfHealer ByteString String where
   heal bs _  = (tail bs, OK)
@@ -47,30 +42,36 @@ spec :: Spec
 spec = do
   describe "Streaming" $ do
       it "reads from handle" $ do
-        (handle, _) <- byteStringToTempHandle "Hello, World"
+        (server, client) <- makeSocketPair
         result <- newTVarIO "" :: IO (TVar ByteString)
         let parser bs = Right (pack [head bs], tail bs) :: Either String (ByteString, ByteString)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
-        forkIO . runPipeline handle parser $ sink
+        forkIO . runPipeline client parser $ sink
+        hPut server "Hello, World"
         atomically $ assertTVarWithRetry result "Hello, World"
-        hClose handle
+        hClose server
+        hClose client
       it "continues reading from the handle after reaching end" $ do
-        (handle, _) <- byteStringToTempHandle "Hello, World"
+        (server, client) <- makeSocketPair
         result <- newTVarIO "" :: IO (TVar ByteString)
         let parser bs = Right (pack [head bs], tail bs) :: Either String (ByteString, ByteString)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
-        forkIO . runPipeline handle parser $ sink
+        forkIO . runPipeline client parser $ sink
+        hPut server "Hello, World"
         atomically $ assertTVarWithRetry result "Hello, World"
-        writeToTestHandle "Hello, again" handle
+        hPut server "Hello, again"
         atomically $ assertTVarWithRetry result "Hello, WorldHello, again"
-        hClose handle
+        hClose server
+        hClose client
       it "applies the naive parser healing" $ do
-        (handle, _) <- byteStringToTempHandle "HELLO WORLD hello, world"
+        (server, client) <- makeSocketPair
         result <- newTVarIO "" :: IO (TVar ByteString)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
-        forkIO . runPipeline handle testParserExcludingUpper $ sink
+        forkIO . runPipeline client testParserExcludingUpper $ sink
+        hPut server "HELLO WORLD hello, world"
         atomically $ assertTVarWithRetry result "  hello, world"
-        hClose handle
+        hClose server
+        hClose client
 
 assertTVarWithRetry :: Eq a => TVar a -> a -> STM ()
 assertTVarWithRetry tvar expected = do
@@ -80,15 +81,25 @@ assertTVarWithRetry tvar expected = do
 testParserExcludingUpper :: ByteString -> Either String (ByteString, ByteString)
 testParserExcludingUpper bs = case isUpper . head $ bs of False -> Right (pack [head bs], tail bs) ; True -> Left ("upper case text not allowed: found " ++ [chr .fromIntegral . head $ bs])
 
-byteStringToTempHandle :: ByteString -> IO (Handle, FilePath)
-byteStringToTempHandle bs = do
-  (fp, handle) <- openBinaryTempFile "/tmp" "tempfile"
-  writeToTestHandle bs handle
-  return (handle, fp)
+makeSocketPair :: IO (Handle, Handle)
+makeSocketPair = do
+  serverSock <- socket AF_INET Stream defaultProtocol
+  setSocketOption serverSock ReuseAddr 1
+  bind serverSock (SockAddrInet 0 (tupleToHostAddress (127,0,0,1)))
+  listen serverSock 1
+  SockAddrInet port _ <- getSocketName serverSock
 
-writeToTestHandle :: ByteString -> Handle -> IO ()
-writeToTestHandle bs handle = do
-  pos <- hTell handle
-  hPut handle bs
-  hSeek handle AbsoluteSeek pos
+  -- initiate client connection
+  clientSock <- socket AF_INET Stream defaultProtocol
+  connect clientSock (SockAddrInet port (tupleToHostAddress (127,0,0,1)))
 
+  -- accept connection from server side
+  (serverConn, _) <- accept serverSock
+
+  -- convert both sides to handles
+  serverHandle <- socketToHandle serverConn ReadWriteMode
+  clientHandle <- socketToHandle clientSock ReadWriteMode
+  hSetBuffering serverHandle NoBuffering
+  hSetBuffering clientHandle NoBuffering
+
+  return (serverHandle, clientHandle)

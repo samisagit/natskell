@@ -100,11 +100,11 @@ library natskell-internal
 library test-common
     import:         shared
     build-depends:
-       stm
+      stm
     exposed-modules:
-       WaitGroup
+      WaitGroup
     hs-source-dirs:
-       internal/Lib
+      internal/Lib
 
 test-suite unit-test
   import:         shared
@@ -115,6 +115,7 @@ test-suite unit-test
     natskell-internal,
     hspec,
     bytestring,
+    network,
     word8,
     aeson,
     stm,

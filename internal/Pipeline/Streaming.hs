@@ -45,6 +45,7 @@ handleSource handle = loop handle
       result <- liftIO . try $ hGetSome handle 4096
       case result of
         Left (e :: IOException) -> do
+          liftIO . putStrLn $ ("Error reading from handle: " ++ show e)
           liftIO $ threadDelay 1000000
           loop handle
         Right chunk ->
