@@ -18,6 +18,15 @@
         src = ./.;
         drv = hsPkgs.callCabal2nix "natskell" src {};
 
+        patched = pkgs.haskell.lib.overrideCabal drv (old: {
+          # This ensures all the test deps are in the nix store, but aren't run (as system tests are not supported in this environment)
+          configureFlags = old.configureFlags or [] ++ [ "--enable-tests" ];
+          doCheck = true;
+          checkPhase = ''
+            echo "Skipping test execution as system tests are not supported in this environment"
+          '';
+        });
+
         buildEnv = hsPkgs.shellFor {
           packages = p: [ drv ];
           nativeBuildInputs = [
@@ -30,18 +39,18 @@
         };
 
         devEnv = hsPkgs.shellFor {
-          packages = p: [ drv ];
+          packages = p: [ patched ];
           nativeBuildInputs = [
             hsPkgs.cabal-install
             hsPkgs.ghc
             hsPkgs.hspec-discover
             hsPkgs.stylish-haskell
             hsPkgs.hlint
-            #hsPkgs.hls
-	    pkgs.docker
-	    pkgs.pkg-config
-	    pkgs.zlib.dev
-    	    pkgs.nodejs_22 # because copilot
+            hsPkgs.haskell-language-server
+            pkgs.docker
+            pkgs.pkg-config
+            pkgs.zlib.dev
+            pkgs.nodejs_22 # because copilot
           ];
         };
 
@@ -82,7 +91,7 @@
           inherit (buildEnv) buildInputs nativeBuildInputs;
         } (withCabalEnv "stylish-haskell -r -c stylish.yaml .");
 
-	sdist = pkgs.runCommand "sdist" {
+        sdist = pkgs.runCommand "sdist" {
           inherit (buildEnv) buildInputs nativeBuildInputs;
         } (withCabalEnv ''
           cabal sdist
@@ -93,7 +102,7 @@
       in {
         packages.default = sdist;
 
-	devShells.default = devEnv;
+        devShells.default = devEnv;
 
         checks = {
           cabal-check = cabalCheck;

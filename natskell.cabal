@@ -112,7 +112,6 @@ test-suite unit-test
   hs-source-dirs:   test/Unit
   main-is:          Spec.hs
   build-depends:   
-    natskell,
     natskell-internal,
     hspec,
     bytestring,
@@ -158,18 +157,8 @@ test-suite system-test
   main-is: Spec.hs
   other-modules:
     ClientSpec
-
-  if flag(integration)
-    buildable: True
-    build-depends:
-      natskell,
-      test-common,
-      hspec,
-      testcontainers
-  else
-    buildable: False
-
-flag integration
-  description: Enable integration tests
-  manual: True
-  default: False
+  build-depends:
+    natskell,
+    test-common,
+    hspec,
+    testcontainers
