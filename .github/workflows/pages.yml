@@ -22,11 +22,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  document:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Checkout
         uses: actions/checkout@v4
