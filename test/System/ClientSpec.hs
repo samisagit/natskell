@@ -62,7 +62,7 @@ sys = parallel $ do
         wait wg
         msg <- takeMVar lock
         sid' <- takeMVar sidBox
-        msg `shouldBe` Msg topic sid' Nothing (Just payload) Nothing
+        msg `shouldBe` MsgView topic sid' Nothing (Just payload) Nothing
       it "replies are routed correctly" $ \(Endpoints natsHost natsPort) -> do
         let topic = "REQ.TOPIC"
         socket <- defaultConn natsHost natsPort
