@@ -1,127 +1,78 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module ClientSpec (spec) where
-
-import           API
-import           CallbackAssertions
-import           Control.Concurrent
-import           Control.Concurrent.STM
-import           Control.Exception
-import           Control.Monad
-import qualified Data.Text              as Text
-import           Debug.Trace
-import qualified Docker.Client          as DC
-import           NatsWrappers
+import           Client
+import           Data.Maybe
+import           GHC.MVar
 import           Test.Hspec
-import           Text.Printf
+import qualified TestContainers.Hspec as TC
+import           WaitGroup
 
+data Endpoints = Endpoints
+                   { natsHost :: String
+                   , natsPort :: Int
+                   }
+
+container :: TC.TestContainer Endpoints
+container = do
+    -- Launch the container image.
+  natsContainer <- TC.run $ TC.containerRequest (TC.fromTag "nats:latest")
+    -- Expose the port 4222 from within the container. The respective port
+    -- on the host machine can be looked up using `containerPort` (see below).
+    TC.& TC.setExpose [ 4222 ]
+    -- Wait until the container is ready to accept requests. `run` blocks until
+    -- readiness can be established.
+    TC.& TC.setWaitingFor (TC.waitUntilMappedPortReachable 4222)
+  pure $ Endpoints
+    {
+      natsHost = "0.0.0.0"
+    , natsPort =
+        TC.containerPort natsContainer 4222
+    }
 
 spec :: Spec
 spec = do
   sys
 
-versions = ["latest", "2.9.8", "2.9.6"]
-
 sys = parallel $ do
-  forM_ versions $ \version ->
-    describe (printf "client (nats:%s)" version) $ do
-      around (withNATSConnection version) $ do
-        it "receives others messages" $ \(_, host, port) -> do
-          (c1, asyncWait1) <- testClient host port
-          (c2, asyncWait2) <- testClient host port
-          let subj = "foo"
-          let payload = "bar"
+  describe "client" $ do
+    around (TC.withContainers container) $ do
+      it "PING results in PONG" $ \(Endpoints natsHost natsPort) -> do
+        socket <- defaultConn natsHost natsPort
+        c <- newClient socket
+        wg <- newWaitGroup 1
+        ping c $ done wg
+        wait wg
+      it "messages are sent and received" $ \(Endpoints natsHost natsPort) -> do
+        let topic = "SOME.TOPIC"
+        let payload = "HELLO"
+        socket <- defaultConn natsHost natsPort
+        lock <- newEmptyMVar
+        sidBox <- newEmptyMVar
+        wg <- newWaitGroup 1
+        assertClient <- newClient socket
+        subscribe assertClient topic $ \msg -> do
+          unsubscribe assertClient (sid msg)
+          putMVar lock msg
+          putMVar sidBox (sid msg)
+          done wg
+        socket' <- defaultConn natsHost natsPort
+        promptClient <- newClient socket'
+        publish promptClient topic [pubWithPayload payload]
+        wait wg
+        msg <- takeMVar lock
+        sid' <- takeMVar sidBox
+        msg `shouldBe` MsgView topic sid' Nothing (Just payload) Nothing
+      it "replies are routed correctly" $ \(Endpoints natsHost natsPort) -> do
+        let topic = "REQ.TOPIC"
+        socket <- defaultConn natsHost natsPort
+        remoteClient <- newClient socket
+        subscribe remoteClient topic $ \msg -> do
+          publish remoteClient (fromJust . replyTo $ msg) [pubWithPayload "WORLD"]
+          unsubscribe remoteClient (sid msg)
+        socket' <- defaultConn natsHost natsPort
+        promptClient <- newClient socket'
+        wg <- newWaitGroup 1
+        publish promptClient topic [pubWithReplyCallback (\_ -> done wg), pubWithPayload "HELLO"]
+        wait wg
 
-          (lockAssure, assertAssure) <- asyncAssert [
-            subjectAssertion subj,
-            payloadAssertion $ Just payload,
-            headerAssertion Nothing
-            ]
-          sid <- sub c1 [
-            subWithSubject subj,
-            subWithCallback assertAssure
-            ]
-          takeMVar asyncWait1
-
-          pub c2 [
-            pubWithSubject subj,
-            pubWithPayload payload
-            ]
-          takeMVar asyncWait2
-          join . atomically $ takeTMVar lockAssure
-          unsub c1 sid
-          takeMVar asyncWait1
-
-        it "subscribes to its reply to" $ \(_, host, port) -> do
-          (c1, asyncWait1) <- testClient host port
-          (c2, asyncWait2) <- testClient host port
-          let subj = "foo"
-          let payload = "bar"
-
-          -- when a message comes to foo with a replyTo, send a message to that subject
-          sid <- sub c1 [
-           subWithSubject subj,
-           subWithCallback (replyToReplyTo c2)
-           ]
-          takeMVar asyncWait1
-          takeMVar asyncWait1
-
-          (lockAssure, assertAssure) <- asyncAssert [
-            payloadAssertion $ Just payload,
-            headerAssertion Nothing
-            ]
-          pub c1 [
-            pubWithSubject subj,
-            pubWithPayload payload,
-            pubWithReplyCallback assertAssure
-            ]
-          takeMVar asyncWait1
-          takeMVar asyncWait2
-
-          join . atomically $ takeTMVar lockAssure
-          unsub c1 sid
-          takeMVar asyncWait1
-
-        it "receives others messages with headers" $ \(_, host, port) -> do
-          (c1, asyncWait1) <- testClient host port
-          (c2, asyncWait2) <- testClient host port
-
-          let subj = "EXPECT.HEADERS"
-          let payload = "bar"
-          let headers = [("foo", "bar"), ("more", "headers")]
-          (lockAssure, assertAssure) <- asyncAssert [
-            payloadAssertion $ Just payload,
-            subjectAssertion subj,
-            headerAssertion $ Just headers
-            ]
-          sid <- sub c1 [
-            subWithSubject subj,
-            subWithCallback assertAssure
-            ]
-          takeMVar asyncWait1
-
-          pub c2 [
-            pubWithSubject subj,
-            pubWithPayload payload,
-            pubWithHeaders headers
-            ]
-          takeMVar asyncWait2
-          join . atomically $ takeTMVar lockAssure
-          unsub c1 sid
-          takeMVar asyncWait1
-
-replyToReplyTo client msg = do
-  let reply = replyTo msg
-  case reply of
-    Just r -> pub client [pubWithSubject r, pubWithPayload "bar"]
-    Nothing -> trace "expected replyTo field" error $ "expected replyTo in message " ++ show msg
-
-testClient host port = do
-  asyncWait <- newEmptyMVar
-  nats <- connect host port
-  c <- newClient nats [withAckCallback (putMVar asyncWait ())]
-  handShake c
-  return (c, asyncWait)
-
-withNATSConnection :: Text.Text -> ((DC.ContainerID, String, Int) -> IO ()) -> IO ()
-withNATSConnection tag = bracket (startNATS tag) stopNATS

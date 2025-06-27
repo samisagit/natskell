@@ -22,156 +22,144 @@ maintainer:             sam@whiteteam.co.uk
 category:               Web
 
 source-repository head
-    type:               git
-    location:           https://github.com/samisagit/natskell.git
+  type:               git
+  location:           https://github.com/samisagit/natskell.git
 
 common shared
-    default-language:     Haskell2010
-    build-depends:
-       base >= 4.7 && < 4.19,
-    ghc-options:
-       -haddock -W -Wunused-packages
+  default-language:     Haskell2010
+  build-depends:
+    base  >= 4.14 && < 4.20,
+  ghc-options:
+    -haddock -W -Wunused-packages
+  pkgconfig-depends: zlib
 
 library
-    import:         shared
-    build-depends:
-       natskell-internal,
-       bytestring ^>= 0.11.3.1,
-       uuid ^>= 1.3.15,
-       hashable ^>= 1.4.2.0,
-       text ^>= 1.2.5.0,
+  import:         shared
+  build-depends:
+    natskell-internal,
+    -- TODO: check these are the highest possible values
+    bytestring >= 0.10,
+    containers < 0.7,
+    hashable  < 1.5,
+    stm  < 2.6,
+    text  >= 1.2 && < 2.2,
+    network  < 3.3,
+    bytestring  >= 0.10 && < 0.13,
+    network-simple  < 0.5,
+    random  < 1.3,
+    uuid  < 1.4,
 
-    build-tool-depends: hspec-discover:hspec-discover
+  exposed-modules:
+    Client
 
-    exposed-modules:
-      API
+  other-modules:
+     Types
+     Sid
 
-    other-modules:
-       Sub
-       Pub
-       Unsub
-       Types
-       Sid
-       Client
-
-    hs-source-dirs:
+  hs-source-dirs:
        client
 
 library natskell-internal
-    import:         shared
-    build-depends:
-       bytestring ^>= 0.11.3.1,
-       word8 ^>= 0.1.3,
-       aeson ^>= 2.0.3.0,
-       network-simple ^>= 0.4.5,
-       stm ^>= 2.5.0.2,
-       text ^>= 1.2.5.0,
-       containers ^>= 0.6.5.1
+  import:         shared
+  build-depends:
+    conduit < 1.4,
+    bytestring,
+    aeson  < 2.3,
+    word8  < 0.2,
+    stm,
+    text
 
-    exposed-modules:
-       Lib.Parser
-       Lib.Builder
-       Parsers.Parsers
-       Transformers.Transformers
-       Validators.Validators
-       Types.Msg
-       Types.Ping
-       Types.Pong
-       Types.Ok
-       Types.Err
-       Types.Info
-       Types.Pub
-       Types.Connect
-       Types.Sub
-       Types.Unsub
-       Nats.Nats
-       Nats.NatsProper
+  exposed-modules:
+    Lib.Parser
+    Parsers.Parsers
+    Transformers.Transformers
+    Validators.Validators
+    Types.Msg
+    Types.Ping
+    Types.Pong
+    Types.Ok
+    Types.Err
+    Types.Info
+    Types.Pub
+    Types.Connect
+    Types.Sub
+    Types.Unsub
+    WaitGroup
+    Pipeline.Broadcasting
+    Pipeline.Streaming
 
-    hs-source-dirs:
-       internal
-       internal/Types
-       internal/Parsers
-       internal/Transformers
-       internal/Validators
-       internal/Lib
-       internal/Nats
+  hs-source-dirs:
+    internal
+    internal/Types
+    internal/Parsers
+    internal/Transformers
+    internal/Validators
+    internal/Lib
+    internal/Pipeline
 
 library test-common
     import:         shared
     build-depends:
-       natskell,
-       bytestring ^>= 0.11.3.1,
-       hspec ^>= 2.9.7,
-       stm ^>= 2.5.0.2
+      stm
     exposed-modules:
-       CallbackAssertions
+      WaitGroup
     hs-source-dirs:
-       test/Common
+      internal/Lib
 
 test-suite unit-test
-    import:         shared
-    type:             exitcode-stdio-1.0
-    hs-source-dirs:   test/Unit
-    main-is:          Spec.hs
-    build-depends:   
-       natskell,
-       natskell-internal,
-       test-common,
-       hspec ^>= 2.9.7,
-       bytestring ^>= 0.11.3.1,
-       word8 ^>= 0.1.3,
-       aeson ^>= 2.0.3.0,
-       stm ^>= 2.5.0.2,
-       text ^>= 1.2.5.0
+  import:         shared
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test/Unit
+  main-is:          Spec.hs
+  build-depends:   
+    natskell-internal,
+    hspec,
+    bytestring,
+    network,
+    word8,
+    aeson,
+    stm,
+    text
 
-    other-modules:
-       ParserSpec
-       MsgSpec
-       PingSpec
-       PongSpec
-       OkSpec
-       ErrSpec
-       InfoSpec
-       PubSpec
-       ConnectSpec
-       SubSpec
-       UnsubSpec
-       ClientLoadSpec
-       ClientSpec
-       Fixtures
-       Harness
+  other-modules:
+    ParserSpec
+    MsgSpec
+    PingSpec
+    PongSpec
+    OkSpec
+    ErrSpec
+    InfoSpec
+    PubSpec
+    ConnectSpec
+    SubSpec
+    UnsubSpec
+    Fixtures
+    StreamingSpec
 
 test-suite fuzz-test
-    import:         shared
-    type:                 exitcode-stdio-1.0
-    hs-source-dirs:       test/Fuzz
-    main-is:              Spec.hs
-    build-depends:    
-       natskell-internal,
-       hspec ^>= 2.9.7,
-       bytestring ^>= 0.11.3.1,
-       word8 ^>= 0.1.3,
-       QuickCheck ^>= 2.14.2
-    other-modules:
-       ParserSpec
-       ValidatorsSpec
+  import:         shared
+  type:                 exitcode-stdio-1.0
+  hs-source-dirs:       test/Fuzz
+  main-is:              Spec.hs
+  build-depends:    
+    natskell-internal,
+    hspec,
+    bytestring,
+    word8,
+    QuickCheck
+  other-modules:
+    ParserSpec
+    ValidatorsSpec
 
 test-suite system-test
-    import:         shared
-    type:                 exitcode-stdio-1.0
-    hs-source-dirs:       test/System
-    main-is:              Spec.hs
-    build-depends:   
-       natskell,
-       test-common,
-       hspec ^>= 2.9.7,
-       bytestring ^>= 0.11.3.1,
-       text ^>= 1.2.5.0,
-       docker ^>= 0.7.0.1,
-       HTTP ^>= 4000.4.1,
-       stm ^>= 2.5.0.2,
-       conduit-extra ^>= 1.3.6
-
-    other-modules:
-       NatsWrappers
-       ClientSpec
+  import: shared
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test/System
+  main-is: Spec.hs
+  other-modules:
+    ClientSpec
+  build-depends:
+    natskell,
+    test-common,
+    hspec,
+    testcontainers

@@ -7,10 +7,13 @@ import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as C
 import qualified Data.Word8            as W8
 
-data ParserErr = ParserErr {message :: String, offset :: Int}
+data ParserErr = ParserErr
+                   { message :: String
+                   , offset  :: Int
+                   }
   deriving (Eq, Show)
 
-newtype Parser a = Parser {runParser :: BS.ByteString -> Either ParserErr (a, BS.ByteString) }
+newtype Parser a = Parser { runParser :: BS.ByteString -> Either ParserErr (a, BS.ByteString) }
 
 instance Functor Parser where
   fmap f (Parser runner) = Parser $ \bs -> do
@@ -63,7 +66,6 @@ char c = Parser charP
       | BS.head bs == c = Right (c, BS.tail bs)
       | otherwise = Left (ParserErr (errString bs) (BS.length bs))
     errString bs = w8sToString [BS.head bs] ++ " does not match " ++ w8sToString [c] ++ " in " ++ C.unpack bs
-
 
 charIn :: [W8.Word8] -> Parser W8.Word8
 charIn opts = Parser charP
