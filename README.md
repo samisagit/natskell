@@ -21,6 +21,8 @@ Please make sure to add tests.
 
 Please make sure all commits are signed.
 
+Documentation is built on merge to main and can be found at https://samisagit.github.io/natskell/
+
 ### Nix
 
 This project has a nix flake, which sets up a useful dev shell. To use it run `nix develop`, which will install the project system depenencies. 
