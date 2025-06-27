@@ -99,8 +99,18 @@
           cp -v dist-newstyle/sdist/*.tar.gz $out/
         '');
 
+        haddock = pkgs.runCommand "haddock" {
+          inherit (buildEnv) buildInputs nativeBuildInputs;
+        } (withCabalEnv ''
+          cabal haddock client/Client.hs
+          mkdir -p $out
+          cp -vr $(dirname $(find dist-newstyle -type f -path "*/doc/html/*/index.html" | grep '/doc/html/natskell/index.html$')) $out/
+        '');
+
       in {
-        packages.default = sdist;
+        packages.sdist = sdist;
+        packages.docs = haddock;
+	packages.default = patched;
 
         devShells.default = devEnv;
 
