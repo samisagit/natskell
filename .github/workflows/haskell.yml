@@ -9,20 +9,29 @@ permissions:
 jobs:
   check:
     name: check
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - uses: cachix/install-nix-action@v31
+      with:
+        github_access_token: ${{ secrets.GITHUB_TOKEN }}
     - run: nix flake check
   system-test:
     name: system-test
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - run: nix develop --command bash -c "cabal v2-test natskell:test:system-test"
+    - uses: cachix/install-nix-action@v31
+      with:
+        github_access_token: ${{ secrets.GITHUB_TOKEN }}
+    - run: nix develop --command bash -c "cabal test natskell:test:system-test -fimpure"
   build:
     name: build
     needs: [check, system-test]
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - uses: cachix/install-nix-action@v31
+      with:
+        github_access_token: ${{ secrets.GITHUB_TOKEN }}
     - run: nix build
