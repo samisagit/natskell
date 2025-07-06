@@ -156,26 +156,18 @@ flag impure
   manual: True
 
 test-suite system-test
-  type: exitcode-stdio-1.0
-  main-is: Spec.hs
+  import:         shared
   hs-source-dirs: test/System
-  import: shared
   build-depends:
-    -- this needs to be outside the flag conditional because it's needed at the plan stage
-    base
+    natskell,
+    test-common,
+    hspec,
+    testcontainers
   other-modules:
       ClientSpec
   if flag (impure)
-    buildable: True
-    build-depends:
-      natskell,
-      test-common,
-      hspec,
-      testcontainers
+    type: exitcode-stdio-1.0
+    main-is: Spec.hs
   else
-    buildable: False
-    build-depends:
-      natskell,
-      test-common,
-      hspec,
-      testcontainers
+    type: exitcode-stdio-1.0
+    main-is: Skip.hs
