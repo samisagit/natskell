@@ -151,15 +151,31 @@ test-suite fuzz-test
     ParserSpec
     ValidatorsSpec
 
+flag impure
+  default: False
+  manual: True
+
 test-suite system-test
-  import: shared
   type: exitcode-stdio-1.0
-  hs-source-dirs: test/System
   main-is: Spec.hs
-  other-modules:
-    ClientSpec
+  hs-source-dirs: test/System
+  import: shared
   build-depends:
-    natskell,
-    test-common,
-    hspec,
-    testcontainers
+    -- this needs to be outside the flag conditional because it's needed at the plan stage
+    base
+  other-modules:
+      ClientSpec
+  if flag (impure)
+    buildable: True
+    build-depends:
+      natskell,
+      test-common,
+      hspec,
+      testcontainers
+  else
+    buildable: False
+    build-depends:
+      natskell,
+      test-common,
+      hspec,
+      testcontainers

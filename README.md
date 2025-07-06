@@ -28,3 +28,7 @@ Documentation is built on merge to main and can be found at https://samisagit.gi
 This project has a nix flake, which sets up a useful dev shell. To use it run `nix develop`, which will install the project system depenencies. 
 
 There is a public cachix store at samisagit-natskell for this flake.
+
+You can run the pure tests with `nix flake check`.
+
+System tests need access to a NATS server, so you will need to run `nix develop --command bash -c "cabal test natskell:test:system-test"` to run them.
