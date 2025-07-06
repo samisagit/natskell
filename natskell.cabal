@@ -151,15 +151,23 @@ test-suite fuzz-test
     ParserSpec
     ValidatorsSpec
 
+flag impure
+  default: False
+  manual: True
+
 test-suite system-test
-  import: shared
-  type: exitcode-stdio-1.0
+  import:         shared
   hs-source-dirs: test/System
-  main-is: Spec.hs
-  other-modules:
-    ClientSpec
   build-depends:
     natskell,
     test-common,
     hspec,
     testcontainers
+  other-modules:
+      ClientSpec
+  if flag (impure)
+    type: exitcode-stdio-1.0
+    main-is: Spec.hs
+  else
+    type: exitcode-stdio-1.0
+    main-is: Skip.hs

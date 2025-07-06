@@ -18,15 +18,6 @@
         src = ./.;
         drv = hsPkgs.callCabal2nix "natskell" src {};
 
-        patched = pkgs.haskell.lib.overrideCabal drv (old: {
-          # This ensures all the test deps are in the nix store, but aren't run (as system tests are not supported in this environment)
-          configureFlags = old.configureFlags or [] ++ [ "--enable-tests" ];
-          doCheck = true;
-          checkPhase = ''
-            echo "Skipping test execution as system tests are not supported in this environment"
-          '';
-        });
-
         buildEnv = hsPkgs.shellFor {
           packages = p: [ drv ];
           nativeBuildInputs = [
@@ -39,7 +30,7 @@
         };
 
         devEnv = hsPkgs.shellFor {
-          packages = p: [ patched ];
+          packages = p: [ drv ];
           nativeBuildInputs = [
             hsPkgs.cabal-install
             hsPkgs.ghc
@@ -50,7 +41,6 @@
             pkgs.docker
             pkgs.pkg-config
             pkgs.zlib.dev
-            pkgs.nodejs_22 # because copilot
           ];
         };
 
@@ -73,11 +63,15 @@
 
         unitTest = pkgs.runCommand "unit-test" {
           inherit (buildEnv) buildInputs nativeBuildInputs;
-        } (withCabalEnv ''cabal v2-test natskell:test:unit-test --only'');
+        } (withCabalEnv ''cabal test natskell:test:unit-test --only --test-show-details=failures'');
 
         fuzzTest = pkgs.runCommand "fuzz-test" {
           inherit (buildEnv) buildInputs nativeBuildInputs;
-        } (withCabalEnv ''cabal v2-test natskell:test:fuzz-test --only'');
+        } (withCabalEnv ''cabal test natskell:test:fuzz-test --only --test-show-details=failures'');
+
+        sysTest = pkgs.runCommand "sys-test" {
+          inherit (devEnv) buildInputs nativeBuildInputs;
+        } (withCabalEnv ''cabal test natskell:test:system-test --only --test-show-details=direct -fimpure'');
 
         cabalCheck = pkgs.runCommand "cabal-check" {
           inherit (buildEnv) buildInputs nativeBuildInputs;
@@ -110,7 +104,8 @@
       in {
         packages.sdist = sdist;
         packages.docs = haddock;
-	packages.default = patched;
+	packages.default = drv;
+	packages.system-test = sysTest;
 
         devShells.default = devEnv;
 
