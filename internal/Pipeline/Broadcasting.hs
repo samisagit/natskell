@@ -5,21 +5,23 @@ module Pipeline.Broadcasting where
 import           Conduit
 import           Control.Concurrent.STM
 import qualified Data.ByteString           as BS
+import           Pipeline.Connection
 import           System.IO
-import           Transformers.Transformers (Transformer (transform))
+import           Transformers.Transformers
 
-data QueueItem = forall m. Transformer m => QueueItem m
-
-sourceQueue :: TBQueue QueueItem -> ConduitT () BS.ByteString IO ()
-sourceQueue q = loop
+sourceQueue :: Connection err result -> ConduitT () BS.ByteString IO ()
+sourceQueue conn = loop
   where
+    q = queue conn
     loop = do
       QueueItem msg <- liftIO . atomically $ readTBQueue q
       yield (transform msg)
       loop
 
-sinkHandleSafe :: Handle -> ConduitT BS.ByteString Void IO ()
-sinkHandleSafe h = awaitForever $ \bs -> liftIO $ BS.hPut h bs >> hFlush h
+sinkHandleSafe :: Connection err result -> ConduitT BS.ByteString Void IO ()
+sinkHandleSafe conn = do
+  awaitForever $ \bs -> liftIO $ BS.hPut (h conn) bs >> hFlush (h conn)
 
-runPipeline :: TBQueue QueueItem -> Handle -> IO ()
-runPipeline q h = runConduit $ sourceQueue q .| sinkHandleSafe h
+runPipeline :: Connection a b -> IO ()
+runPipeline conn = do
+  runConduit $ sourceQueue conn .| sinkHandleSafe conn

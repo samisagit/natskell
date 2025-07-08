@@ -7,15 +7,13 @@
 module Pipeline.Streaming where
 
 import           Conduit
-import           Control.Concurrent (threadDelay)
-import           Control.Exception  (IOException, try)
-import           Data.ByteString    (ByteString, append, hGetSome, null)
-import           Prelude            hiding (null)
-import           System.IO
-    ( BufferMode (NoBuffering)
-    , Handle
-    , hSetBuffering
-    )
+import           Control.Concurrent  (threadDelay)
+import           Control.Exception   (IOException, try)
+import           Data.ByteString     (ByteString, append, hGetSome, null)
+import           Pipeline.Connection
+import           Prelude             hiding (null)
+import           System.IO           (BufferMode (NoBuffering), hSetBuffering)
+
 data ParserState = OK
                  | MissingData -- Reached end of input, content valid so far
                  | OverflowingData -- Reached max message size, valid so far
@@ -26,41 +24,42 @@ data ParserState = OK
 class SelfHealer value err where
   heal :: value -> err -> (value, ParserState)
 
-runPipeline :: SelfHealer ByteString a
-  => Show a
-  => Handle                                   -- socket
-  -> (ByteString -> Either a (b, ByteString)) -- parser
-  -> (b -> IO ())                             -- router
+runPipeline :: SelfHealer ByteString err
+  => Show err
+  => Connection err result
   -> IO ()
-runPipeline handle parser router = do
-  hSetBuffering handle NoBuffering
-  runConduitRes $
-    handleSource handle .| streamParser parser .| ioSink router
+runPipeline c = do
+  hSetBuffering (h c) NoBuffering
+  runConduitRes $ handleSource c .| streamParser c .| ioSink c
 
 handleSource :: MonadIO m
-  => Handle -> ConduitT () ByteString m ()
-handleSource handle = loop handle
+  => Connection err result
+  -> ConduitT () ByteString m ()
+handleSource conn = loop handle
   where
-    loop handle = do
-      result <- liftIO . try $ hGetSome handle 4096
+    handle = h conn
+    loop h = do
+      result <- liftIO . try $ hGetSome h 4096
       case result of
         Left (e :: IOException) -> do
           liftIO . putStrLn $ ("Error reading from handle: " ++ show e)
           liftIO $ threadDelay 1000000
-          loop handle
+          loop h
         Right chunk ->
           if null chunk
             then do
               liftIO $ threadDelay 1000000
-              loop handle
-            else yield chunk >> loop handle
+              loop h
+            else yield chunk >> loop h
 
 streamParser :: SelfHealer ByteString err
   => Show err
   => MonadIO m
-  => (ByteString -> Either err (result, ByteString)) -> ConduitT ByteString result m ()
-streamParser parser = loop ""
+  => Connection err result
+  -> ConduitT ByteString result m ()
+streamParser conn = loop ""
   where
+    p = parser conn
     loop acc = do
       mbChunk <- await
       case mbChunk of
@@ -70,7 +69,7 @@ streamParser parser = loop ""
           handleChunk combined
     handleChunk "" = loop ""
     handleChunk bs = do
-      case parser bs of
+      case p bs of
         Left err -> do
           liftIO . putStrLn $ "Parser error: " ++ show err
           let (fixed, state) = heal bs err
@@ -80,9 +79,12 @@ streamParser parser = loop ""
           yield message
           handleChunk rest
 
-ioSink :: MonadIO m => (a -> IO ()) -> ConduitT a Void m ()
-ioSink action = loop
+ioSink :: MonadIO m
+  => Connection err result
+  -> ConduitT result Void m ()
+ioSink conn = loop
   where
+    action = router conn
     loop = do
       ma <- await
       case ma of

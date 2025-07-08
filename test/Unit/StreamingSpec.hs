@@ -25,6 +25,7 @@ import           GHC.IO.Handle
     )
 import           GHC.IO.IOMode
 import           Network.Socket
+import           Pipeline.Connection
 import           Pipeline.Streaming
 import           Prelude                hiding
     ( head
@@ -46,7 +47,10 @@ spec = do
         result <- newTVarIO "" :: IO (TVar ByteString)
         let parser bs = Right (pack [head bs], tail bs) :: Either String (ByteString, ByteString)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
-        forkIO . runPipeline client parser $ sink
+        state <- newTVarIO ""
+        q <- newTBQueueIO 1000
+        let conn = Connection client parser sink state q
+        forkIO . runPipeline $ conn
         hPut server "Hello, World"
         atomically $ assertTVarWithRetry result "Hello, World"
         hClose server
@@ -56,7 +60,10 @@ spec = do
         result <- newTVarIO "" :: IO (TVar ByteString)
         let parser bs = Right (pack [head bs], tail bs) :: Either String (ByteString, ByteString)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
-        forkIO . runPipeline client parser $ sink
+        state <- newTVarIO ""
+        q <- newTBQueueIO 1000
+        let conn = Connection client parser sink state q
+        forkIO . runPipeline $ conn
         hPut server "Hello, World"
         atomically $ assertTVarWithRetry result "Hello, World"
         hPut server "Hello, again"
@@ -67,7 +74,10 @@ spec = do
         (server, client) <- makeSocketPair
         result <- newTVarIO "" :: IO (TVar ByteString)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
-        forkIO . runPipeline client testParserExcludingUpper $ sink
+        state <- newTVarIO ""
+        q <- newTBQueueIO 1000
+        let conn = Connection client testParserExcludingUpper sink state q
+        forkIO . runPipeline $ conn
         hPut server "HELLO WORLD hello, world"
         atomically $ assertTVarWithRetry result "  hello, world"
         hClose server

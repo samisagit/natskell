@@ -27,6 +27,7 @@ import qualified Network.Simple.TCP        as TCP
 import qualified Network.Socket            as NS
 import           Parsers.Parsers
 import           Pipeline.Broadcasting     as B
+import qualified Pipeline.Connection       as C
 import           Pipeline.Streaming        as S
 import           Sid                       (nextSID)
 import           System.IO
@@ -46,7 +47,7 @@ import           WaitGroup
 
 -- | Client is used to iteract with the NATS server.
 data Client = Client'
-                { queue     :: TBQueue QueueItem
+                { queue     :: TBQueue C.QueueItem
                 , routes    :: TVar (Map Subject (M.Msg -> IO ()))
                 , pings     :: TVar [IO ()]
                 , randomGen :: TVar StdGen
@@ -106,10 +107,12 @@ newClient handle = do
   }
 
   infoWaiter <- newWaitGroup 1
-  void . forkIO . S.runPipeline handle genericParse $ sink client infoWaiter
+  state <- newTVarIO "" -- maybe create an initialisation in the internal lib
+  let conn = C.Connection handle genericParse (sink client infoWaiter) state pubQueue
+  void . forkIO . S.runPipeline $ conn
   wait infoWaiter
 
-  void . forkIO . B.runPipeline (queue client) $ handle
+  void . forkIO . B.runPipeline $ conn
 
   return client
 
@@ -165,7 +168,7 @@ publish client subject opts = do
     P.headers = headers
   }
 
-  atomically $ writeTBQueue (queue client) (QueueItem msg)
+  atomically $ writeTBQueue (queue client) (C.QueueItem msg)
 
 subscribe' :: Bool -> Client -> Subject -> (MsgView -> IO ()) -> IO SID
 subscribe' isReply client subject callback = do
@@ -184,7 +187,7 @@ subscribe' isReply client subject callback = do
     Sub.sid = sid
   }
 
-  atomically $ writeTBQueue (queue client) (QueueItem sub)
+  atomically $ writeTBQueue (queue client) (C.QueueItem sub)
 
   return sid
 
@@ -204,13 +207,13 @@ unsubscribe client sid = do
     Unsub.maxMsg = Nothing
   }
 
-  atomically $ writeTBQueue (queue client) (QueueItem unsub)
+  atomically $ writeTBQueue (queue client) (C.QueueItem unsub)
 
 -- | ping is used to send a ping message to the NATS server.
 ping :: Client -> IO () -> IO ()
 ping client action = do
   atomically $ modifyTVar' (pings client) (action :)
-  atomically $ writeTBQueue (queue client) (QueueItem Ping)
+  atomically $ writeTBQueue (queue client) (C.QueueItem Ping)
 
 applyPubOptions :: PubOptions -> [PubOptions -> PubOptions] -> PubOptions
 applyPubOptions = foldl (flip ($))
@@ -259,3 +262,4 @@ pong :: Handle -> IO ()
 pong handle = do
   BS.hPut handle $ transform Pong
   hFlush handle
+

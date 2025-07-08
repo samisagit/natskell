@@ -69,6 +69,7 @@
           inherit (buildEnv) buildInputs nativeBuildInputs;
         } (withCabalEnv ''cabal test natskell:test:fuzz-test --only --test-show-details=failures'');
 
+        # TODO: this doesn't work, the docker sock is missing
         sysTest = pkgs.runCommand "sys-test" {
           inherit (devEnv) buildInputs nativeBuildInputs;
         } (withCabalEnv ''cabal test natskell:test:system-test --only --test-show-details=direct -fimpure'');

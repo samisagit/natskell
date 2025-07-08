@@ -87,6 +87,7 @@ library natskell-internal
     WaitGroup
     Pipeline.Broadcasting
     Pipeline.Streaming
+    Pipeline.Connection
 
   hs-source-dirs:
     internal
