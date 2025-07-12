@@ -15,6 +15,7 @@ module Client (
   pubWithPayload,
   pubWithReplyCallback,
   pubWithHeaders,
+  withConnectName,
   ) where
 
 import           Control.Concurrent
@@ -28,14 +29,14 @@ import qualified Network.Socket            as NS
 import           Parsers.Parsers
 import           Pipeline.Broadcasting     as B
 import           Pipeline.Streaming        as S
+import           Prelude                   hiding (lookup)
 import           Sid                       (nextSID)
 import           System.IO
+import           System.Random             (StdGen, newStdGen)
 import           Transformers.Transformers (Transformer (transform))
 import           Types
 import qualified Types.Connect             as Connect (Connect (..))
--- import qualified Types.Info                as I
-import           Prelude                   hiding (lookup)
-import           System.Random             (StdGen, newStdGen)
+import qualified Types.Info                as I
 import qualified Types.Msg                 as M
 import           Types.Ping
 import           Types.Pong
@@ -46,10 +47,11 @@ import           WaitGroup
 
 -- | Client is used to iteract with the NATS server.
 data Client = Client'
-                { queue     :: TBQueue QueueItem
-                , routes    :: TVar (Map Subject (M.Msg -> IO ()))
-                , pings     :: TVar [IO ()]
-                , randomGen :: TVar StdGen
+                { queue      :: TBQueue QueueItem
+                , routes     :: TVar (Map Subject (M.Msg -> IO ()))
+                , pings      :: TVar [IO ()]
+                , randomGen  :: TVar StdGen
+                , serverInfo :: TMVar I.Info
                 }
 
 -- | MsgView represents a MSG in the NATS protocol.
@@ -91,33 +93,39 @@ defaultConn host port = do
   hSetBuffering handle NoBuffering
   return handle
 
+type ConnectOpts = Connect.Connect -> Connect.Connect
+
+withConnectName :: BS.ByteString -> ConnectOpts
+withConnectName name opts = opts { Connect.name = Just name }
+
 -- | newClient creates a new `Client` instance and starts the necessary pipelines.
-newClient :: Handle -> IO Client
-newClient handle = do
-  pubQueue <- newTBQueueIO 1000
-  routerVar <- newTVarIO mempty
-  pingsVar <- newTVarIO []
-  randomGenVar <- newTVarIO =<< newStdGen
-  let client = Client' {
-    queue = pubQueue,
-    routes = routerVar,
-    pings = pingsVar,
-    randomGen = randomGenVar
-  }
+newClient :: Handle -> [ConnectOpts] -> IO Client
+newClient handle conOpts = do
+  client <- Client'
+    <$> newTBQueueIO 1000
+    <*> newTVarIO mempty
+    <*> newTVarIO []
+    <*> (newTVarIO =<< newStdGen)
+    <*> newEmptyTMVarIO
 
-  infoWaiter <- newWaitGroup 1
-  void . forkIO . S.runPipeline handle genericParse $ sink client infoWaiter
-  wait infoWaiter
+  asyncInfo <-  newEmptyTMVarIO
+  void . forkIO . S.runPipeline handle genericParse $ sink client asyncInfo
+  info <- atomically $ takeTMVar asyncInfo
+  atomically $ putTMVar (serverInfo client) info
 
+  pingWaiter <- newWaitGroup 1
+  ping client $ done pingWaiter
   void . forkIO . B.runPipeline (queue client) $ handle
+  wait pingWaiter
 
   return client
 
   where
-    sink client wg msg = do
+    connect' = foldl (flip ($)) defaultConnect conOpts
+    sink client tmvar msg = do
       case msg of
         ParsedMsg a  -> router client a
-        ParsedInfo _ -> connect handle >> done wg
+        ParsedInfo i -> connect handle connect' >> atomically (putTMVar tmvar i)
         ParsedPing _ -> pong handle
         ParsedPong _ -> sequenceActions (pings client)
         ParsedErr  _ -> print ("error reported: " ++ show msg)
@@ -148,11 +156,7 @@ publish client subject opts = do
 
   replyTo <- case callback of
     Just cb -> do
-      rand <- atomically $ do
-        rg <- readTVar (randomGen client)
-        let (rand, stdGen) = nextSID rg
-        writeTVar (randomGen client) stdGen
-        return rand
+      rand <- newHash client
       let replyTo = BS.append "RES." rand
       request client replyTo cb
       return (Just replyTo)
@@ -169,11 +173,7 @@ publish client subject opts = do
 
 subscribe' :: Bool -> Client -> Subject -> (MsgView -> IO ()) -> IO SID
 subscribe' isReply client subject callback = do
-  sid <- atomically $ do
-    rg <- readTVar (randomGen client)
-    let (rand, stdGen) = nextSID rg
-    writeTVar (randomGen client) stdGen
-    return rand
+  sid <- newHash client
   let cb = if isReply
         then \m -> callback (transformMsg m) >> unsubscribe client sid
         else callback . transformMsg
@@ -232,6 +232,13 @@ pubWithHeaders headers (payload, callback, _) = (payload, callback, Just headers
 
 -- internal handlers
 
+newHash :: Client -> IO SID
+newHash client = atomically $ do
+    rg <- readTVar (randomGen client)
+    let (rand, stdGen) = nextSID rg
+    writeTVar (randomGen client) stdGen
+    return rand
+
 defaultConnect = Connect.Connect{
   Connect.verbose = False,
   Connect.pedantic = True,
@@ -250,9 +257,9 @@ defaultConnect = Connect.Connect{
   Connect.headers = Just True
   }
 
-connect :: Handle -> IO ()
-connect handle = do
-  BS.hPut handle $ transform defaultConnect
+connect :: Handle -> Connect.Connect -> IO ()
+connect handle con = do
+  BS.hPut handle $ transform con
   hFlush handle
 
 pong :: Handle -> IO ()
