@@ -36,16 +36,16 @@ char = parallel $ do
        it "returns ParserErr given empty string" $ do
          let output = Parser.runParser (Parser.char want) ""
          let result = fmap fst output
-         result `shouldBe` Left (Parser.ParserErr "nothing to read" 0)
+         result `shouldBe` Left (Parser.UnexpectedEndOfInput "nothing to read" 0)
          let left = fmap snd output
-         left `shouldBe` Left (Parser.ParserErr "nothing to read" 0)
+         left `shouldBe` Left (Parser.UnexpectedEndOfInput "nothing to read" 0)
        forM_ (filterSameChar input charCases) $ \(sinput, _) ->
          it (printf "returns ParserErr given %s" (show sinput)) $ do
            let output = Parser.runParser (Parser.char want) sinput
            let result = fmap fst output
-           result `shouldBe` Left (Parser.ParserErr(B.unpack $ foldr BS.append "" [BS.pack [BS.head sinput],  " does not match ", BS.pack [want], " in ", sinput]) 1)
+           result `shouldBe` Left (Parser.UnexpectedChar(B.unpack $ foldr BS.append "" [BS.pack [BS.head sinput],  " does not match ", BS.pack [want], " in ", sinput]) 1)
            let left = fmap snd output
-           left `shouldBe` Left (Parser.ParserErr(B.unpack $ foldr BS.append "" [BS.pack [BS.head sinput],  " does not match ", BS.pack [want], " in ", sinput]) 1)
+           left `shouldBe` Left (Parser.UnexpectedChar(B.unpack $ foldr BS.append "" [BS.pack [BS.head sinput],  " does not match ", BS.pack [want], " in ", sinput]) 1)
 
 headerCases :: [(BS.ByteString, [(BS.ByteString, BS.ByteString)])]
 headerCases = [
@@ -71,7 +71,7 @@ depth = parallel $ do
       let outputA = Parser.runParser (P.pingParser <|> P.pongParser) "PIL"
       let outputB = Parser.runParser (P.pongParser <|> P.pingParser) "PIL"
       outputA `shouldBe` outputB
-      outputA `shouldBe` Left (Parser.ParserErr "L does not match N in L" 1)
+      outputA `shouldBe` Left (Parser.UnexpectedChar "L does not match N in L" 1)
 
 filterSameChar :: BS.ByteString -> [(BS.ByteString, W8.Word8)] -> [(BS.ByteString, W8.Word8)]
 filterSameChar _ [] = []

@@ -35,6 +35,9 @@ import           Prelude                hiding
     )
 import           Test.Hspec
 
+-- TODO: move this and the client one to a module, then use it in these tests
+-- TODO: create a unit test that uses the Client module so we can test the integration between
+--       the streaming/healing/client modules
 instance SelfHealer ByteString String where
   heal bs _  = (tail bs, OK)
 
@@ -70,6 +73,15 @@ spec = do
         forkIO . runPipeline client testParserExcludingUpper $ sink
         hPut server "HELLO WORLD hello, world"
         atomically $ assertTVarWithRetry result "  hello, world"
+        hClose server
+        hClose client
+      it "doesn't heal away partial messages" $ do
+        (server, client) <- makeSocketPair
+        result <- newTVarIO "" :: IO (TVar ByteString)
+        let sink curr = atomically $ modifyTVar' result (`append` curr)
+        forkIO . runPipeline client testParserExcludingUpper $ sink
+        hPut server "HELLO WORLD"
+        atomically $ assertTVarWithRetry result "  "
         hClose server
         hClose client
 

@@ -16,6 +16,7 @@ import           System.IO
     , Handle
     , hSetBuffering
     )
+
 data ParserState = OK
                  | MissingData -- Reached end of input, content valid so far
                  | OverflowingData -- Reached max message size, valid so far
@@ -86,7 +87,7 @@ ioSink action = loop
     loop = do
       ma <- await
       case ma of
-        Nothing -> return () -- TODO: need to decide if we want the sink to terminate the stream
+        Nothing -> return ()
         Just a  -> do
           liftIO . action $ a
           loop

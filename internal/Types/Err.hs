@@ -22,6 +22,6 @@ data Err = ErrUnknownOp Reason
 
 isFatal :: Err -> Bool
 isFatal (ErrInvalidSubject _) = False
-isFatal (ErrPermViolation _) = False
-isFatal _ = True
+isFatal (ErrPermViolation _)  = False
+isFatal _                     = True
 

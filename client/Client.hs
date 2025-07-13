@@ -79,7 +79,11 @@ transformMsg msg = MsgView {
   }
 
 instance SelfHealer BS.ByteString ParserErr where
-  heal bs _  = (BS.tail bs, OK) -- TODO: this is a test implementation, should be replaced with a proper healing mechanism
+  heal bs (UnexpectedEndOfInput _ _)  = do
+    case BS.length bs of
+      1024 -> (BS.tail bs, OverflowingData)              -- the message is too long, bin it
+      _    -> (bs, MissingData)                             -- the message is incomplete, wait for more data
+  heal bs (UnexpectedChar _ _)        = (BS.tail bs, OK) -- there's an invalid prefix
 
 -- | defaultConn is a sane default connection that can be used as an argument to `newClient`.
 defaultConn :: String -> Int -> IO Handle
