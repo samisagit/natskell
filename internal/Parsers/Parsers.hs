@@ -16,7 +16,6 @@ import           Types.Ok
 import           Types.Ping
 import           Types.Pong
 
--- TODO do we need the wrapping type
 data ParsedMessage = ParsedPing Ping
                    | ParsedPong Pong
                    | ParsedOk Ok
@@ -47,13 +46,12 @@ errParser = do
   reason <- reasonParser
   char _quotesingle
   string "\r\n"
-  let packedReason = pack reason
-  return (ParsedErr $ Err packedReason (isFatal packedReason))
+  return reason
 
 errPrefixInvalidSubject = "Invalid Subject"
 errPrefixPerm = "Permissions Violation"
 
-reasonParser :: Parser [Word8]
+reasonParser :: Parser ParsedMessage
 reasonParser = unknownOpParser
   <|> routePortConnParser
   <|> authViolationParser
@@ -73,26 +71,40 @@ isFatal :: ByteString -> Bool
 isFatal err = (errPrefixInvalidSubject /= err) && not (errPrefixPerm `isPrefixOf` err)
 
 unknownOpParser = string "Unknown Protocol Operation"
+  >> return (ParsedErr (ErrUnknownOp "Unknown Protocol Operation"))
 routePortConnParser = string "Attempted To Connect To Route Port"
+  >> return (ParsedErr (ErrRoutePortConn "Attempted To Connect To Route Port"))
 authViolationParser = string "Authorization Violation"
+  >> return (ParsedErr (ErrAuthViolation "Authorization Violation"))
 authTimeoutParser = string "Authorization Timeout"
+  >> return (ParsedErr (ErrAuthTimeout "Authorization Timeout"))
 invalidProtocolParser = string "Invalid Client Protocol"
+  >> return (ParsedErr (ErrInvalidProtocol "Invalid Client Protocol"))
 maxControlLineExParser = string "Maximum Control Line Exceeded"
+  >> return (ParsedErr (ErrMaxControlLineEx "Maximum Control Line Exceeded"))
 parserErrParser = string "Parser Error"
+  >> return (ParsedErr (ErrErr "Parser Error"))
 tlsRequiredParser = string "Secure Connection - TLS Required"
+  >> return (ParsedErr (ErrTlsRequired "Secure Connection - TLS Required"))
 staleConnParser = string "Stale Connection"
+  >> return (ParsedErr (ErrStaleConn "Stale Connection"))
 maxConnsExParser = string "Maximum Connections Exceeded"
+  >> return (ParsedErr (ErrMaxConnsEx "Maximum Connections Exceeded"))
 slowConsumerParser = string "Slow Consumer"
+  >> return (ParsedErr (ErrSlowConsumer "Slow Consumer"))
 maxPayloadParser = string "Maximum Payload Violation"
+  >> return (ParsedErr (ErrMaxPayload "Maximum Payload Violation"))
 invalidSubjParser = string "Invalid Subject"
+  >> return (ParsedErr (ErrInvalidSubject errPrefixInvalidSubject))
 
 -- permission parsers are tricky because the violation reason could be complete nonsense
 -- so we just consume until the single quote delimiter
-permViolationParser :: Parser [Word8]
+permViolationParser :: Parser ParsedMessage
 permViolationParser = do
   pre <- string "Permissions Violation"
   post <- til _quotesingle
-  return (pre ++ post)
+  let reason = pre <> post
+  return (ParsedErr (ErrPermViolation (pack reason)))
 
 infoParser :: Parser ParsedMessage
 infoParser = do
