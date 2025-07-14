@@ -23,7 +23,6 @@ import           Control.Concurrent.STM
 import           Control.Monad             (void)
 import qualified Data.ByteString           as BS
 import           Data.Map                  (Map, delete, insert, lookup)
-import           Lib.Parser                (ParserErr (..))
 import qualified Network.Simple.TCP        as TCP
 import qualified Network.Socket            as NS
 import           Parsers.Parsers
@@ -77,13 +76,6 @@ transformMsg msg = MsgView {
     payload = M.payload msg,
     headers = M.headers msg
   }
-
-instance SelfHealer BS.ByteString ParserErr where
-  heal bs (UnexpectedEndOfInput _ _)  = do
-    case BS.length bs of
-      1024 -> (BS.tail bs, OverflowingData)              -- the message is too long, bin it
-      _    -> (bs, MissingData)                             -- the message is incomplete, wait for more data
-  heal bs (UnexpectedChar _ _)        = (BS.tail bs, OK) -- there's an invalid prefix
 
 -- | defaultConn is a sane default connection that can be used as an argument to `newClient`.
 defaultConn :: String -> Int -> IO Handle

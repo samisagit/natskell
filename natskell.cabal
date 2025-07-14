@@ -70,6 +70,8 @@ library natskell-internal
 
   exposed-modules:
     Lib.Parser
+    Lib.Logger
+    Lib.CallOption
     Parsers.Parsers
     Transformers.Transformers
     Validators.Validators
@@ -87,6 +89,7 @@ library natskell-internal
     Pipeline.Broadcasting
     Pipeline.Streaming
     Pipeline.Operator
+    Pipeline.Status
 
   hs-source-dirs:
     internal

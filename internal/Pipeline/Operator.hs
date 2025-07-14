@@ -1,60 +1,46 @@
-module Pipeline.Operator (newConnection, updateStatus, Logger(..), withLogger, withConnectPairs) where
+{-# LANGUAGE MultiParamTypeClasses #-}
+module Pipeline.Operator (newConnection,  withLogger, run) where
 
 import           Control.Concurrent.STM
+import           Control.Monad
+import           Data.ByteString
+import           GHC.Conc               (forkIO)
 import           GHC.IO.Handle
-
-data Status = Connecting | Connected | Disconnecting | Disconnected | Draining
-  deriving (Eq, Show)
-
-data Event = UnexpectedDisconnect String
-           | ConnectedEvent
-           | FatalErrorEvent String
-           | UserCloseEvent
-  deriving (Eq, Show)
-
-type ConnectPair = (String, Int)
+import           Lib.CallOption
+import           Lib.Logger             (Logger)
+import           Lib.Parser
+import qualified Pipeline.Broadcasting  as B
+import           Pipeline.Status
+import qualified Pipeline.Streaming     as S
 
 data Connection = Connection
-                    { status       :: Status
-                    , socket       :: Handle
-                    , connectPairs :: Maybe [ConnectPair]
-                    , connectFunc  :: ConnectPair -> IO Handle
-                    , logger       :: Maybe Logger
+                    { status :: TVar Status
+                    , socket :: Handle
+                    , logger :: Maybe Logger
                     }
 
--- this should probably be in a separate module as it will be used for things other than pipeline
-data Logger = Logger
-                { logInfo  :: String -> IO ()
-                , logError :: String -> IO ()
-                , logDebug :: String -> IO ()
-                , logFatal :: String -> IO ()
-                }
-
-type ConnectionOpts = (Connection -> Connection)
+type ConnectionOpts = CallOption Connection
 
 withLogger :: Logger -> ConnectionOpts
 withLogger logger conn = conn { logger = Just logger }
 
--- perhaps set up the pairs to cycle when used/retried
-withConnectPairs :: [ConnectPair] -> ConnectionOpts
-withConnectPairs pairs conn = conn { connectPairs = Just pairs }
-
-newConnection :: ConnectPair -> (ConnectPair -> IO Handle) -> [ConnectionOpts] -> IO (TVar Connection)
-newConnection pairs func opts = do
-  handle <- func pairs
+newConnection :: Handle -> [ConnectionOpts] -> IO Connection
+newConnection handle opts = do
+  status <- newTVarIO Connecting
   let conn = Connection {
-    status = Connecting
+    status = status
     , socket = handle
-    , connectFunc = func
-    , connectPairs = Nothing
     , logger = Nothing
   }
-  let conn' = foldr ($) conn opts
-  newTVarIO conn'
+  return $ applyCallOptions opts conn
 
-updateStatus :: TVar Connection -> Event -> STM ()
-updateStatus connVar ConnectedEvent = modifyTVar' connVar $ \c -> c { status = Connected }
-updateStatus connVar (FatalErrorEvent reason) = modifyTVar' connVar $ \c -> c { status = Disconnecting }
-updateStatus connVar (UnexpectedDisconnect error) = modifyTVar' connVar $ \c -> c { status = Disconnected }
-updateStatus connVar UserCloseEvent = modifyTVar' connVar $ \c -> c { status = Draining }
+run ::
+  Connection
+  -> (ByteString -> Either ParserErr (b, ByteString))
+  -> (b -> IO ())
+  -> TBQueue B.QueueItem
+  -> IO ()
+run conn parser router queue = do
+  void . forkIO $ S.runPipeline (socket conn) parser router (status conn)
+  void . forkIO $ B.runPipeline queue (socket conn) (status conn)
 

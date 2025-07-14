@@ -7,49 +7,31 @@ module StreamingSpec where
 import           Control.Concurrent
 import           Control.Concurrent.STM
 import qualified Control.Monad
-import           Data.ByteString
-    ( ByteString
-    , append
-    , hPut
-    , head
-    , pack
-    , tail
-    )
+import           Data.ByteString        (ByteString, append, empty, hPut, head,
+                                         isPrefixOf, length, pack, tail)
 import           Data.Char              (chr)
 import           Data.Word8             (isUpper)
-import           GHC.IO.Handle
-    ( BufferMode (NoBuffering)
-    , Handle
-    , hClose
-    , hSetBuffering
-    )
+import           GHC.IO.Handle          (BufferMode (NoBuffering), Handle,
+                                         hClose, hSetBuffering)
 import           GHC.IO.IOMode
+import           Lib.Parser
 import           Network.Socket
+import           Pipeline.Status
 import           Pipeline.Streaming
-import           Prelude                hiding
-    ( head
-    , last
-    , null
-    , replicate
-    , tail
-    )
+import           Prelude                hiding (head, last, length, null,
+                                         replicate, tail, take)
 import           Test.Hspec
-
--- TODO: move this and the client one to a module, then use it in these tests
--- TODO: create a unit test that uses the Client module so we can test the integration between
---       the streaming/healing/client modules
-instance SelfHealer ByteString String where
-  heal bs _  = (tail bs, OK)
 
 spec :: Spec
 spec = do
   describe "Streaming" $ do
-      it "reads from handle" $ do
+      it "reads from source and writes to sink" $ do
         (server, client) <- makeSocketPair
         result <- newTVarIO "" :: IO (TVar ByteString)
-        let parser bs = Right (pack [head bs], tail bs) :: Either String (ByteString, ByteString)
+        status <- newTVarIO Connecting :: IO (TVar Status)
+        let parser bs = Right (pack [head bs], tail bs) :: Either ParserErr (ByteString, ByteString)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
-        forkIO . runPipeline client parser $ sink
+        forkIO . runPipeline client parser sink $ status
         hPut server "Hello, World"
         atomically $ assertTVarWithRetry result "Hello, World"
         hClose server
@@ -57,41 +39,58 @@ spec = do
       it "continues reading from the handle after reaching end" $ do
         (server, client) <- makeSocketPair
         result <- newTVarIO "" :: IO (TVar ByteString)
-        let parser bs = Right (pack [head bs], tail bs) :: Either String (ByteString, ByteString)
+        status <- newTVarIO Connecting :: IO (TVar Status)
+        let parser bs = Right (pack [head bs], tail bs) :: Either ParserErr (ByteString, ByteString)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
-        forkIO . runPipeline client parser $ sink
+        forkIO . runPipeline client parser sink $ status
         hPut server "Hello, World"
         atomically $ assertTVarWithRetry result "Hello, World"
         hPut server "Hello, again"
         atomically $ assertTVarWithRetry result "Hello, WorldHello, again"
         hClose server
         hClose client
-      it "applies the naive parser healing" $ do
+      it "applies the parser healing" $ do
         (server, client) <- makeSocketPair
         result <- newTVarIO "" :: IO (TVar ByteString)
+        status <- newTVarIO Connecting :: IO (TVar Status)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
-        forkIO . runPipeline client testParserExcludingUpper $ sink
+        forkIO . runPipeline client testParserExcludingUpper sink $ status
         hPut server "HELLO WORLD hello, world"
         atomically $ assertTVarWithRetry result "  hello, world"
         hClose server
         hClose client
-      it "doesn't heal away partial messages" $ do
+      it "waits for more data" $ do
         (server, client) <- makeSocketPair
         result <- newTVarIO "" :: IO (TVar ByteString)
+        status <- newTVarIO Connecting :: IO (TVar Status)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
-        forkIO . runPipeline client testParserExcludingUpper $ sink
-        hPut server "HELLO WORLD"
-        atomically $ assertTVarWithRetry result "  "
+        forkIO . runPipeline client testParserForExplicitWord sink $ status
+        hPut server "part1"
+        threadDelay 100000 -- wait for the first part to be processed
+        atomically $ ensureTVarIsEmpty result
+        hPut server "part2"
+        atomically $ assertTVarWithRetry result "part1part2"
         hClose server
         hClose client
+
+ensureTVarIsEmpty :: TVar ByteString -> STM ()
+ensureTVarIsEmpty tvar = do
+  content <- readTVar tvar
+  Control.Monad.when (content /= empty) retry
 
 assertTVarWithRetry :: Eq a => TVar a -> a -> STM ()
 assertTVarWithRetry tvar expected = do
   actual <- readTVar tvar
   Control.Monad.unless (actual == expected) retry
 
-testParserExcludingUpper :: ByteString -> Either String (ByteString, ByteString)
-testParserExcludingUpper bs = case isUpper . head $ bs of False -> Right (pack [head bs], tail bs) ; True -> Left ("upper case text not allowed: found " ++ [chr .fromIntegral . head $ bs])
+testParserExcludingUpper :: ByteString -> Either ParserErr (ByteString, ByteString)
+testParserExcludingUpper bs = case isUpper . head $ bs of False -> Right (pack [head bs], tail bs) ; True -> Left (UnexpectedChar [chr .fromIntegral . head $ bs] 1)
+
+testParserForExplicitWord :: ByteString -> Either ParserErr (ByteString, ByteString)
+testParserForExplicitWord bs
+  | bs == "part1part2" = Right (bs, empty)
+  | bs `isPrefixOf` "part1part2" = Left (UnexpectedEndOfInput "test" (length bs))
+  | otherwise          = Left (UnexpectedChar [chr .fromIntegral . head $ bs] 1)
 
 makeSocketPair :: IO (Handle, Handle)
 makeSocketPair = do
