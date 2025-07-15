@@ -66,6 +66,7 @@ library natskell-internal
     aeson  < 2.3,
     word8  < 0.2,
     stm,
+    mtl,
     text
 
   exposed-modules:

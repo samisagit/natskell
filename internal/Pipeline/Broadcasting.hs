@@ -5,23 +5,33 @@ module Pipeline.Broadcasting where
 import           Conduit
 import           Control.Concurrent.STM
 import qualified Data.ByteString           as BS
+import           Lib.Logger
 import           Pipeline.Status
 import           System.IO
 import           Transformers.Transformers (Transformer (transform))
 
 data QueueItem = forall m. Transformer m => QueueItem m
 
-runPipeline :: TBQueue QueueItem -> Handle -> TVar Status -> IO ()
+runPipeline :: (MonadLogger m , MonadIO m)
+  => TBQueue QueueItem
+  -> Handle
+  -> TVar Status
+  -> m ()
 runPipeline q h s = runConduit $ sourceQueue q s .| sink h
 
-sourceQueue :: TBQueue QueueItem -> TVar Status -> ConduitT () BS.ByteString IO ()
+sourceQueue :: (MonadLogger m , MonadIO m)
+  => TBQueue QueueItem
+  -> TVar Status
+  -> ConduitT () BS.ByteString m ()
 sourceQueue q s = do
   x <- liftIO . consumeUntil q $ s
   case x of
     Nothing              -> return ()
     Just (QueueItem msg) -> yield (transform msg) >> sourceQueue q s
 
-sink :: Handle -> ConduitT BS.ByteString Void IO ()
+sink :: (MonadLogger m , MonadIO m)
+  => Handle
+  -> ConduitT BS.ByteString Void m ()
 sink h = awaitForever $ \bs -> liftIO $ BS.hPut h bs >> hFlush h
 
 consumeUntil :: TBQueue a -> TVar Status -> IO (Maybe a)
@@ -35,3 +45,4 @@ consumeUntil q flag = atomically loop
                 Disconnecting _ -> return Nothing
                 Draining        -> return Nothing
                 _               -> retry >> loop)
+

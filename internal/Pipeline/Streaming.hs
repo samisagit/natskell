@@ -11,36 +11,37 @@ import           Control.Concurrent     (threadDelay)
 import           Control.Concurrent.STM
 import           Control.Exception      (IOException, try)
 import           Control.Monad
-import           Data.ByteString        (ByteString, append, drop, hGetSome,
-                                         length, null)
+import           Data.ByteString
+    ( ByteString
+    , append
+    , drop
+    , hGetSome
+    , length
+    , null
+    , take
+    )
 import           GHC.Conc               (forkIO)
+import           Lib.Logger
 import           Lib.Parser
 import           Pipeline.Status
-import           Prelude                hiding (drop, length, null)
-import           System.IO              (BufferMode (NoBuffering), Handle,
-                                         hSetBuffering)
+import           Prelude                hiding (drop, length, null, take)
+import           System.IO
+    ( BufferMode (NoBuffering)
+    , Handle
+    , hSetBuffering
+    )
 
--- TODO: either inject a logger or make this monadic
-debug :: MonadIO m => String -> m ()
-debug msg = liftIO . putStrLn $ ("WARN: " ++ msg)
-
--- TODO: either inject a logger or make this monadic
-warn :: MonadIO m => String -> m ()
-warn msg = liftIO . putStrLn $ ("WARN: " ++ msg)
-
-
-runPipeline ::
-  Handle                                              -- socket
+runPipeline :: (MonadLogger m , MonadIO m)
+  => Handle                                           -- socket
   -> (ByteString -> Either ParserErr (b, ByteString)) -- parser
   -> (b -> IO ())                                     -- router
-  -> TVar Status
-  -> IO ()
+  -> TVar Status                                      -- status
+  -> m ()
 runPipeline handle parser router status = do
-  hSetBuffering handle NoBuffering
-  runConduitRes $
-    handleSource handle status .| streamParser parser .| ioSink router
+  liftIO $ hSetBuffering handle NoBuffering
+  runConduit $ handleSource handle status .| streamParser parser .| ioSink router
 
-handleSource :: MonadIO m
+handleSource :: (MonadLogger m , MonadIO m)
   => Handle
   -> TVar Status
   -> ConduitT () ByteString m ()
@@ -54,18 +55,18 @@ handleSource handle status = do
            result <- liftIO . try $ hGetSome handle 4096
            case result of
              Left (e :: IOException) -> do
-               warn . show $ e
+               lift .logFatal $ "IOException: " ++ show e
                liftIO . atomically $ writeTVar status (Disconnected (show e))
                return ()
              Right chunk ->
                if null chunk
                  then do
-                   debug "end of stream reached, waiting for more data"
+                   lift . logDebug $ "end of stream reached, waiting for more data"
                    liftIO $ threadDelay 1000000
                    handleSource handle status
                  else yield chunk >> handleSource handle status
 
-streamParser :: MonadIO m
+streamParser :: (MonadLogger m , MonadIO m)
   => (ByteString -> Either ParserErr (result, ByteString))
   -> ConduitT ByteString result m ()
 streamParser parser = loop ""
@@ -81,19 +82,24 @@ streamParser parser = loop ""
         Left err -> do
           case solveErr err of
             SuggestPull -> if length bs > 4096
-              then warn "overloaded buffer" >> handleChunk (drop 4096 bs)
-              else debug "message spans frame" >> loop bs
+              then do
+              lift . logWarn $ "overloaded buffer"
+              lift . logDebug $ ("invalid prefix: " ++ show (take 4096 bs))
+              handleChunk (drop 4096 bs)
+              else do
+                lift . logDebug $ "message spans frame, waiting for more data"
+                loop bs
             SuggestDrop n r -> do
-              warn $ "dropping invalid prefix: " ++ r
-              debug $ "invalid prefix: " ++ show bs
+              lift . logWarn $ ("dropping invalid prefix: " ++ r)
+              lift . logDebug $ ("invalid prefix: " ++ show bs)
               handleChunk (drop n bs)
         Right (message, rest) -> do
           yield message
           handleChunk rest
 
-ioSink :: MonadIO m => (a -> IO ()) -> ConduitT a Void m ()
+ioSink :: (MonadIO m, MonadLogger m) => (a -> IO ()) -> ConduitT a Void m ()
 ioSink action = do
   awaitForever $ \ma -> do
     liftIO . void . forkIO $ action ma
     ioSink action
-  
+

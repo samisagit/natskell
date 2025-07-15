@@ -60,11 +60,12 @@ deepestErr a b
   | offset a > offset b = b
   | otherwise = a
 
-data Suggestion = SuggestDrop Int String | SuggestPull
+data Suggestion = SuggestDrop Int String
+                | SuggestPull
 
 solveErr :: ParserErr -> Suggestion
 solveErr (UnexpectedEndOfInput _ _) = SuggestPull -- This suggests we pull more data to satisfy the parser.
-solveErr (UnexpectedChar r o) = SuggestDrop o r   -- This suggests we drop the invalid prefix.
+solveErr (UnexpectedChar r o)       = SuggestDrop o r   -- This suggests we drop the invalid prefix.
 
 char :: W8.Word8 -> Parser W8.Word8
 char c = Parser charP

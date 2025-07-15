@@ -18,16 +18,19 @@ module Client (
   withConnectName,
   ) where
 
-import           Control.Concurrent
 import           Control.Concurrent.STM
-import           Control.Monad             (void)
+import           Control.Monad
+import           Control.Monad.IO.Class
 import qualified Data.ByteString           as BS
 import           Data.Map                  (Map, delete, insert, lookup)
+import           Lib.CallOption
+import           Lib.Logger
 import qualified Network.Simple.TCP        as TCP
 import qualified Network.Socket            as NS
 import           Parsers.Parsers
 import           Pipeline.Broadcasting     as B
-import           Pipeline.Streaming        as S
+import qualified Pipeline.Operator         as O
+import           Pipeline.Status
 import           Prelude                   hiding (lookup)
 import           Sid                       (nextSID)
 import           System.IO
@@ -35,6 +38,7 @@ import           System.Random             (StdGen, newStdGen)
 import           Transformers.Transformers (Transformer (transform))
 import           Types
 import qualified Types.Connect             as Connect (Connect (..))
+import qualified Types.Err                 as E
 import qualified Types.Info                as I
 import qualified Types.Msg                 as M
 import           Types.Ping
@@ -89,43 +93,53 @@ defaultConn host port = do
   hSetBuffering handle NoBuffering
   return handle
 
-type ConnectOpts = Connect.Connect -> Connect.Connect
+defaultLogger :: LoggerConfig
+defaultLogger = LoggerConfig Info $ \lvl msg ->
+  putStrLn $ "[" ++ show lvl ++ "] " ++ msg
+
+type ConnectOpts = CallOption Connect.Connect
 
 withConnectName :: BS.ByteString -> ConnectOpts
 withConnectName name opts = opts { Connect.name = Just name }
 
--- | newClient creates a new `Client` instance and starts the necessary pipelines.
 newClient :: Handle -> [ConnectOpts] -> IO Client
-newClient handle conOpts = do
-  client <- Client'
+newClient h opts = runWithLogger defaultLogger $ newClientM h opts
+
+-- | newClientM creates a new `Client` instance and starts the necessary pipelines.
+newClientM :: Handle -> [ConnectOpts] -> AppM Client
+newClientM handle conOpts = do
+  client <- liftIO $ Client'
     <$> newTBQueueIO 1000
     <*> newTVarIO mempty
     <*> newTVarIO []
     <*> (newTVarIO =<< newStdGen)
     <*> newEmptyTMVarIO
 
-  asyncInfo <-  newEmptyTMVarIO
-  void . forkIO . S.runPipeline handle genericParse $ sink client asyncInfo
-  info <- atomically $ takeTMVar asyncInfo
-  atomically $ putTMVar (serverInfo client) info
+  asyncInfo <- liftIO newEmptyTMVarIO
+  conn <- liftIO $ O.newConnection handle []
+  O.run conn genericParse (sink client asyncInfo conn) (queue client)
+  info <- liftIO . atomically $ takeTMVar asyncInfo
+  liftIO . atomically $ putTMVar (serverInfo client) info
 
-  pingWaiter <- newWaitGroup 1
-  ping client $ done pingWaiter
-  void . forkIO . B.runPipeline (queue client) $ handle
-  wait pingWaiter
+  pingWaiter <- liftIO $ newWaitGroup 1
+  liftIO . ping client $ done pingWaiter
+  liftIO $ wait pingWaiter
 
   return client
 
   where
-    connect' = foldl (flip ($)) defaultConnect conOpts
-    sink client tmvar msg = do
+    connect' = applyCallOptions conOpts defaultConnect
+    sink client tmvar conn msg = do
       case msg of
         ParsedMsg a  -> router client a
         ParsedInfo i -> connect handle connect' >> atomically (putTMVar tmvar i)
         ParsedPing _ -> pong handle
         ParsedPong _ -> sequenceActions (pings client)
-        ParsedErr  _ -> print ("error reported: " ++ show msg)
         ParsedOk   _ -> return ()
+        ParsedErr err -> do
+          when (E.isFatal err) . O.setStatus conn $ Disconnecting (show err)
+          runWithLogger defaultLogger $ do
+            logError ("Error parsing message:" ++ show err)
 
 sequenceActions :: TVar [IO ()] -> IO ()
 sequenceActions actionsVar = do
@@ -141,7 +155,9 @@ router client msg = do
   callbacks <- readTVarIO (routes client)
   case lookup sid callbacks of
     Just callback -> callback msg
-    Nothing       -> putStrLn $ "No callback for SID: " ++ show sid
+    Nothing       -> do
+      runWithLogger defaultLogger $ do
+        logError $ "No callback for SID: " ++ show sid
 
 type PubOptions = (Maybe Payload, Maybe (MsgView -> IO ()), Maybe Headers)
 
