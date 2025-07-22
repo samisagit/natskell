@@ -23,7 +23,6 @@ import           Data.ByteString
 import           GHC.Conc               (forkIO)
 import           Lib.Logger
 import           Lib.Parser
-import           Pipeline.Status
 import           Prelude                hiding (drop, length, null, take)
 import           System.IO
     ( BufferMode (NoBuffering)
@@ -35,36 +34,35 @@ runPipeline :: (MonadLogger m , MonadIO m)
   => Handle                                           -- socket
   -> (ByteString -> Either ParserErr (b, ByteString)) -- parser
   -> (b -> IO ())                                     -- router
-  -> TVar Status                                      -- status
+  -> TVar Bool                                        -- poison pill
   -> m ()
-runPipeline handle parser router status = do
+runPipeline handle parser router poisonpill = do
   liftIO $ hSetBuffering handle NoBuffering
-  runConduit $ handleSource handle status .| streamParser parser .| ioSink router
+  runConduit $ handleSource handle poisonpill .| streamParser parser .| ioSink router
 
 handleSource :: (MonadLogger m , MonadIO m)
   => Handle
-  -> TVar Status
+  -> TVar Bool
   -> ConduitT () ByteString m ()
-handleSource handle status = do
-  s <- liftIO $ readTVarIO status
+handleSource handle poisonpill = do
+  s <- liftIO $ readTVarIO poisonpill
   case s of
-    Disconnected _ -> return ()
-    Disconnecting _ -> return ()
-    Draining -> return ()
+    True -> return ()
     _ -> do
+           lift . logDebug $ "reading from socket"
            result <- liftIO . try $ hGetSome handle 4096
            case result of
              Left (e :: IOException) -> do
                lift .logFatal $ "IOException: " ++ show e
-               liftIO . atomically $ writeTVar status (Disconnected (show e))
+               liftIO . atomically $ writeTVar poisonpill True
                return ()
              Right chunk ->
                if null chunk
                  then do
                    lift . logDebug $ "end of stream reached, waiting for more data"
                    liftIO $ threadDelay 1000000
-                   handleSource handle status
-                 else yield chunk >> handleSource handle status
+                   handleSource handle poisonpill
+                 else yield chunk >> (lift . logDebug $ "read from socket") >> handleSource handle poisonpill
 
 streamParser :: (MonadLogger m , MonadIO m)
   => (ByteString -> Either ParserErr (result, ByteString))
@@ -78,6 +76,7 @@ streamParser parser = loop ""
         Just chunk -> handleChunk $ append acc chunk
     handleChunk "" = streamParser parser
     handleChunk bs = do
+      lift . logDebug $ "parsing chunk"
       case parser bs of
         Left err -> do
           case solveErr err of
@@ -94,6 +93,7 @@ streamParser parser = loop ""
               lift . logDebug $ ("invalid prefix: " ++ show bs)
               handleChunk (drop n bs)
         Right (message, rest) -> do
+          lift . logDebug $ "parsed message"
           yield message
           handleChunk rest
 
@@ -102,4 +102,5 @@ ioSink action = do
   awaitForever $ \ma -> do
     liftIO . void . forkIO $ action ma
     ioSink action
+    lift . logDebug $ "executed action on message"
 

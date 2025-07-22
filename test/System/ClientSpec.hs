@@ -68,8 +68,7 @@ sys = parallel $ do
         let caseName = "PING results in PONG" :: BS.ByteString
           in
           it (show caseName) $ \(Endpoints natsHost natsPort) -> do
-            socket <- defaultConn natsHost natsPort
-            c <- newClient socket [withConnectName caseName]
+            c <- newClient [(natsHost, natsPort)] [withConnectName caseName]
             wg <- newWaitGroup 1
             ping c $ done wg
             wait wg
@@ -78,18 +77,16 @@ sys = parallel $ do
           it (show caseName) $ \(Endpoints natsHost natsPort) -> do
             let topic = "SOME.TOPIC"
             let payload = "HELLO"
-            socket <- defaultConn natsHost natsPort
             lock <- newEmptyMVar
             sidBox <- newEmptyMVar
             wg <- newWaitGroup 1
-            assertClient <- newClient socket [withConnectName caseName]
+            assertClient <- newClient [(natsHost, natsPort)] [withConnectName caseName]
             subscribe assertClient topic $ \msg -> do
               unsubscribe assertClient (sid msg)
               putMVar lock msg
               putMVar sidBox (sid msg)
               done wg
-            socket' <- defaultConn natsHost natsPort
-            promptClient <- newClient socket' [withConnectName caseName]
+            promptClient <- newClient [(natsHost, natsPort)] [withConnectName caseName]
             publish promptClient topic [pubWithPayload payload]
             wait wg
             msg <- takeMVar lock
@@ -99,13 +96,11 @@ sys = parallel $ do
           in
           it (show caseName) $ \(Endpoints natsHost natsPort) -> do
           let topic = "REQ.TOPIC"
-          socket <- defaultConn natsHost natsPort
-          remoteClient <- newClient socket [withConnectName caseName]
+          remoteClient <- newClient [(natsHost, natsPort)] [withConnectName caseName]
           subscribe remoteClient topic $ \msg -> do
             publish remoteClient (fromJust . replyTo $ msg) [pubWithPayload "WORLD"]
             unsubscribe remoteClient (sid msg)
-          socket' <- defaultConn natsHost natsPort
-          promptClient <- newClient socket' [withConnectName caseName]
+          promptClient <- newClient [(natsHost, natsPort)] [withConnectName caseName]
           wg <- newWaitGroup 1
           publish promptClient topic [pubWithReplyCallback (\_ -> done wg), pubWithPayload "HELLO"]
           wait wg

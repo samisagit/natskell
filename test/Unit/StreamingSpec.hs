@@ -30,7 +30,6 @@ import           GHC.IO.IOMode
 import           Lib.Logger
 import           Lib.Parser
 import           Network.Socket         hiding (Debug)
-import           Pipeline.Status
 import           Pipeline.Streaming
 import           Prelude                hiding
     ( head
@@ -43,9 +42,10 @@ import           Prelude                hiding
     )
 import           Test.Hspec
 
-defaultLogger :: LoggerConfig
-defaultLogger = LoggerConfig Debug $ \lvl msg ->
-  putStrLn $ "[" ++ show lvl ++ "] " ++ msg
+defaultLogger' :: IO LoggerConfig
+defaultLogger' = do
+  lock <- newTMVarIO ()
+  pure $ LoggerConfig Debug (\lvl msg -> putStrLn $ "[" ++ [firstChar lvl] ++ "] " ++ msg) lock
 
 spec :: Spec
 spec = do
@@ -53,10 +53,11 @@ spec = do
       it "reads from source and writes to sink" $ do
         (server, client) <- makeSocketPair
         result <- newTVarIO "" :: IO (TVar ByteString)
-        status <- newTVarIO Connecting :: IO (TVar Status)
         let parser bs = Right (pack [head bs], tail bs) :: Either ParserErr (ByteString, ByteString)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
-        (forkIO . runWithLogger defaultLogger) . runPipeline client parser sink $ status
+        status <- newTVarIO False
+        dl <- defaultLogger'
+        (forkIO . runWithLogger dl) . runPipeline client parser sink $ status
         hPut server "Hello, World"
         atomically $ assertTVarWithRetry result "Hello, World"
         hClose server
@@ -64,10 +65,11 @@ spec = do
       it "continues reading from the handle after reaching end" $ do
         (server, client) <- makeSocketPair
         result <- newTVarIO "" :: IO (TVar ByteString)
-        status <- newTVarIO Connecting :: IO (TVar Status)
         let parser bs = Right (pack [head bs], tail bs) :: Either ParserErr (ByteString, ByteString)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
-        (forkIO . runWithLogger defaultLogger) . runPipeline client parser sink $ status
+        status <- newTVarIO False
+        dl <- defaultLogger'
+        (forkIO . runWithLogger dl) . runPipeline client parser sink $ status
         hPut server "Hello, World"
         atomically $ assertTVarWithRetry result "Hello, World"
         hPut server "Hello, again"
@@ -77,9 +79,10 @@ spec = do
       it "applies the parser healing" $ do
         (server, client) <- makeSocketPair
         result <- newTVarIO "" :: IO (TVar ByteString)
-        status <- newTVarIO Connecting :: IO (TVar Status)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
-        (forkIO . runWithLogger defaultLogger) . runPipeline client testParserExcludingUpper  sink $ status
+        status <- newTVarIO False
+        dl <- defaultLogger'
+        (forkIO . runWithLogger dl) . runPipeline client testParserExcludingUpper  sink $ status
         hPut server "HELLO WORLD hello, world"
         atomically $ assertTVarWithRetry result "  hello, world"
         hClose server
@@ -87,9 +90,10 @@ spec = do
       it "waits for more data" $ do
         (server, client) <- makeSocketPair
         result <- newTVarIO "" :: IO (TVar ByteString)
-        status <- newTVarIO Connecting :: IO (TVar Status)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
-        (forkIO . runWithLogger defaultLogger) . runPipeline client testParserForExplicitWord  sink $ status
+        status <- newTVarIO False
+        dl <- defaultLogger'
+        (forkIO . runWithLogger dl) . runPipeline client testParserForExplicitWord  sink $ status
         hPut server "part1"
         threadDelay 100000
         atomically $ ensureTVarIsEmpty result

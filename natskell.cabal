@@ -52,8 +52,10 @@ library
     Client
 
   other-modules:
-     Types
-     Sid
+    Types
+    Sid
+    Options
+    MSGView
 
   hs-source-dirs:
        client
@@ -90,7 +92,6 @@ library natskell-internal
     Pipeline.Broadcasting
     Pipeline.Streaming
     Pipeline.Operator
-    Pipeline.Status
 
   hs-source-dirs:
     internal
