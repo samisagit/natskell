@@ -35,6 +35,8 @@ data Config = Config
                 , connectConfig      :: Connect.Connect
                 , loggerConfig       :: LoggerConfig
                 , auth               :: Auth
+                , exitAction         :: IO ()
+                , connectOptions     :: [(String, Int)]
                 }
 
 withConnectName :: BS.ByteString -> ConfigOpts
@@ -60,6 +62,9 @@ withLoggerConfig loggerConfig config = config { loggerConfig = loggerConfig }
 
 withConnectionAttempts :: Int -> ConfigOpts
 withConnectionAttempts attempts config = config { connectionAttempts = attempts }
+
+withExitAction :: IO () -> ConfigOpts
+withExitAction action config = config { exitAction = action }
 
 type PubOptions = (Maybe Payload, Maybe (MsgView -> IO ()), Maybe Headers)
 

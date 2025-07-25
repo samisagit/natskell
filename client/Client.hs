@@ -23,6 +23,7 @@ module Client (
   withTLSCert,
   withLoggerConfig,
   withConnectionAttempts,
+  withExitAction,
   AuthTokenData,
   UserPassData,
   NKeyData,
@@ -84,11 +85,13 @@ newClient servers conOpts = do
     , auth = None
     , loggerConfig = dl
     , connectionAttempts = 5
+    , exitAction = return ()
+    , connectOptions = servers
   }
 
-  handle <- case servers of
+  handle <- case connectOptions defaultConfig of
     []             -> error "No server pairs provided"
-    (host, port):_ -> liftIO $ defaultConn host port
+    (host, port):_ -> defaultConn host port
 
   client <- liftIO $ Client'
     <$> newTBQueueIO 1000
@@ -113,22 +116,33 @@ newClient servers conOpts = do
 
 retryLoop :: Client -> IO ()
 retryLoop client = do
-    wg <- liftIO $ newWaitGroup 1
+    -- TODO: this should probably cycle through the servers, could base this on the retry count..
+    handle <- case connectOptions (config client) of
+      []             -> error "No server pairs provided"
+      (host, port):_ -> defaultConn host port
+
     runClient client $ logDebug "Starting the client streaming threads"
-    handle <- readTVarIO (conn client)
+    wg <- newWaitGroup 1
     runClient client $ O.run handle (poisonpill client) genericParse (router client) (queue client)
       >> (liftIO . done $ wg)
+
     runClient client $ logDebug "Waiting for INFO"
-    atomically $ readTMVar (serverInfo client)
+    atomically $ readTMVar (serverInfo client) --  TODO: or what
     runClient client $ logDebug "INFO received"
+
+    -- attempt reconnection if the connection is lost
     wait wg
     connectAttempts <- readTVarIO (connectionAttempts' client)
-    if connectAttempts > 0
-      then do
+    case connectAttempts of
+      0 -> do
+        runClient client $ logFatal "connection attempts exceeded, stopping client"
+        h <- readTVarIO (conn client)
+        hClose h
+        exitAction . config $ client
+      _ -> do
         runClient client $ logDebug "Retrying connection"
         atomically $ modifyTVar' (connectionAttempts' client) (\x -> x - 1)
         retryLoop client
-      else runClient client $ logFatal "Connection attempts exceeded, stopping client"
 
 -- | publish sends a message to the NATS server.
 publish :: Client -> Subject -> [PubOptions -> PubOptions] -> IO ()
@@ -185,7 +199,6 @@ close :: Client -> IO ()
 close client = do
   runClient client $ logInfo "Closing the client connection"
   atomically $ writeTVar (poisonpill client) True
--- TODO: log
 
 -- internal handlers
 

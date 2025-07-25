@@ -104,4 +104,11 @@ sys = parallel $ do
           wg <- newWaitGroup 1
           publish promptClient topic [pubWithReplyCallback (\_ -> done wg), pubWithPayload "HELLO"]
           wait wg
+        let caseName = "user can close connection" :: BS.ByteString
+          in
+          it (show caseName) $ \(Endpoints natsHost natsPort) -> do
+          wg <- newWaitGroup 1
+          client <- newClient [(natsHost, natsPort)] [withConnectName caseName, withExitAction (done wg)]
+          close client
+          wait wg
 
