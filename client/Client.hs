@@ -24,6 +24,8 @@ module Client (
   withLoggerConfig,
   withConnectionAttempts,
   withExitAction,
+  LoggerConfig (..),
+  LogLevel (..),
   AuthTokenData,
   UserPassData,
   NKeyData,
@@ -33,35 +35,36 @@ module Client (
   TLSCertData,
   ) where
 
+import           Control.Concurrent
 import           Control.Concurrent.STM
+import           Control.Exception
 import           Control.Monad
 import           Control.Monad.IO.Class
-import qualified Data.ByteString           as BS
-import           Data.Map                  (Map, delete, insert, lookup)
+import qualified Data.ByteString        as BS
+import           Data.Map               (Map, delete, insert, lookup)
 import           Lib.CallOption
 import           Lib.Logger
 import           MSGView
-import qualified Network.Simple.TCP        as TCP
-import qualified Network.Socket            as NS
+import qualified Network.Simple.TCP     as TCP
+import qualified Network.Socket         as NS
 import           Options
 import           Parsers.Parsers
-import           Pipeline.Broadcasting     as B
-import qualified Pipeline.Operator         as O
-import           Prelude                   hiding (lookup)
-import           Sid                       (nextSID)
+import           Pipeline.Broadcasting  as B
+import qualified Pipeline.Operator      as O
+import           Prelude                hiding (lookup)
+import           Sid                    (nextSID)
 import           System.IO
-import           System.Random             (StdGen, newStdGen)
-import           Transformers.Transformers (Transformer (transform))
+import           System.Random          (StdGen, newStdGen)
 import           Types
-import qualified Types.Connect             as Connect (Connect (..))
-import qualified Types.Err                 as E
-import qualified Types.Info                as I
-import qualified Types.Msg                 as M
+import qualified Types.Connect          as Connect (Connect (..))
+import qualified Types.Err              as E
+import qualified Types.Info             as I
+import qualified Types.Msg              as M
 import           Types.Ping
 import           Types.Pong
-import qualified Types.Pub                 as P
-import qualified Types.Sub                 as Sub
-import qualified Types.Unsub               as Unsub
+import qualified Types.Pub              as P
+import qualified Types.Sub              as Sub
+import qualified Types.Unsub            as Unsub
 import           WaitGroup
 
 -- | Client is used to interact with the NATS server.
@@ -73,7 +76,6 @@ data Client = Client'
                 , serverInfo          :: TMVar I.Info
                 , connectionAttempts' :: TVar Int
                 , poisonpill          :: TVar Bool
-                , conn                :: TVar Handle
                 , config              :: Config
                 }
 
@@ -89,23 +91,18 @@ newClient servers conOpts = do
     , connectOptions = servers
   }
 
-  handle <- case connectOptions defaultConfig of
-    []             -> error "No server pairs provided"
-    (host, port):_ -> defaultConn host port
-
   client <- liftIO $ Client'
     <$> newTBQueueIO 1000
     <*> newTVarIO mempty
     <*> newTVarIO []
     <*> (newTVarIO =<< newStdGen)
     <*> newEmptyTMVarIO
-    <*> newTVarIO 0
+    <*> newTVarIO (connectionAttempts defaultConfig)
     <*> newTVarIO False
-    <*> newTVarIO handle
     <*> pure defaultConfig
 
   runClient client . logAuthMethod $ auth defaultConfig
-  retryLoop client
+  forkIO $ retryLoop client
 
    -- ensure that the server info is initialized
   atomically $ do
@@ -114,35 +111,43 @@ newClient servers conOpts = do
 
   return client
 
+acquireHandle :: Client -> IO Handle
+acquireHandle client =
+  case connectOptions (config client) of
+    []             -> error "No server pairs provided"
+    (host, port):_ -> defaultConn host port
+
+withHandle :: Client -> (Handle -> IO a) -> IO a
+withHandle client = bracket
+    (acquireHandle client)
+    hClose
+
 retryLoop :: Client -> IO ()
 retryLoop client = do
-    -- TODO: this should probably cycle through the servers, could base this on the retry count..
-    handle <- case connectOptions (config client) of
-      []             -> error "No server pairs provided"
-      (host, port):_ -> defaultConn host port
+  -- TODO: this should probably cycle through the servers, could base this on the retry count..
+  withHandle client $ \handle -> do
+    runClient client $ do
+      logDebug "Starting the client streaming threads"
+      O.run handle (poisonpill client) genericParse (router client) (queue client)
+      logDebug "Waiting for INFO"
+      liftIO . atomically $ readTMVar (serverInfo client) --  TODO: or what
+      logDebug "INFO received"
 
-    runClient client $ logDebug "Starting the client streaming threads"
-    wg <- newWaitGroup 1
-    runClient client $ O.run handle (poisonpill client) genericParse (router client) (queue client)
-      >> (liftIO . done $ wg)
-
-    runClient client $ logDebug "Waiting for INFO"
-    atomically $ readTMVar (serverInfo client) --  TODO: or what
-    runClient client $ logDebug "INFO received"
-
-    -- attempt reconnection if the connection is lost
-    wait wg
     connectAttempts <- readTVarIO (connectionAttempts' client)
     case connectAttempts of
       0 -> do
         runClient client $ logFatal "connection attempts exceeded, stopping client"
-        h <- readTVarIO (conn client)
-        hClose h
-        exitAction . config $ client
+        atomically $ writeTVar (poisonpill client) True
       _ -> do
-        runClient client $ logDebug "Retrying connection"
-        atomically $ modifyTVar' (connectionAttempts' client) (\x -> x - 1)
-        retryLoop client
+        pp <- readTVarIO (poisonpill client)
+        if pp
+          then do
+            runClient client $ logDebug "Poison pill received, stopping client"
+            exitAction . config $ client
+          else do
+            runClient client $ logDebug "Retrying connection"
+            atomically $ modifyTVar' (connectionAttempts' client) (\x -> x - 1)
+            retryLoop client
 
 -- | publish sends a message to the NATS server.
 publish :: Client -> Subject -> [PubOptions -> PubOptions] -> IO ()
@@ -237,6 +242,7 @@ subscribe' isReply client subject callback = do
   return sid
 
 -- TODO: we could make all these monadic functions so we have access to the logger, and later the config
+-- +1 I'd like to log these actions
 router :: Client -> ParsedMessage -> IO ()
 router client msg = do
   case msg of
@@ -307,14 +313,10 @@ defaultConnect = Connect.Connect{
 connect :: Client -> IO ()
 connect client = do
   runClient client $ logDebug "Connecting to the NATS server"
-  handle <- readTVarIO (conn client)
   let dat = connectConfig . config $ client
-  BS.hPut handle $ transform dat
-  hFlush handle
+  atomically $ writeTBQueue (queue client) (QueueItem dat)
 
 pong :: Client -> IO ()
 pong client = do
   runClient client $ logDebug "Sending PONG to server"
-  handle <- readTVarIO (conn client)
-  BS.hPut handle $ transform Pong
-  hFlush handle
+  atomically $ writeTBQueue (queue client) (QueueItem Pong)

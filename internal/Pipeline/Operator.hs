@@ -26,8 +26,15 @@ run :: (MonadLogger m , MonadIO m, MonadReader LoggerConfig m)
 run conn poisonpill parser router queue = do
   cfg <- ask
   wg <- liftIO . newWaitGroup $ 2
+  logDebug "starting threads"
   liftIO $ do
-    ((void . forkIO) . runWithLogger cfg $ S.runPipeline conn parser router poisonpill) >> done wg
-    ((void . forkIO) . runWithLogger cfg $ B.runPipeline queue conn poisonpill) >> done wg
+    (void . forkIO) $ do
+      runWithLogger cfg $ S.runPipeline conn parser router poisonpill
+      done wg
+    (void . forkIO) $ do
+      runWithLogger cfg $ B.runPipeline queue conn poisonpill
+      done wg
   liftIO . wait $ wg
+  logDebug "threads finished.."
+  return ()
 

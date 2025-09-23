@@ -47,13 +47,13 @@ handleSource :: (MonadLogger m , MonadIO m)
 handleSource handle poisonpill = do
   s <- liftIO $ readTVarIO poisonpill
   case s of
-    True -> return ()
+    True -> lift . logDebug $ "poison pill received, stopping reader"
     _ -> do
            lift . logDebug $ "reading from socket"
            result <- liftIO . try $ hGetSome handle 4096
            case result of
              Left (e :: IOException) -> do
-               lift .logFatal $ "IOException: " ++ show e
+               lift . logFatal $ "IOException: " ++ show e
                liftIO . atomically $ writeTVar poisonpill True
                return ()
              Right chunk ->

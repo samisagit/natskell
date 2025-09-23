@@ -25,7 +25,7 @@ sourceQueue :: (MonadLogger m , MonadIO m)
 sourceQueue q s = do
   x <- liftIO . consumeUntil q $ s
   case x of
-    Nothing              -> return ()
+    Nothing              -> lift . logDebug $ "poison pill received, stopping writer"
     Just (QueueItem msg) -> yield (transform msg) >> sourceQueue q s
 
 sink :: (MonadLogger m , MonadIO m)

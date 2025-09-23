@@ -1,13 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module ClientSpec (spec) where
+
 import           Client
-import qualified Data.ByteString      as BS
+import           Control.Concurrent.STM
+import qualified Data.ByteString        as BS
 import           Data.Maybe
 import           GHC.MVar
 import           Test.Hspec
 import           TestContainers
-import qualified TestContainers.Hspec as TC
+import qualified TestContainers.Hspec   as TC
 import           WaitGroup
 
 data Endpoints = Endpoints
@@ -33,6 +35,10 @@ breakLogFile fp = do
   BS.appendFile fp "\r\n"
   BS.appendFile fp "\r\n"
 
+testLoggerConfig :: IO LoggerConfig
+testLoggerConfig = do
+  lock <- newTMVarIO ()
+  pure $ LoggerConfig Debug (\l s -> putStrLn s) lock
 
 container :: TC.TestContainer Endpoints
 container = do
@@ -63,12 +69,13 @@ spec = do
 
 sys = parallel $ do
   describe "client" $ do
+    logger <- runIO testLoggerConfig
     around_ (\action -> action >> breakLogFile "nats.log") $ do
       around (TC.withContainers container) $ do
         let caseName = "PING results in PONG" :: BS.ByteString
           in
           it (show caseName) $ \(Endpoints natsHost natsPort) -> do
-            c <- newClient [(natsHost, natsPort)] [withConnectName caseName]
+            c <- newClient [(natsHost, natsPort)] [withConnectName caseName, withLoggerConfig logger]
             wg <- newWaitGroup 1
             ping c $ done wg
             wait wg
@@ -80,13 +87,13 @@ sys = parallel $ do
             lock <- newEmptyMVar
             sidBox <- newEmptyMVar
             wg <- newWaitGroup 1
-            assertClient <- newClient [(natsHost, natsPort)] [withConnectName caseName]
+            assertClient <- newClient [(natsHost, natsPort)] [withConnectName caseName, withLoggerConfig logger]
             subscribe assertClient topic $ \msg -> do
               unsubscribe assertClient (sid msg)
               putMVar lock msg
               putMVar sidBox (sid msg)
               done wg
-            promptClient <- newClient [(natsHost, natsPort)] [withConnectName caseName]
+            promptClient <- newClient [(natsHost, natsPort)] [withConnectName caseName, withLoggerConfig logger]
             publish promptClient topic [pubWithPayload payload]
             wait wg
             msg <- takeMVar lock
@@ -96,11 +103,11 @@ sys = parallel $ do
           in
           it (show caseName) $ \(Endpoints natsHost natsPort) -> do
           let topic = "REQ.TOPIC"
-          remoteClient <- newClient [(natsHost, natsPort)] [withConnectName caseName]
+          remoteClient <- newClient [(natsHost, natsPort)] [withConnectName caseName, withLoggerConfig logger]
           subscribe remoteClient topic $ \msg -> do
             publish remoteClient (fromJust . replyTo $ msg) [pubWithPayload "WORLD"]
             unsubscribe remoteClient (sid msg)
-          promptClient <- newClient [(natsHost, natsPort)] [withConnectName caseName]
+          promptClient <- newClient [(natsHost, natsPort)] [withConnectName caseName, withLoggerConfig logger]
           wg <- newWaitGroup 1
           publish promptClient topic [pubWithReplyCallback (\_ -> done wg), pubWithPayload "HELLO"]
           wait wg
@@ -108,7 +115,7 @@ sys = parallel $ do
           in
           it (show caseName) $ \(Endpoints natsHost natsPort) -> do
           wg <- newWaitGroup 1
-          client <- newClient [(natsHost, natsPort)] [withConnectName caseName, withExitAction (done wg)]
+          client <- newClient [(natsHost, natsPort)] [withConnectName caseName, withExitAction (done wg), withLoggerConfig logger]
           close client
           wait wg
 
