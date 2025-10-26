@@ -90,9 +90,17 @@ library natskell-internal
     Types.Sub
     Types.Unsub
     WaitGroup
-    Pipeline.Broadcasting
-    Pipeline.Streaming
-    Pipeline.Operator
+    Pipeline.Broadcasting.Source
+    Pipeline.Broadcasting.Transformer
+    Pipeline.Broadcasting.Sink
+    Pipeline.Broadcasting.API
+    Pipeline.Streaming.API
+    Pipeline.Streaming.Source
+    Pipeline.Streaming.Parser
+    Pipeline.Streaming.Sink
+    Network.API
+    Network.Connection
+    Queue.API
 
   hs-source-dirs:
     internal
@@ -102,6 +110,9 @@ library natskell-internal
     internal/Validators
     internal/Lib
     internal/Pipeline
+    internal/Pipeline/Broadcasting
+    internal/Pipeline/Streaming
+    internal/Network
 
 library test-common
     import:         shared
@@ -175,7 +186,8 @@ test-suite system-test
       ClientSpec
   if flag (impure)
     type: exitcode-stdio-1.0
-    main-is: Spec.hs
+    main-is: Main.hs
   else
     type: exitcode-stdio-1.0
     main-is: Skip.hs
+

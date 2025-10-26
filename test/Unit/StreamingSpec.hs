@@ -6,11 +6,13 @@ module StreamingSpec where
 
 import           Control.Concurrent
 import           Control.Concurrent.STM
+import           Control.Exception
 import qualified Control.Monad
 import           Data.ByteString
     ( ByteString
     , append
     , empty
+    , hGetSome
     , hPut
     , head
     , isPrefixOf
@@ -29,8 +31,9 @@ import           GHC.IO.Handle
 import           GHC.IO.IOMode
 import           Lib.Logger
 import           Lib.Parser
+import           Network.API
 import           Network.Socket         hiding (Debug)
-import           Pipeline.Streaming
+import           Pipeline.Streaming.API
 import           Prelude                hiding
     ( head
     , last
@@ -47,6 +50,15 @@ defaultLogger' = do
   lock <- newTMVarIO ()
   pure $ LoggerConfig Debug (\lvl msg -> putStrLn $ "[" ++ [firstChar lvl] ++ "] " ++ msg) lock
 
+instance ConnectionReader Handle where
+  readData h n = do
+    result <- try (hGetSome h n) :: IO (Either SomeException ByteString)
+    case result of
+      Left err    -> return $ Left (show err)
+      Right bytes -> return $ Right bytes
+
+  closeReader = hClose
+
 spec :: Spec
 spec = do
   describe "Streaming" $ do
@@ -55,9 +67,8 @@ spec = do
         result <- newTVarIO "" :: IO (TVar ByteString)
         let parser bs = Right (pack [head bs], tail bs) :: Either ParserErr (ByteString, ByteString)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
-        status <- newTVarIO False
         dl <- defaultLogger'
-        (forkIO . runWithLogger dl) . runPipeline client parser sink $ status
+        (forkIO . runWithLogger dl) (run client parser sink :: AppM ())
         hPut server "Hello, World"
         atomically $ assertTVarWithRetry result "Hello, World"
         hClose server
@@ -67,9 +78,8 @@ spec = do
         result <- newTVarIO "" :: IO (TVar ByteString)
         let parser bs = Right (pack [head bs], tail bs) :: Either ParserErr (ByteString, ByteString)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
-        status <- newTVarIO False
         dl <- defaultLogger'
-        (forkIO . runWithLogger dl) . runPipeline client parser sink $ status
+        (forkIO . runWithLogger dl) (run client parser sink :: AppM ())
         hPut server "Hello, World"
         atomically $ assertTVarWithRetry result "Hello, World"
         hPut server "Hello, again"
@@ -80,9 +90,8 @@ spec = do
         (server, client) <- makeSocketPair
         result <- newTVarIO "" :: IO (TVar ByteString)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
-        status <- newTVarIO False
         dl <- defaultLogger'
-        (forkIO . runWithLogger dl) . runPipeline client testParserExcludingUpper  sink $ status
+        (forkIO . runWithLogger dl) (run client testParserExcludingUpper sink :: AppM ())
         hPut server "HELLO WORLD hello, world"
         atomically $ assertTVarWithRetry result "  hello, world"
         hClose server
@@ -91,9 +100,8 @@ spec = do
         (server, client) <- makeSocketPair
         result <- newTVarIO "" :: IO (TVar ByteString)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
-        status <- newTVarIO False
         dl <- defaultLogger'
-        (forkIO . runWithLogger dl) . runPipeline client testParserForExplicitWord  sink $ status
+        (forkIO . runWithLogger dl) (run client testParserForExplicitWord sink :: AppM ())
         hPut server "part1"
         threadDelay 100000
         atomically $ ensureTVarIsEmpty result

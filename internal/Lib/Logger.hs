@@ -41,6 +41,12 @@ instance MonadLogger AppM where
   logError = logGeneric Error
   logFatal = logGeneric Fatal
 
+class (MonadLogger m, MonadIO m) => MonadWithLogger m where
+  runWithLogger :: LoggerConfig -> m a -> IO a
+
+instance MonadWithLogger AppM where
+  runWithLogger cfg = flip runReaderT cfg . runAppM
+
 logGeneric :: LogLevel -> String -> AppM ()
 logGeneric lvl msg = do
   LoggerConfig minLvl out lock <- ask
@@ -48,9 +54,6 @@ logGeneric lvl msg = do
       (atomically $ takeTMVar lock)
       (\() -> atomically $ putTMVar lock ())
       (\() -> out lvl msg)
-
-runWithLogger :: LoggerConfig -> AppM a -> IO a
-runWithLogger cfg = flip runReaderT cfg . runAppM
 
 defaultLogger :: IO LoggerConfig
 defaultLogger = do
