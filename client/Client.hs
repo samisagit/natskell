@@ -2,40 +2,68 @@
 {-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE TypeApplications      #-}
 
 module Client (
   Client,
-  newClient,
-  defaultConn,
   MsgView (..),
+  newClient,
   publish,
   subscribe,
   unsubscribe,
   ping,
-  pubWithPayload,
-  pubWithReplyCallback,
-  pubWithHeaders,
+  Client.close,
+  withPayload,
+  withReplyCallback,
+  withHeaders,
+  withConnectName,
+  withAuthToken,
+  withUserPass,
+  withNKey,
+  withJWT,
+  withTLSCert,
+  withLoggerConfig,
+  withConnectionAttempts,
+  withExitAction,
+  LoggerConfig (..),
+  LogLevel (..),
+  AuthTokenData,
+  UserPassData,
+  NKeyData,
+  JWTTokenData,
+  TLSPublicKey,
+  TLSPrivateKey,
+  TLSCertData,
   ) where
 
 import           Control.Concurrent
 import           Control.Concurrent.STM
-import           Control.Monad             (void)
+import           Control.Exception
+import           Control.Monad
+import           Control.Monad.IO.Class
 import qualified Data.ByteString           as BS
 import           Data.Map                  (Map, delete, insert, lookup)
-import           Lib.Parser                (ParserErr (..))
+import           Lib.CallOption
+import           Lib.Logger
+import           MSGView
+import           Network.API
+import           Network.Connection
 import qualified Network.Simple.TCP        as TCP
 import qualified Network.Socket            as NS
+import           Options
 import           Parsers.Parsers
-import           Pipeline.Broadcasting     as B
-import           Pipeline.Streaming        as S
+import qualified Pipeline.Broadcasting.API as B
+import qualified Pipeline.Streaming.API    as S
+import           Prelude                   hiding (lookup)
+import           Queue.API
+import           Queue.TransactionalQueue
 import           Sid                       (nextSID)
 import           System.IO
-import           Transformers.Transformers (Transformer (transform))
+import           System.Random             (StdGen, newStdGen)
 import           Types
 import qualified Types.Connect             as Connect (Connect (..))
--- import qualified Types.Info                as I
-import           Prelude                   hiding (lookup)
-import           System.Random             (StdGen, newStdGen)
+import qualified Types.Err                 as E
+import qualified Types.Info                as I
 import qualified Types.Msg                 as M
 import           Types.Ping
 import           Types.Pong
@@ -44,115 +72,132 @@ import qualified Types.Sub                 as Sub
 import qualified Types.Unsub               as Unsub
 import           WaitGroup
 
--- | Client is used to iteract with the NATS server.
+-- | Client is used to interact with the NATS server.
 data Client = Client'
-                { queue     :: TBQueue QueueItem
-                , routes    :: TVar (Map Subject (M.Msg -> IO ()))
-                , pings     :: TVar [IO ()]
-                , randomGen :: TVar StdGen
+                { queue               :: Q QueueItem
+                , routes              :: TVar (Map Subject (M.Msg -> IO ()))
+                , pings               :: TVar [IO ()]
+                , randomGen           :: TVar StdGen
+                , serverInfo          :: TMVar I.Info
+                , connectionAttempts' :: TVar Int
+                , poisonpill          :: TVar Bool
+                , exited              :: TMVar ()
+                , config              :: Config
+                , conn                :: Conn
                 }
 
--- | MsgView represents a MSG in the NATS protocol.
-data MsgView = MsgView
-                 { -- | The subject of the message.
-                   subject :: BS.ByteString
-                   -- | The SID (subscription ID) of the message.
-                 , sid     :: BS.ByteString
-                   -- | The replyTo subject, if any.
-                 , replyTo :: Maybe BS.ByteString
-                   -- | The payload of the message, if any.
-                 , payload :: Maybe BS.ByteString
-                   -- | Headers associated with the message, if any.
-                 , headers :: Maybe [(BS.ByteString, BS.ByteString)]
-                 }
-  deriving (Eq, Show)
-
-transformMsg :: M.Msg -> MsgView
-transformMsg msg = MsgView {
-    subject = M.subject msg,
-    sid     = M.sid msg,
-    replyTo = M.replyTo msg,
-    payload = M.payload msg,
-    headers = M.headers msg
+-- | newClient creates a new client with optional overrides to default settings
+newClient :: [(String, Int)] -> [ConfigOpts] -> IO Client
+newClient servers conOpts = do
+  dl <- defaultLogger
+  let defaultConfig = applyCallOptions conOpts Config {
+    connectConfig = defaultConnect
+    , auth = None
+    , loggerConfig = dl
+    , connectionAttempts = 5
+    , exitAction = return ()
+    , connectOptions = servers
   }
 
-instance SelfHealer BS.ByteString ParserErr where
-  heal bs _  = (BS.tail bs, OK) -- TODO: this is a test implementation, should be replaced with a proper healing mechanism
+  c <- Conn <$> newEmptyTMVarIO <*> newEmptyTMVarIO <*> newEmptyTMVarIO
 
--- | defaultConn is a sane default connection that can be used as an argument to `newClient`.
-defaultConn :: String -> Int -> IO Handle
-defaultConn host port = do
-  (sock, _) <- TCP.connectSock host $ show port
-  NS.setSocketOption sock NS.NoDelay 1
-  NS.setSocketOption sock NS.Cork 0
-  NS.setSocketOption sock NS.RecvBuffer 1
-  NS.setSocketOption sock NS.SendBuffer 1
-  handle <- NS.socketToHandle sock ReadWriteMode
-  hSetBuffering handle NoBuffering
-  return handle
+  client <- liftIO $ Client'
+    <$> newQ
+    <*> newTVarIO mempty
+    <*> newTVarIO []
+    <*> (newTVarIO =<< newStdGen)
+    <*> newEmptyTMVarIO
+    <*> newTVarIO (connectionAttempts defaultConfig)
+    <*> newTVarIO False
+    <*> newEmptyTMVarIO
+    <*> pure defaultConfig
+    <*> pure c
 
--- | newClient creates a new `Client` instance and starts the necessary pipelines.
-newClient :: Handle -> IO Client
-newClient handle = do
-  pubQueue <- newTBQueueIO 1000
-  routerVar <- newTVarIO mempty
-  pingsVar <- newTVarIO []
-  randomGenVar <- newTVarIO =<< newStdGen
-  let client = Client' {
-    queue = pubQueue,
-    routes = routerVar,
-    pings = pingsVar,
-    randomGen = randomGenVar
-  }
+  runClient client . logAuthMethod $ auth defaultConfig
+  forkIO $ retryLoop client
 
-  infoWaiter <- newWaitGroup 1
-  void . forkIO . S.runPipeline handle genericParse $ sink client infoWaiter
-  wait infoWaiter
-
-  void . forkIO . B.runPipeline (queue client) $ handle
+   -- ensure that the server info is initialized
+  atomically $ do
+    readTMVar (serverInfo client)
+    return ()
+    `orElse`
+    readTMVar (exited client)
 
   return client
 
-  where
-    sink client wg msg = do
-      case msg of
-        ParsedMsg a  -> router client a
-        ParsedInfo _ -> connect handle >> done wg
-        ParsedPing _ -> pong handle
-        ParsedPong _ -> sequenceActions (pings client)
-        ParsedErr  _ -> print ("error reported: " ++ show msg)
-        ParsedOk   _ -> return ()
+acquireHandle :: Client -> IO (Either String Conn)
+acquireHandle client = do
+  attempts <- readTVarIO (connectionAttempts' client)
+  case connectOptions (config client) of
+    []             -> return (Left "No servers provided")
+    xs -> do
+      let (host, port) = cycle xs !! attempts
+      h <- try @SomeException (defaultConn host port)
+      case h of
+        Left e -> return (Left (show e))
+        Right h -> do
+          point (conn client) h
+          return . Right $ conn client
 
-sequenceActions :: TVar [IO ()] -> IO ()
-sequenceActions actionsVar = do
-  actions <- atomically $ do
-    as <- readTVar actionsVar
-    writeTVar actionsVar []
-    return as
-  sequence_ actions
+decomHandle ::  Either String Conn -> IO ()
+decomHandle (Left _)  = return ()
+decomHandle (Right h) = Network.Connection.close h
 
-router :: Client -> M.Msg -> IO ()
-router client msg = do
-  let sid = M.sid msg
-  callbacks <- readTVarIO (routes client)
-  case lookup sid callbacks of
-    Just callback -> callback msg
-    Nothing       -> putStrLn $ "No callback for SID: " ++ show sid
+withHandle :: Client -> (Either String Conn -> IO a) -> IO a
+withHandle client = bracket
+    (acquireHandle client)
+    decomHandle
 
-type PubOptions = (Maybe Payload, Maybe (MsgView -> IO ()), Maybe Headers)
+withRetry :: Client -> Int -> IO () -> IO ()
+withRetry c 0 _ = do
+  runClient c $ logInfo "Ran out of retries, exiting"
+  exitAction . config $ c
+  atomically $ putTMVar (exited c) ()
+  return ()
+withRetry c x action = do
+  pp <- readTVarIO (poisonpill c)
+  when pp $ do
+    runClient c $ logInfo "Client closing, skipping retries"
+    exitAction . config $ c
+    atomically $ putTMVar (exited c) ()
+    return ()
+  unless pp $ do
+    action
+    runClient c $ logInfo "Retrying client connection"
+    atomically $ modifyTVar (connectionAttempts' c) (+1)
+    withRetry c (x-1) action
+
+retryLoop :: Client -> IO ()
+retryLoop client = do
+  let attemptsLeft = connectionAttempts . config $ client
+  withRetry client attemptsLeft $ do
+    withHandle client $ \handle -> do
+      case handle of
+        (Left e) -> runClient client . logError $ show e
+        (Right h) -> do
+          runClient client $ do
+            wg <- liftIO $ newWaitGroup 2
+            logDebug "Starting the client streaming threads"
+            liftIO . void . forkIO $ do
+              runClient client $ B.run (queue client) h
+              runClient client $ logDebug "Broadcasting thread has exited"
+              done wg
+            liftIO . void . forkIO $ do
+              runClient client $ S.run h genericParse (router client)
+              runClient client $ logDebug "Streaming thread has exited"
+              done wg
+            liftIO $ wait wg
+            logDebug "Streaming threads have exited, closing connection"
 
 -- | publish sends a message to the NATS server.
 publish :: Client -> Subject -> [PubOptions -> PubOptions] -> IO ()
 publish client subject opts = do
-  let (payload, callback, headers) = applyPubOptions defaultPubOptions opts
+  runClient client . logDebug $ ("Publishing to subject: " ++ show subject)
+  let (payload, callback, headers) = applyCallOptions opts (Nothing, Nothing, Nothing)
 
   replyTo <- case callback of
     Just cb -> do
-      rand <- atomically $ do
-        rg <- readTVar (randomGen client)
-        let (rand, stdGen) = nextSID rg
-        writeTVar (randomGen client) stdGen
-        return rand
+      rand <- newHash client
       let replyTo = BS.append "RES." rand
       request client replyTo cb
       return (Just replyTo)
@@ -165,15 +210,67 @@ publish client subject opts = do
     P.headers = headers
   }
 
-  atomically $ writeTBQueue (queue client) (QueueItem msg)
+  writeToClientQueue client (QueueItem msg)
 
+-- | subscribe is used to subscribe to a subject on the NATS server.
+subscribe :: Client -> Subject -> (MsgView -> IO ()) -> IO SID
+subscribe = subscribe' False
+
+request :: Client -> Subject -> (MsgView -> IO ()) -> IO SID
+request = do
+  subscribe' True
+
+-- | unsubscribe is used to unsubscribe from a subject on the NATS server.
+unsubscribe :: Client -> SID -> IO ()
+unsubscribe client sid = do
+  runClient client . logDebug $ ("Unsubscribing from subject with SID: " ++ show sid)
+  atomically $ modifyTVar' (routes client) (delete sid)
+  let unsub = Unsub.Unsub {
+    Unsub.sid = sid,
+    Unsub.maxMsg = Nothing
+  }
+
+  writeToClientQueue client (QueueItem unsub)
+
+-- | ping is used to send a ping message to the NATS server.
+ping :: Client -> IO () -> IO ()
+ping client action = do
+  runClient client $ logDebug "Sending PING to server"
+  atomically $ modifyTVar' (pings client) (action :)
+  writeToClientQueue client (QueueItem Ping)
+
+-- | close is used to close the connection to the NATS server.
+close :: Client -> IO ()
+close client = do
+  atomically $ writeTVar (poisonpill client) True
+  runClient client $ logInfo "Closing the client connection"
+  Queue.API.close $ queue client
+  closeReader (conn client)
+  atomically $ takeTMVar (exited client)
+
+-- internal handlers
+
+runClient :: Client -> AppM a -> IO a
+runClient client action = do
+  let cfg = config client
+  runWithLogger (loggerConfig cfg) action
+
+defaultConn :: String -> Int -> IO Handle
+defaultConn host port = do
+  (sock, _) <- TCP.connectSock host $ show port
+  NS.setSocketOption sock NS.NoDelay 1
+  NS.setSocketOption sock NS.Cork 0
+  NS.setSocketOption sock NS.RecvBuffer 1
+  NS.setSocketOption sock NS.SendBuffer 1
+  handle <- NS.socketToHandle sock ReadWriteMode
+  hSetBuffering handle NoBuffering
+  return handle
+
+-- TODO: need to build in the timeout handling here
 subscribe' :: Bool -> Client -> Subject -> (MsgView -> IO ()) -> IO SID
 subscribe' isReply client subject callback = do
-  sid <- atomically $ do
-    rg <- readTVar (randomGen client)
-    let (rand, stdGen) = nextSID rg
-    writeTVar (randomGen client) stdGen
-    return rand
+  runClient client . logDebug $ ("Subscribing to subject: " ++ show subject)
+  sid <- newHash client
   let cb = if isReply
         then \m -> callback (transformMsg m) >> unsubscribe client sid
         else callback . transformMsg
@@ -184,53 +281,60 @@ subscribe' isReply client subject callback = do
     Sub.sid = sid
   }
 
-  atomically $ writeTBQueue (queue client) (QueueItem sub)
+  writeToClientQueue client (QueueItem sub)
 
   return sid
 
--- | subscribe is used to subscribe to a subject on the NATS server.
-subscribe :: Client -> Subject -> (MsgView -> IO ()) -> IO SID
-subscribe = subscribe' False
+-- TODO: we could make all these monadic functions so we have access to the logger, and later the config
+-- +1 I'd like to log these actions
+router :: Client -> ParsedMessage -> IO ()
+router client msg = do
+  case msg of
+    ParsedMsg a  -> msgRouter client a
+    ParsedInfo i -> connect client >> atomically (putTMVar (serverInfo client) i)
+    ParsedPing _ -> pong client
+    ParsedPong _ -> sequenceActions (pings client)
+    ParsedOk   _ -> return ()
+    ParsedErr err -> case E.isFatal err of
+      True  -> do
+        runClient client . logError $ ("Fatal error: " ++ show err)
+        Client.close client
+      False -> runClient client . logWarn $ ("Error: " ++ show err)
 
-request :: Client -> Subject -> (MsgView -> IO ()) -> IO SID
-request = subscribe' True
+logAuthMethod :: Auth -> AppM ()
+logAuthMethod auth = case auth of
+  None               -> logInfo "No authentication method provided"
+  AuthToken _        -> logInfo "Using auth token"
+  UserPass (user, _) -> logInfo $ "Using user/pass: " ++ show user
+  NKey _             -> logInfo "Using NKey"
+  JWT _              -> logInfo "Using JWT"
+  TLSCert _          -> logInfo "Using TLS certificate"
 
--- | unsubscribe is used to unsubscribe from a subject on the NATS server.
-unsubscribe :: Client -> SID -> IO ()
-unsubscribe client sid = do
-  atomically $ modifyTVar' (routes client) (delete sid)
-  let unsub = Unsub.Unsub {
-    Unsub.sid = sid,
-    Unsub.maxMsg = Nothing
-  }
+sequenceActions :: TVar [IO ()] -> IO ()
+sequenceActions actionsVar = do
+  actions <- atomically $ do
+    as <- readTVar actionsVar
+    writeTVar actionsVar []
+    return as
+  sequence_ actions
 
-  atomically $ writeTBQueue (queue client) (QueueItem unsub)
+msgRouter :: Client -> M.Msg -> IO ()
+msgRouter client msg = do
+  let sid = M.sid msg
+  callbacks <- readTVarIO (routes client)
+  case lookup sid callbacks of
+    Just callback -> do
+      runClient client . logDebug $ ("Running callback for SID: " ++ show sid)
+      callback msg
+    Nothing       -> runClient client . logError $ ("No callback for SID: " ++ show sid)
 
--- | ping is used to send a ping message to the NATS server.
-ping :: Client -> IO () -> IO ()
-ping client action = do
-  atomically $ modifyTVar' (pings client) (action :)
-  atomically $ writeTBQueue (queue client) (QueueItem Ping)
 
-applyPubOptions :: PubOptions -> [PubOptions -> PubOptions] -> PubOptions
-applyPubOptions = foldl (flip ($))
-
-defaultPubOptions :: PubOptions
-defaultPubOptions = (Nothing, Nothing, Nothing)
-
--- | pubWithPayload is used to set the payload for a publish operation.
-pubWithPayload :: Payload -> PubOptions -> PubOptions
-pubWithPayload payload (_, callback, headers) = (Just payload, callback, headers)
-
--- | pubWithReplyCallback is used to set a callback for a reply to a publish operation.
-pubWithReplyCallback :: (MsgView -> IO ()) -> PubOptions -> PubOptions
-pubWithReplyCallback callback (payload, _, headers) = (payload, Just callback, headers)
-
--- | pubWithHeaders is used to set headers for a publish operation.
-pubWithHeaders :: Headers -> PubOptions -> PubOptions
-pubWithHeaders headers (payload, callback, _) = (payload, callback, Just headers)
-
--- internal handlers
+newHash :: Client -> IO SID
+newHash client = atomically $ do
+    rg <- readTVar (randomGen client)
+    let (rand, stdGen) = nextSID rg
+    writeTVar (randomGen client) stdGen
+    return rand
 
 defaultConnect = Connect.Connect{
   Connect.verbose = False,
@@ -250,12 +354,20 @@ defaultConnect = Connect.Connect{
   Connect.headers = Just True
   }
 
-connect :: Handle -> IO ()
-connect handle = do
-  BS.hPut handle $ transform defaultConnect
-  hFlush handle
+connect :: Client -> IO ()
+connect client = do
+  runClient client $ logDebug "Connecting to the NATS server"
+  let dat = connectConfig . config $ client
+  writeToClientQueue client (QueueItem dat)
 
-pong :: Handle -> IO ()
-pong handle = do
-  BS.hPut handle $ transform Pong
-  hFlush handle
+pong :: Client -> IO ()
+pong client = writeToClientQueue client (QueueItem Pong)
+
+writeToClientQueue :: Client -> QueueItem -> IO ()
+writeToClientQueue client item = do
+  res <- case client of
+    Client' {queue = q} -> enqueue q item
+  case res of
+    Left err -> runClient client . logError $ ("Error enqueueing item: " ++ err)
+    Right () -> return ()
+

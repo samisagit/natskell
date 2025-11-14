@@ -12,27 +12,26 @@ import           Types.Err
 
 explicitCases :: [(BS.ByteString, Err)]
 explicitCases = [
-  ("-ERR 'Unknown Protocol Operation'\r\n", Err "Unknown Protocol Operation" True),
-  ("-ERR 'Attempted To Connect To Route Port'\r\n", Err "Attempted To Connect To Route Port" True),
-  ("-ERR 'Authorization Violation'\r\n", Err "Authorization Violation" True),
-  ("-ERR 'Authorization Timeout'\r\n", Err "Authorization Timeout" True),
-  ("-ERR 'Invalid Client Protocol'\r\n", Err "Invalid Client Protocol" True),
-  ("-ERR 'Maximum Control Line Exceeded'\r\n", Err "Maximum Control Line Exceeded" True),
-  ("-ERR 'Parser Error'\r\n", Err "Parser Error" True),
-  ("-ERR 'Secure Connection - TLS Required'\r\n", Err "Secure Connection - TLS Required" True),
-  ("-ERR 'Stale Connection'\r\n", Err "Stale Connection" True),
-  ("-ERR 'Maximum Connections Exceeded'\r\n", Err "Maximum Connections Exceeded" True),
-  ("-ERR 'Slow Consumer'\r\n", Err "Slow Consumer" True),
-  ("-ERR 'Maximum Payload Violation'\r\n", Err "Maximum Payload Violation" True),
-  ("-ERR 'Invalid Subject'\r\n", Err "Invalid Subject" False),
-  ("-ERR 'Permissions Violation For Subscription To FOO.'\r\n", Err "Permissions Violation For Subscription To FOO." False),
-  ("-ERR 'Permissions Violation For Publish To FOO.'\r\n", Err "Permissions Violation For Publish To FOO." False)
+  ("-ERR 'Unknown Protocol Operation'\r\n", ErrUnknownOp "Unknown Protocol Operation"),
+  ("-ERR 'Attempted To Connect To Route Port'\r\n", ErrRoutePortConn "Attempted To Connect To Route Port"),
+  ("-ERR 'Authorization Violation'\r\n", ErrAuthViolation "Authorization Violation"),
+  ("-ERR 'Authorization Timeout'\r\n", ErrAuthTimeout "Authorization Timeout"),
+  ("-ERR 'Invalid Client Protocol'\r\n", ErrInvalidProtocol "Invalid Client Protocol"),
+  ("-ERR 'Maximum Control Line Exceeded'\r\n", ErrMaxControlLineEx "Maximum Control Line Exceeded"),
+  ("-ERR 'Secure Connection - TLS Required'\r\n", ErrTlsRequired "Secure Connection - TLS Required"),
+  ("-ERR 'Stale Connection'\r\n", ErrStaleConn "Stale Connection"),
+  ("-ERR 'Maximum Connections Exceeded'\r\n", ErrMaxConnsEx "Maximum Connections Exceeded"),
+  ("-ERR 'Slow Consumer'\r\n", ErrSlowConsumer"Slow Consumer"),
+  ("-ERR 'Maximum Payload Violation'\r\n", ErrMaxPayload "Maximum Payload Violation"),
+  ("-ERR 'Invalid Subject'\r\n", ErrInvalidSubject "Invalid Subject"),
+  ("-ERR 'Permissions Violation For Subscription To FOO.'\r\n", ErrPermViolation "Permissions Violation For Subscription To FOO."),
+  ("-ERR 'Permissions Violation For Publish To FOO.'\r\n", ErrPermViolation "Permissions Violation For Publish To FOO.")
   ]
 
 generatedCases =
   zip
     ((\x n-> foldr BS.append "" ["-ERR 'Permissions Violation For ", x, " To ", n, "'\r\n"]) <$> ["Subscription", "Publish"] <*> invalidSubjectCases)
-    ((\x n-> Err $ foldr BS.append "" ["Permissions Violation For ", x, " To ", n]) <$> ["Subscription", "Publish"] <*> invalidSubjectCases <*> [False])
+    ((\x n-> ErrPermViolation $ foldr BS.append "" ["Permissions Violation For ", x, " To ", n]) <$> ["Subscription", "Publish"] <*> invalidSubjectCases)
 
 spec :: Spec
 spec = do

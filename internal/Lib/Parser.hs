@@ -7,11 +7,13 @@ import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as C
 import qualified Data.Word8            as W8
 
-data ParserErr = ParserErr
-                   { message :: String
-                   , offset  :: Int
-                   }
+data ParserErr = UnexpectedEndOfInput String Int
+               | UnexpectedChar String Int
   deriving (Eq, Show)
+
+offset :: ParserErr -> Int
+offset (UnexpectedEndOfInput _ o) = o
+offset (UnexpectedChar _ o)       = o
 
 newtype Parser a = Parser { runParser :: BS.ByteString -> Either ParserErr (a, BS.ByteString) }
 
@@ -33,7 +35,7 @@ instance Monad Parser where
     runParser (f struct) bs'
 
 instance MonadFail Parser where
-  fail s = Parser . const $ Left (ParserErr s 0)
+  fail s = Parser . const $ Left (UnexpectedEndOfInput s 0)
 
 instance Alternative Parser where
   some v = s
@@ -58,22 +60,29 @@ deepestErr a b
   | offset a > offset b = b
   | otherwise = a
 
+data Suggestion = SuggestDrop Int String
+                | SuggestPull
+
+solveErr :: ParserErr -> Int -> Suggestion
+solveErr (UnexpectedEndOfInput _ _) _    = SuggestPull -- This suggests we pull more data to satisfy the parser.
+solveErr (UnexpectedChar r depth) length = SuggestDrop ((length - depth)+1) r   -- This suggests we drop the invalid prefix.
+
 char :: W8.Word8 -> Parser W8.Word8
 char c = Parser charP
   where
     charP bs
-      | BS.empty == bs = Left (ParserErr "nothing to read" 0)
+      | BS.empty == bs = Left (UnexpectedEndOfInput "nothing to read" 0)
       | BS.head bs == c = Right (c, BS.tail bs)
-      | otherwise = Left (ParserErr (errString bs) (BS.length bs))
+      | otherwise = Left (UnexpectedChar (errString bs) (BS.length bs))
     errString bs = w8sToString [BS.head bs] ++ " does not match " ++ w8sToString [c] ++ " in " ++ C.unpack bs
 
 charIn :: [W8.Word8] -> Parser W8.Word8
 charIn opts = Parser charP
   where
     charP bs
-      | BS.empty == bs = Left (ParserErr "nothing to read" 0)
+      | BS.empty == bs = Left (UnexpectedEndOfInput "nothing to read" 0)
       | BS.head bs `elem` opts = Right (BS.head bs, BS.tail bs)
-      | otherwise = Left (ParserErr (errString bs) (BS.length bs))
+      | otherwise = Left (UnexpectedChar (errString bs) (BS.length bs))
     errString bs = w8sToString [BS.head bs] ++ " not in " ++ w8sToString opts ++ " in " ++ C.unpack bs
 
 w8sToString :: [W8.Word8] -> String
@@ -95,9 +104,9 @@ stringWithChars s = some (charIn s)
 alphaNumeric = Parser charP
   where
     charP bs
-      | BS.empty == bs = Left (ParserErr "nothing to read" (BS.length bs))
+      | BS.empty == bs = Left (UnexpectedEndOfInput "nothing to read" (BS.length bs))
       | W8.isAlphaNum $ BS.head bs = Right (BS.head bs, BS.tail bs)
-      | otherwise = Left (ParserErr (w8sToString [BS.head bs] ++ " is not alphanumeric in " ++ C.unpack bs) (BS.length bs))
+      | otherwise = Left (UnexpectedChar (w8sToString [BS.head bs] ++ " is not alphanumeric in " ++ C.unpack bs) (BS.length bs))
 
 alphaNumerics :: Parser [W8.Word8]
 alphaNumerics = some alphaNumeric
@@ -105,9 +114,9 @@ alphaNumerics = some alphaNumeric
 ascii = Parser charP
   where
     charP bs
-      | BS.empty == bs = Left (ParserErr "nothing to read" (BS.length bs))
+      | BS.empty == bs = Left (UnexpectedEndOfInput "nothing to read" (BS.length bs))
       | W8.isAscii $ BS.head bs = Right (BS.head bs, BS.tail bs)
-      | otherwise = Left (ParserErr (w8sToString [BS.head bs] ++ " is not ascii in " ++ C.unpack bs) (BS.length bs))
+      | otherwise = Left (UnexpectedChar (w8sToString [BS.head bs] ++ " is not ascii in " ++ C.unpack bs) (BS.length bs))
 
 asciis :: Parser [W8.Word8]
 asciis = some ascii
@@ -116,14 +125,14 @@ not' :: W8.Word8 -> Parser W8.Word8
 not' c = Parser charP
   where
     charP bs
-      | BS.empty == bs = Left (ParserErr "nothing to read" (BS.length bs))
+      | BS.empty == bs = Left (UnexpectedEndOfInput "nothing to read" (BS.length bs))
       | BS.head bs /= c = Right (BS.head bs, BS.tail bs)
-      | otherwise = Left (ParserErr (w8sToString [BS.head bs] ++ " was explicitly not allowed by parser in " ++ C.unpack bs) (BS.length bs))
+      | otherwise = Left (UnexpectedChar (w8sToString [BS.head bs] ++ " was explicitly not allowed by parser in " ++ C.unpack bs) (BS.length bs))
 
 til :: W8.Word8 -> Parser [W8.Word8]
 til d = Parser $ \x -> do
   if BS.elem d x then runParser (some (not' d)) x
-    else Left( ParserErr "unexpected end of input" (BS.length x))
+    else Left( UnexpectedEndOfInput "unexpected end of input" (BS.length x))
 
 digit :: Parser W8.Word8
 digit = charIn [W8._0 .. W8._9]
