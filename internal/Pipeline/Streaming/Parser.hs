@@ -22,7 +22,7 @@ parser p = loop ""
       lift . logDebug $ "parsing chunk"
       case p bs of
         Left err -> do
-          case solveErr err of
+          case solveErr err (length bs) of
             SuggestPull -> if length bs > 4096
               then do
               lift . logError $ "overloaded buffer"
@@ -34,6 +34,7 @@ parser p = loop ""
             SuggestDrop n r -> do
               lift . logError $ ("dropping invalid prefix: " ++ r)
               lift . logDebug $ ("invalid prefix: " ++ show bs)
+              lift . logError $ ("dropping " ++ show n ++ " bytes")
               handleChunk (drop n bs)
         Right (message, rest) -> do
           lift . logDebug $ "parsed message"

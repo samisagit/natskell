@@ -13,9 +13,9 @@ module Client (
   unsubscribe,
   ping,
   Client.close,
-  pubWithPayload,
-  pubWithReplyCallback,
-  pubWithHeaders,
+  withPayload,
+  withReplyCallback,
+  withHeaders,
   withConnectName,
   withAuthToken,
   withUserPass,
@@ -56,10 +56,10 @@ import qualified Pipeline.Broadcasting.API as B
 import qualified Pipeline.Streaming.API    as S
 import           Prelude                   hiding (lookup)
 import           Queue.API
+import           Queue.TransactionalQueue
 import           Sid                       (nextSID)
 import           System.IO
 import           System.Random             (StdGen, newStdGen)
-import           Transformers.Transformers
 import           Types
 import qualified Types.Connect             as Connect (Connect (..))
 import qualified Types.Err                 as E
@@ -72,42 +72,9 @@ import qualified Types.Sub                 as Sub
 import qualified Types.Unsub               as Unsub
 import           WaitGroup
 
-data QueueItem = forall m. Transformer m => QueueItem m
-
-instance Transformer QueueItem where
-  transform (QueueItem m) = transform m
-
-data Q1 t = Q1 (TBQueue t) (TVar Bool)
-
-newQ1 :: IO (Q1 QueueItem)
-newQ1 = Q1 <$> newTBQueueIO 1000 <*> newTVarIO False
-
-instance Transformer t => Queue (Q1 t) t where
-  enqueue (Q1 q p) t = do
-    poisoned <- readTVarIO p
-    if poisoned
-      then return $ Left "Queue is poisoned"
-      else atomically $ do
-        writeTBQueue q t
-        return $ Right ()
-  dequeue (Q1 q p) = do
-    atomically $
-      (Right <$> readTBQueue q)
-      `orElse`
-      (do
-        poisoned <- readTVar p
-        check poisoned
-        return $ Left "Queue is poisoned")
-  isEmpty (Q1 q p) = do
-    poisoned <- readTVarIO p
-    if poisoned
-      then return True
-      else atomically $ isEmptyTBQueue q
-  close (Q1 _ p) = atomically $ writeTVar p True
-
 -- | Client is used to interact with the NATS server.
 data Client = Client'
-                { queue               :: Q1 QueueItem
+                { queue               :: Q QueueItem
                 , routes              :: TVar (Map Subject (M.Msg -> IO ()))
                 , pings               :: TVar [IO ()]
                 , randomGen           :: TVar StdGen
@@ -119,6 +86,7 @@ data Client = Client'
                 , conn                :: Conn
                 }
 
+-- | newClient creates a new client with optional overrides to default settings
 newClient :: [(String, Int)] -> [ConfigOpts] -> IO Client
 newClient servers conOpts = do
   dl <- defaultLogger
@@ -134,7 +102,7 @@ newClient servers conOpts = do
   c <- Conn <$> newEmptyTMVarIO <*> newEmptyTMVarIO <*> newEmptyTMVarIO
 
   client <- liftIO $ Client'
-    <$> newQ1
+    <$> newQ
     <*> newTVarIO mempty
     <*> newTVarIO []
     <*> (newTVarIO =<< newStdGen)
@@ -172,10 +140,8 @@ acquireHandle client = do
           return . Right $ conn client
 
 decomHandle ::  Either String Conn -> IO ()
-decomHandle (Left _) = return ()
-decomHandle (Right h) = do
-  Network.Connection.close h
-  return ()
+decomHandle (Left _)  = return ()
+decomHandle (Right h) = Network.Connection.close h
 
 withHandle :: Client -> (Either String Conn -> IO a) -> IO a
 withHandle client = bracket

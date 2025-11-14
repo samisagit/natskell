@@ -68,15 +68,15 @@ withExitAction action config = config { exitAction = action }
 
 type PubOptions = (Maybe Payload, Maybe (MsgView -> IO ()), Maybe Headers)
 
--- | pubWithPayload is used to set the payload for a publish operation.
-pubWithPayload :: Payload -> PubOptions -> PubOptions
-pubWithPayload payload (_, callback, headers) = (Just payload, callback, headers)
+-- | withPayload is used to set the payload for a publish operation.
+withPayload :: Payload -> PubOptions -> PubOptions
+withPayload payload (_, callback, headers) = (Just payload, callback, headers)
 
--- | pubWithReplyCallback is used to set a callback for a reply to a publish operation.
-pubWithReplyCallback :: (MsgView -> IO ()) -> PubOptions -> PubOptions
-pubWithReplyCallback callback (payload, _, headers) = (payload, Just callback, headers)
+-- | withReplyCallback is used to set a callback for a reply to a publish operation.
+withReplyCallback :: (MsgView -> IO ()) -> PubOptions -> PubOptions
+withReplyCallback callback (payload, _, headers) = (payload, Just callback, headers)
 
--- | pubWithHeaders is used to set headers for a publish operation.
-pubWithHeaders :: Headers -> PubOptions -> PubOptions
-pubWithHeaders headers (payload, callback, _) = (payload, callback, Just headers)
+-- | withHeaders is used to set headers for a publish operation.
+withHeaders :: Headers -> PubOptions -> PubOptions
+withHeaders headers (payload, callback, _) = (payload, callback, Just headers)
 

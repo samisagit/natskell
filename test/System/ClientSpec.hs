@@ -100,7 +100,7 @@ sys = parallel $ do
             putMVar sidBox (sid msg)
             done wg
           promptClient <- newClient [(natsHost, natsPort)] [withConnectName "0e81e61a-932f-4036-9cdd-9a65fb4ed829", withLoggerConfig logger]
-          publish promptClient topic [pubWithPayload payload]
+          publish promptClient topic [withPayload payload]
           wait wg
           msg <- takeMVar lock
           sid' <- takeMVar sidBox
@@ -111,11 +111,11 @@ sys = parallel $ do
           let topic = "REQ.TOPIC"
           remoteClient <- newClient [(natsHost, natsPort)] [withConnectName "6eff2527-1ad5-4b0c-b4e5-4a52a7d17639", withLoggerConfig logger]
           subscribe remoteClient topic $ \msg -> do
-            publish remoteClient (fromJust . replyTo $ msg) [pubWithPayload "WORLD"]
+            publish remoteClient (fromJust . replyTo $ msg) [withPayload "WORLD"]
             unsubscribe remoteClient (sid msg)
           promptClient <- newClient [(natsHost, natsPort)] [withConnectName "6eff2527-1ad5-4b0c-b4e5-4a52a7d17639", withLoggerConfig logger]
           wg <- newWaitGroup 1
-          publish promptClient topic [pubWithReplyCallback (\_ -> done wg), pubWithPayload "HELLO"]
+          publish promptClient topic [withReplyCallback (\_ -> done wg), withPayload "HELLO"]
           wait wg
           close remoteClient
           close promptClient

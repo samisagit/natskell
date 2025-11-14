@@ -121,7 +121,9 @@ assertTVarWithRetry tvar expected = do
   Control.Monad.unless (actual == expected) retry
 
 testParserExcludingUpper :: ByteString -> Either ParserErr (ByteString, ByteString)
-testParserExcludingUpper bs = case isUpper . head $ bs of False -> Right (pack [head bs], tail bs) ; True -> Left (UnexpectedChar [chr .fromIntegral . head $ bs] 1)
+testParserExcludingUpper bs = case isUpper . head $ bs of
+                                False -> Right (pack [head bs], tail bs) ;
+                                True -> Left (UnexpectedChar [chr .fromIntegral . head $ bs] (length bs))
 
 testParserForExplicitWord :: ByteString -> Either ParserErr (ByteString, ByteString)
 testParserForExplicitWord bs

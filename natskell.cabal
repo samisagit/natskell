@@ -101,6 +101,7 @@ library natskell-internal
     Network.API
     Network.Connection
     Queue.API
+    Queue.TransactionalQueue
 
   hs-source-dirs:
     internal
@@ -113,6 +114,7 @@ library natskell-internal
     internal/Pipeline/Broadcasting
     internal/Pipeline/Streaming
     internal/Network
+    internal/Queue
 
 library test-common
     import:         shared
@@ -187,6 +189,25 @@ test-suite system-test
   if flag (impure)
     type: exitcode-stdio-1.0
     main-is: Main.hs
+  else
+    type: exitcode-stdio-1.0
+    main-is: Skip.hs
+
+test-suite client-test
+  import:         shared
+  hs-source-dirs: test/Integration
+  build-depends:
+    natskell,
+    test-common,
+    port-utils,
+    network,
+    stm,
+    hspec
+  other-modules:
+      ClientSpec
+  if flag (impure)
+    type: exitcode-stdio-1.0
+    main-is:              Spec.hs
   else
     type: exitcode-stdio-1.0
     main-is: Skip.hs
