@@ -200,6 +200,8 @@ test-suite client-test
     natskell,
     test-common,
     port-utils,
+    bytestring,
+    word8,
     network,
     stm,
     hspec

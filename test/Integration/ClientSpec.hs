@@ -7,6 +7,8 @@ import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Monad
+import qualified Data.ByteString           as BS
+import           Data.Word8
 import           Network.Socket            (Socket, accept, close, listen)
 import           Network.Socket.ByteString (sendAll)
 import           Network.Socket.Free
@@ -14,6 +16,8 @@ import           Test.Hspec
 import           WaitGroup
 
 defaultINFO = "INFO {\"server_id\": \"some-server\", \"version\": \"semver\", \"go\": \"1.13\", \"host\": \"127.0.0.1\", \"port\": 4222, \"max_payload\": 1024, \"proto\": 3}\r\n"
+
+tooLongMSG = "MSG a b 5000\r\n" <> BS.replicate 5000 _x <> "\r\n"
 
 startClient :: IO (Socket, Client, Socket, TMVar ())
 startClient = do
@@ -26,7 +30,7 @@ startClient = do
   exited <- newEmptyTMVarIO
   tvb <- newEmptyTMVarIO
   void . forkIO $ do
-    c <- newClient [("127.0.0.1", p)] [withExitAction (atomically $ putTMVar exited ())]
+    c <- newClient [("127.0.0.1", p)] [withExitAction (atomically $ putTMVar exited ()), withConnectionAttempts 1]
     atomically $ putTMVar tvb c
 
   s <- atomically $ takeTMVar tva
@@ -80,3 +84,13 @@ spec = do
         threadDelay 100000
         sendAll serv "G\r\n"
         wait wg
+      it "exits when server goes away" $ \(serv, _, _, exited) -> do
+        Network.Socket.close serv
+        atomically . readTMVar $ exited :: IO ()
+      it "drops messages too long for processing" $ \(serv, client, _, _) -> do
+        wg <- newWaitGroup 1
+        ping client $ done wg
+        sendAll serv tooLongMSG
+        sendAll serv "PONG\r\n"
+        wait wg
+

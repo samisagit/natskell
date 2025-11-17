@@ -47,6 +47,7 @@ instance ConnectionReader Conn where
               Right (Right bytes) -> return $ Right bytes
 
   closeReader conn = void . atomically $ tryPutTMVar (readBlock conn) ()
+  openReader conn = void . atomically $ tryTakeTMVar (readBlock conn)
 
 instance ConnectionWriter Conn where
   writeData conn bytes = do
@@ -64,6 +65,7 @@ instance ConnectionWriter Conn where
               Right _  -> return $ Right ()
 
   closeWriter conn = void . atomically $ tryPutTMVar (writeBlock conn) ()
+  openWriter conn = void . atomically $ tryTakeTMVar (writeBlock conn)
 
 point :: Conn -> Handle -> IO ()
 point c h = do
@@ -80,4 +82,9 @@ close conn = do
     Just c -> do
       hFlush c
       hClose c
+
+open :: Conn -> IO ()
+open conn = do
+  openReader conn
+  openWriter conn
 

@@ -171,20 +171,34 @@ retryLoop :: Client -> IO ()
 retryLoop client = do
   let attemptsLeft = connectionAttempts . config $ client
   withRetry client attemptsLeft $ do
+    Queue.API.open (queue client)
+    Network.Connection.open (conn client)
     withHandle client $ \handle -> do
       case handle of
         (Left e) -> runClient client . logError $ show e
         (Right h) -> do
           runClient client $ do
-            wg <- liftIO $ newWaitGroup 2
+            wgs <- liftIO $ newWaitGroup 1
+            wgb <- liftIO $ newWaitGroup 1
             logDebug "Starting the client streaming threads"
             liftIO . void . forkIO $ do
               runClient client $ B.run (queue client) h
               runClient client $ logDebug "Broadcasting thread has exited"
-              done wg
+              done wgb
             liftIO . void . forkIO $ do
               runClient client $ S.run h genericParse (router client)
               runClient client $ logDebug "Streaming thread has exited"
+              done wgs
+            wg <- liftIO $ newWaitGroup 2
+            liftIO . void . forkIO $ do
+              wait wgs
+              -- close broadcasting
+              liftIO $ Queue.API.close (queue client)
+              done wg
+            liftIO . void . forkIO $ do
+              wait wgb
+              -- close streaming
+              closeReader h
               done wg
             liftIO $ wait wg
             logDebug "Streaming threads have exited, closing connection"
@@ -298,7 +312,7 @@ router client msg = do
     ParsedErr err -> case E.isFatal err of
       True  -> do
         runClient client . logError $ ("Fatal error: " ++ show err)
-        Client.close client
+        Client.close client -- TODO: this should be more like a reset.. we don't want to wait for a graceful close as the server is already disconnected
       False -> runClient client . logWarn $ ("Error: " ++ show err)
 
 logAuthMethod :: Auth -> AppM ()
@@ -327,7 +341,6 @@ msgRouter client msg = do
       runClient client . logDebug $ ("Running callback for SID: " ++ show sid)
       callback msg
     Nothing       -> runClient client . logError $ ("No callback for SID: " ++ show sid)
-
 
 newHash :: Client -> IO SID
 newHash client = atomically $ do
