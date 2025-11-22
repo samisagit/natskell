@@ -93,4 +93,12 @@ spec = do
         sendAll serv tooLongMSG
         sendAll serv "PONG\r\n"
         wait wg
+      it "unsubscribes after timeout" $ \(_, client, _, _) -> do
+        wg <- newWaitGroup 1
+        publish client "foo" [withReplyCallback (\x -> do
+          case x of
+            Nothing -> done wg
+            Just _  -> error "should not receive message"
+          )]
+        wait wg
 

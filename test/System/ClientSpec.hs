@@ -3,6 +3,7 @@
 module ClientSpec (spec) where
 
 import           Client
+import           Control.Concurrent
 import           Control.Concurrent.STM
 import qualified Data.ByteString        as BS
 import           Data.Maybe
@@ -95,10 +96,13 @@ sys = parallel $ do
           wg <- newWaitGroup 1
           assertClient <- newClient [(natsHost, natsPort)] [withConnectName "0dfe787e-383b-4cb8-a73f-8474f4cc0497", withLoggerConfig logger]
           subscribe assertClient topic $ \msg -> do
-            unsubscribe assertClient (sid msg)
-            putMVar lock msg
-            putMVar sidBox (sid msg)
-            done wg
+            case msg of
+              Nothing -> error "Received empty message"
+              Just msg -> do
+                unsubscribe assertClient (sid msg)
+                putMVar lock msg
+                putMVar sidBox (sid msg)
+                done wg
           promptClient <- newClient [(natsHost, natsPort)] [withConnectName "0e81e61a-932f-4036-9cdd-9a65fb4ed829", withLoggerConfig logger]
           publish promptClient topic [withPayload payload]
           wait wg
@@ -111,26 +115,27 @@ sys = parallel $ do
           let topic = "REQ.TOPIC"
           remoteClient <- newClient [(natsHost, natsPort)] [withConnectName "6eff2527-1ad5-4b0c-b4e5-4a52a7d17639", withLoggerConfig logger]
           subscribe remoteClient topic $ \msg -> do
-            publish remoteClient (fromJust . replyTo $ msg) [withPayload "WORLD"]
-            unsubscribe remoteClient (sid msg)
+            case msg of
+              Nothing -> error "Received empty message"
+              Just msg -> do
+                publish remoteClient (fromJust . replyTo $ msg) [withPayload "WORLD"]
+                unsubscribe remoteClient (sid msg)
           promptClient <- newClient [(natsHost, natsPort)] [withConnectName "6eff2527-1ad5-4b0c-b4e5-4a52a7d17639", withLoggerConfig logger]
           wg <- newWaitGroup 1
           publish promptClient topic [withReplyCallback (\_ -> done wg), withPayload "HELLO"]
           wait wg
           close remoteClient
           close promptClient
-          -- TODO: change the UUID
         it "cycles through servers"  $ \(Endpoints natsHost natsPort) -> do
-          c <- newClient [("0.0.0.0", 4999), (natsHost, natsPort)] [withConnectName "1f27aec6-e832-41ad-88ad-15555985b754", withLoggerConfig logger, withConnectionAttempts 2]
+          c <- newClient [("0.0.0.0", 4999), (natsHost, natsPort)] [withConnectName "b896f0fb-ea45-4456-86d9-b7d6269eb75f", withLoggerConfig logger, withConnectionAttempts 2]
           wg <- newWaitGroup 1
           ping c $ done wg
           wait wg
           close c
-          -- TODO: change the UUID
         it "exits when no valid servers" $ \(Endpoints _ _) -> do
           wg <- newWaitGroup 1
           newClient [("0.0.0.0", 4999)] [
-            withConnectName "b9ed73e3-9674-41a2-9979-bb63b78c6579",
+            withConnectName "9b694d4e-7b78-459c-9126-57e582564a0b",
             withExitAction (done wg),
             withLoggerConfig logger
             ]

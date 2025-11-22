@@ -66,14 +66,14 @@ withConnectionAttempts attempts config = config { connectionAttempts = attempts 
 withExitAction :: IO () -> ConfigOpts
 withExitAction action config = config { exitAction = action }
 
-type PubOptions = (Maybe Payload, Maybe (MsgView -> IO ()), Maybe Headers)
+type PubOptions = (Maybe Payload, Maybe (Maybe MsgView -> IO ()), Maybe Headers)
 
 -- | withPayload is used to set the payload for a publish operation.
 withPayload :: Payload -> PubOptions -> PubOptions
 withPayload payload (_, callback, headers) = (Just payload, callback, headers)
 
 -- | withReplyCallback is used to set a callback for a reply to a publish operation.
-withReplyCallback :: (MsgView -> IO ()) -> PubOptions -> PubOptions
+withReplyCallback :: (Maybe MsgView -> IO ()) -> PubOptions -> PubOptions
 withReplyCallback callback (payload, _, headers) = (payload, Just callback, headers)
 
 -- | withHeaders is used to set headers for a publish operation.

@@ -42,7 +42,16 @@ import           Control.Exception
 import           Control.Monad
 import           Control.Monad.IO.Class
 import qualified Data.ByteString           as BS
+import           Data.Heap
+    ( MinHeap
+    , empty
+    , insert
+    , view
+    , viewHead
+    )
 import           Data.Map                  (Map, delete, insert, lookup)
+import           Data.Maybe
+import           Data.Time.Clock
 import           Lib.CallOption
 import           Lib.Logger
 import           MSGView
@@ -72,18 +81,61 @@ import qualified Types.Sub                 as Sub
 import qualified Types.Unsub               as Unsub
 import           WaitGroup
 
+data SubscriptionHeapItem = SubscriptionHeapItem
+                              { sid'   :: SID
+                              , expiry :: UTCTime
+                              }
+
+instance Eq SubscriptionHeapItem where
+  a == b = sid' a == sid' b && expiry a == expiry b
+
+instance Ord SubscriptionHeapItem where
+  a `compare` b = expiry a `compare` expiry b
+
+type SubscriptionHeap = MinHeap SubscriptionHeapItem
+
+cancelExpiredSubscriptions :: Client -> IO ()
+cancelExpiredSubscriptions client = do
+  runClient client $ logDebug "Running subscription GC"
+  now <- getCurrentTime
+  action <- atomically $ do
+    heap <- readTVar (subscriptionHeap client)
+    let viewed = viewHead heap
+    case viewed of
+      Nothing -> retry
+      Just item -> do
+        if now < expiry item
+          then return Nothing
+          else do
+            modifyTVar' (subscriptionHeap client) (snd . fromJust . view)
+            router <- readTVar (routes client)
+            case lookup (sid' item) router of
+              Just action -> do
+                modifyTVar' (routes client) (delete (sid' item))
+                return $ Just action
+              Nothing -> return Nothing
+  runClient client $ case action of
+    Just a -> liftIO $ a Nothing
+    Nothing  -> do
+      liftIO $ threadDelay 1000000 -- 1 second
+      return ()
+
 -- | Client is used to interact with the NATS server.
 data Client = Client'
-                { queue               :: Q QueueItem
-                , routes              :: TVar (Map Subject (M.Msg -> IO ()))
-                , pings               :: TVar [IO ()]
-                , randomGen           :: TVar StdGen
-                , serverInfo          :: TMVar I.Info
+                { queue :: Q QueueItem
+                , routes :: TVar (Map Subject (Maybe M.Msg -> IO ()))
+                , subscriptionHeap :: TVar SubscriptionHeap
+                  -- TODO: combine routes with this under a domain type
+                , pings :: TVar [IO ()]
+                , randomGen :: TVar StdGen
+                , serverInfo :: TMVar I.Info
+                  -- TODO: could make config a TVar and have this inside it
                 , connectionAttempts' :: TVar Int
-                , poisonpill          :: TVar Bool
-                , exited              :: TMVar ()
-                , config              :: Config
-                , conn                :: Conn
+                , poisonpill :: TVar Bool
+                , exited :: TMVar ()
+                  -- TODO: combine with poisonpill under a state type
+                , config :: Config
+                , conn :: Conn
                 }
 
 -- | newClient creates a new client with optional overrides to default settings
@@ -104,6 +156,7 @@ newClient servers conOpts = do
   client <- liftIO $ Client'
     <$> newQ
     <*> newTVarIO mempty
+    <*> newTVarIO empty
     <*> newTVarIO []
     <*> (newTVarIO =<< newStdGen)
     <*> newEmptyTMVarIO
@@ -167,6 +220,12 @@ withRetry c x action = do
     atomically $ modifyTVar (connectionAttempts' c) (+1)
     withRetry c (x-1) action
 
+withSubscriptionGC :: Client -> IO () -> IO ()
+withSubscriptionGC client action = bracket
+  (forkIO . forever . cancelExpiredSubscriptions $ client)
+  killThread
+  (const action)
+
 retryLoop :: Client -> IO ()
 retryLoop client = do
   let attemptsLeft = connectionAttempts . config $ client
@@ -177,31 +236,32 @@ retryLoop client = do
       case handle of
         (Left e) -> runClient client . logError $ show e
         (Right h) -> do
-          runClient client $ do
-            wgs <- liftIO $ newWaitGroup 1
-            wgb <- liftIO $ newWaitGroup 1
-            logDebug "Starting the client streaming threads"
-            liftIO . void . forkIO $ do
-              runClient client $ B.run (queue client) h
-              runClient client $ logDebug "Broadcasting thread has exited"
-              done wgb
-            liftIO . void . forkIO $ do
-              runClient client $ S.run h genericParse (router client)
-              runClient client $ logDebug "Streaming thread has exited"
-              done wgs
-            wg <- liftIO $ newWaitGroup 2
-            liftIO . void . forkIO $ do
-              wait wgs
-              -- close broadcasting
-              liftIO $ Queue.API.close (queue client)
-              done wg
-            liftIO . void . forkIO $ do
-              wait wgb
-              -- close streaming
-              closeReader h
-              done wg
-            liftIO $ wait wg
-            logDebug "Streaming threads have exited, closing connection"
+          withSubscriptionGC client $ do
+            runClient client $ do
+              wgs <- liftIO $ newWaitGroup 1
+              wgb <- liftIO $ newWaitGroup 1
+              logDebug "Starting the client streaming threads"
+              liftIO . void . forkIO $ do
+                runClient client $ B.run (queue client) h
+                runClient client $ logDebug "Broadcasting thread has exited"
+                done wgb
+              liftIO . void . forkIO $ do
+                runClient client $ S.run h genericParse (router client)
+                runClient client $ logDebug "Streaming thread has exited"
+                done wgs
+              wg <- liftIO $ newWaitGroup 2
+              liftIO . void . forkIO $ do
+                wait wgs
+                -- close broadcasting
+                liftIO $ Queue.API.close (queue client)
+                done wg
+              liftIO . void . forkIO $ do
+                wait wgb
+                -- close streaming
+                closeReader h
+                done wg
+              liftIO $ wait wg
+              logDebug "Streaming threads have exited, closing connection"
 
 -- | publish sends a message to the NATS server.
 publish :: Client -> Subject -> [PubOptions -> PubOptions] -> IO ()
@@ -227,10 +287,10 @@ publish client subject opts = do
   writeToClientQueue client (QueueItem msg)
 
 -- | subscribe is used to subscribe to a subject on the NATS server.
-subscribe :: Client -> Subject -> (MsgView -> IO ()) -> IO SID
+subscribe :: Client -> Subject -> (Maybe MsgView -> IO ()) -> IO SID
 subscribe = subscribe' False
 
-request :: Client -> Subject -> (MsgView -> IO ()) -> IO SID
+request :: Client -> Subject -> (Maybe MsgView -> IO ()) -> IO SID
 request = do
   subscribe' True
 
@@ -281,14 +341,21 @@ defaultConn host port = do
   return handle
 
 -- TODO: need to build in the timeout handling here
-subscribe' :: Bool -> Client -> Subject -> (MsgView -> IO ()) -> IO SID
+subscribe' :: Bool -> Client -> Subject -> (Maybe MsgView -> IO ()) -> IO SID
 subscribe' isReply client subject callback = do
   runClient client . logDebug $ ("Subscribing to subject: " ++ show subject)
   sid <- newHash client
   let cb = if isReply
-        then \m -> callback (transformMsg m) >> unsubscribe client sid
-        else callback . transformMsg
-  atomically $ modifyTVar' (routes client) (insert sid cb)
+        then \m -> do
+          callback (fmap transformMsg m)
+          unsubscribe client sid
+        else callback . fmap transformMsg
+  -- TODO: there should probably be an option to set the expiry time
+  expiry <- addUTCTime 5.0 <$> getCurrentTime
+  atomically $ do
+    modifyTVar' (routes client) (Data.Map.insert sid cb)
+    when isReply $
+      modifyTVar' (subscriptionHeap client) (Data.Heap.insert (SubscriptionHeapItem sid expiry))
   let sub = Sub.Sub {
     Sub.subject = subject,
     Sub.queueGroup = Nothing,
@@ -296,6 +363,14 @@ subscribe' isReply client subject callback = do
   }
 
   writeToClientQueue client (QueueItem sub)
+
+  when isReply . void . forkIO $ (do
+      threadDelay 10000000 -- 10 seconds
+      runClient client . logDebug $ ("Auto-unsubscribing from subject with SID: " ++ show sid)
+      router <- readTVarIO (routes client)
+      case lookup sid router of
+        Just cb -> cb Nothing
+        Nothing -> return ())
 
   return sid
 
@@ -339,7 +414,7 @@ msgRouter client msg = do
   case lookup sid callbacks of
     Just callback -> do
       runClient client . logDebug $ ("Running callback for SID: " ++ show sid)
-      callback msg
+      callback $ Just msg
     Nothing       -> runClient client . logError $ ("No callback for SID: " ++ show sid)
 
 newHash :: Client -> IO SID

@@ -46,6 +46,8 @@ library
     network  < 3.3,
     bytestring  >= 0.10 && < 0.13,
     network-simple  < 0.5,
+    heap,
+    time,
     random  < 1.3
 
   exposed-modules:
