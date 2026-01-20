@@ -120,6 +120,12 @@ cancelExpiredSubscriptions client = do
       liftIO $ threadDelay 1000000 -- 1 second
       return ()
 
+awaitSubscriptionGC :: Client -> IO ()
+awaitSubscriptionGC client = do
+  atomically $ do
+    heap <- readTVar (subscriptionHeap client)
+    when (isJust (viewHead heap)) retry
+
 -- | Client is used to interact with the NATS server.
 data Client = Client'
                 { queue :: Q QueueItem
@@ -223,7 +229,10 @@ withRetry c x action = do
 withSubscriptionGC :: Client -> IO () -> IO ()
 withSubscriptionGC client action = bracket
   (forkIO . forever . cancelExpiredSubscriptions $ client)
-  killThread
+  (\tid -> do
+    awaitSubscriptionGC client
+    killThread tid
+  )
   (const action)
 
 retryLoop :: Client -> IO ()
@@ -232,11 +241,11 @@ retryLoop client = do
   withRetry client attemptsLeft $ do
     Queue.API.open (queue client)
     Network.Connection.open (conn client)
-    withHandle client $ \handle -> do
-      case handle of
-        (Left e) -> runClient client . logError $ show e
-        (Right h) -> do
-          withSubscriptionGC client $ do
+    withSubscriptionGC client $ do
+      withHandle client $ \handle -> do
+        case handle of
+          (Left e) -> runClient client . logError $ show e
+          (Right h) -> do
             runClient client $ do
               wgs <- liftIO $ newWaitGroup 1
               wgb <- liftIO $ newWaitGroup 1
@@ -320,7 +329,7 @@ close client = do
   runClient client $ logInfo "Closing the client connection"
   Queue.API.close $ queue client
   closeReader (conn client)
-  atomically $ takeTMVar (exited client)
+  atomically $ readTMVar (exited client)
 
 -- internal handlers
 
@@ -340,7 +349,6 @@ defaultConn host port = do
   hSetBuffering handle NoBuffering
   return handle
 
--- TODO: need to build in the timeout handling here
 subscribe' :: Bool -> Client -> Subject -> (Maybe MsgView -> IO ()) -> IO SID
 subscribe' isReply client subject callback = do
   runClient client . logDebug $ ("Subscribing to subject: " ++ show subject)
@@ -363,15 +371,6 @@ subscribe' isReply client subject callback = do
   }
 
   writeToClientQueue client (QueueItem sub)
-
-  when isReply . void . forkIO $ (do
-      threadDelay 10000000 -- 10 seconds
-      runClient client . logDebug $ ("Auto-unsubscribing from subject with SID: " ++ show sid)
-      router <- readTVarIO (routes client)
-      case lookup sid router of
-        Just cb -> cb Nothing
-        Nothing -> return ())
-
   return sid
 
 -- TODO: we could make all these monadic functions so we have access to the logger, and later the config

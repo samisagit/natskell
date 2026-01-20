@@ -101,4 +101,13 @@ spec = do
             Just _  -> error "should not receive message"
           )]
         wait wg
+      it "callback is called when expired" $ \(_, client, _, _) -> do
+        wg <- newWaitGroup 1
+        publish client "foo" [withReplyCallback (\x -> do
+          case x of
+            Nothing -> done wg
+            Just _  -> error "should not receive message"
+         )]
+        Client.close client
+        wait wg
 
