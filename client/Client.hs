@@ -21,6 +21,7 @@ module Client (
   withUserPass,
   withNKey,
   withJWT,
+  withJWTCreds,
   withTLSCert,
   withLoggerConfig,
   withConnectionAttempts,
@@ -302,12 +303,13 @@ router client msg = do
       False -> runClient client . logWarn $ ("Error: " ++ show err)
 
 logAuthMethod :: Auth -> AppM ()
-logAuthMethod auth = case auth of
+logAuthMethod a = case a of
   None               -> logInfo "No authentication method provided"
   AuthToken _        -> logInfo "Using auth token"
   UserPass (user, _) -> logInfo $ "Using user/pass: " ++ show user
   NKey _             -> logInfo "Using NKey"
   JWT _              -> logInfo "Using JWT"
+  JWTWithNKey _ _    -> logInfo "Using JWT with NKey signature"
   TLSCert _          -> logInfo "Using TLS certificate"
 
 sequenceActions :: TVar [IO ()] -> IO ()
