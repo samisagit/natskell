@@ -18,15 +18,15 @@ import           Types.Info
 
 -- | Test data type for INFO with nonce
 data InfoWithNonce = InfoWithNonce
-  { iwn_server_id   :: T.Text
-  , iwn_version     :: T.Text
-  , iwn_go          :: T.Text
-  , iwn_host        :: T.Text
-  , iwn_port        :: Int
-  , iwn_max_payload :: Int
-  , iwn_proto       :: Int
-  , iwn_nonce       :: T.Text
-  }
+                       { iwn_server_id   :: T.Text
+                       , iwn_version     :: T.Text
+                       , iwn_go          :: T.Text
+                       , iwn_host        :: T.Text
+                       , iwn_port        :: Int
+                       , iwn_max_payload :: Int
+                       , iwn_proto       :: Int
+                       , iwn_nonce       :: T.Text
+                       }
   deriving (Eq, Generic, Show)
 
 instance ToJSON InfoWithNonce where

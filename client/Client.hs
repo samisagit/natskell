@@ -42,6 +42,7 @@ import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Monad
 import           Control.Monad.IO.Class
+import           Crypto.NKey               (signNonce)
 import qualified Data.ByteString           as BS
 import           Data.Map                  (Map, delete, insert, lookup)
 import           Lib.CallOption
@@ -80,6 +81,7 @@ data Client = Client'
                 , pings               :: TVar [IO ()]
                 , randomGen           :: TVar StdGen
                 , serverInfo          :: TMVar I.Info
+                , serverNonce         :: TVar (Maybe BS.ByteString)
                 , connectionAttempts' :: TVar Int
                 , poisonpill          :: TVar Bool
                 , exited              :: TMVar ()
@@ -108,6 +110,7 @@ newClient servers conOpts = do
     <*> newTVarIO []
     <*> (newTVarIO =<< newStdGen)
     <*> newEmptyTMVarIO
+    <*> newTVarIO Nothing
     <*> newTVarIO (connectionAttempts defaultConfig)
     <*> newTVarIO False
     <*> newEmptyTMVarIO
@@ -292,7 +295,10 @@ router :: Client -> ParsedMessage -> IO ()
 router client msg = do
   case msg of
     ParsedMsg a  -> msgRouter client a
-    ParsedInfo i -> connect client >> atomically (putTMVar (serverInfo client) i)
+    ParsedInfo i -> do
+      atomically $ writeTVar (serverNonce client) (I.nonce i)
+      connect client
+      atomically (putTMVar (serverInfo client) i)
     ParsedPing _ -> pong client
     ParsedPong _ -> sequenceActions (pings client)
     ParsedOk   _ -> return ()
@@ -359,7 +365,50 @@ defaultConnect = Connect.Connect{
 connect :: Client -> IO ()
 connect client = do
   runClient client $ logDebug "Connecting to the NATS server"
-  let dat = connectConfig . config $ client
+  let cfg = config client
+  let baseConnect = connectConfig cfg
+
+  dat <- case auth cfg of
+    JWTWithNKey jwt nkey -> do
+      maybeNonce <- readTVarIO (serverNonce client)
+      case maybeNonce of
+        Nothing -> do
+          runClient client $ logError "No nonce available for NKey signing"
+          return baseConnect { Connect.jwt = Just jwt }
+        Just nonceVal -> do
+          case signNonce nkey nonceVal of
+            Left e -> do
+              runClient client $ logError ("NKey signing failed: " ++ show e)
+              return baseConnect { Connect.jwt = Just jwt }
+            Right signature -> do
+              runClient client $ logDebug "Signed nonce with NKey"
+              return baseConnect { Connect.jwt = Just jwt, Connect.sig = Just signature }
+
+    JWT jwt -> return baseConnect { Connect.jwt = Just jwt }
+
+    NKey nkey -> do
+      maybeNonce <- readTVarIO (serverNonce client)
+      case maybeNonce of
+        Nothing -> do
+          runClient client $ logError "No nonce available for NKey signing"
+          return baseConnect
+        Just nonceVal -> do
+          case signNonce nkey nonceVal of
+            Left e -> do
+              runClient client $ logError ("NKey signing failed: " ++ show e)
+              return baseConnect
+            Right signature -> do
+              runClient client $ logDebug "Signed nonce with NKey"
+              return baseConnect { Connect.sig = Just signature }
+
+    UserPass (u, p) -> return baseConnect { Connect.user = Just u, Connect.pass = Just p }
+
+    AuthToken token -> return baseConnect { Connect.auth_token = Just token }
+
+    TLSCert _ -> return baseConnect { Connect.tls_required = True }
+
+    None -> return baseConnect
+
   writeToClientQueue client (QueueItem dat)
 
 pong :: Client -> IO ()

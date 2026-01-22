@@ -54,6 +54,7 @@ library
 
   exposed-modules:
     Client
+    Crypto.NKey
 
   other-modules:
     Types
@@ -134,7 +135,8 @@ test-suite unit-test
   type:             exitcode-stdio-1.0
   hs-source-dirs:   test/Unit
   main-is:          Spec.hs
-  build-depends:   
+  build-depends:
+    natskell,
     natskell-internal,
     hspec,
     bytestring,
@@ -158,6 +160,7 @@ test-suite unit-test
     UnsubSpec
     Fixtures
     StreamingSpec
+    NKeySpec
 
 test-suite fuzz-test
   import:         shared
@@ -187,9 +190,12 @@ test-suite system-test
     bytestring,
     stm,
     hspec,
-    testcontainers
+    testcontainers,
+    directory,
+    text
   other-modules:
       ClientSpec
+      AuthSpec
   if flag (impure)
     type: exitcode-stdio-1.0
     main-is: Main.hs

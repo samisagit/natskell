@@ -1,7 +1,10 @@
 module Main where
 
-import           ClientSpec (spec)
+import qualified AuthSpec
+import qualified ClientSpec
 import           Test.Hspec
 
 main :: IO ()
-main = hspec spec
+main = hspec $ do
+  ClientSpec.spec
+  AuthSpec.spec
