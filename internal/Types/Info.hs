@@ -23,6 +23,7 @@ data Info = Info
               , connect_urls  :: Maybe [BS.ByteString]
               , ldm           :: Maybe Bool
               , headers       :: Maybe Bool
+              , nonce         :: Maybe BS.ByteString
               }
   deriving (Eq, Generic, Show)
 

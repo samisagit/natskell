@@ -41,6 +41,7 @@
             pkgs.docker
             pkgs.pkg-config
             pkgs.zlib.dev
+            pkgs.nsc
           ];
         };
 

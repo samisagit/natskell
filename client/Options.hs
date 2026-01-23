@@ -27,6 +27,7 @@ data Auth = None
           | NKey NKeyData
           | AuthToken AuthTokenData
           | JWT JWTTokenData
+          | JWTWithNKey JWTTokenData NKeyData
           | TLSCert TLSCertData
   deriving (Eq, Show)
 
@@ -53,6 +54,9 @@ withNKey nkey config = config { auth = NKey nkey }
 
 withJWT :: JWTTokenData -> ConfigOpts
 withJWT jwt config = config { auth = JWT jwt }
+
+withJWTCreds :: JWTTokenData -> NKeyData -> ConfigOpts
+withJWTCreds jwt nkey config = config { auth = JWTWithNKey jwt nkey }
 
 withTLSCert :: TLSCertData -> ConfigOpts
 withTLSCert (pubKey, privKey) config = config { auth = TLSCert (pubKey, privKey) }
