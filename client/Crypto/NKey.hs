@@ -26,13 +26,14 @@ signNonce seed nonceBS = do
     Left e  -> Left $ InvalidSeed (show e)
     Right s -> Right s
 
-  -- NKey seeds have a 2-byte prefix (type byte + public key byte)
-  -- The actual seed is 32 bytes after the prefix
-  let seedBytes = BS.drop 2 rawSeed
+  -- NKey seeds have a 2-byte prefix and 2-byte CRC checksum
+  -- Format: [2 bytes prefix] [32 bytes seed] [2 bytes CRC]
+  -- We need to strip the prefix and checksum to get the 32-byte Ed25519 seed
+  let seedBytes = BS.take 32 $ BS.drop 2 rawSeed
 
   -- Ensure we have 32 bytes for Ed25519 seed
   if BS.length seedBytes /= 32
-    then Left $ InvalidSeed $ "Expected 32 byte seed, got " ++ show (BS.length seedBytes)
+    then Left . InvalidSeed $ "Expected 32 byte seed, got " ++ show (BS.length seedBytes) ++ " (raw: " ++ show (BS.length rawSeed) ++ ")"
     else do
       -- Create Ed25519 secret key from seed
       case Ed25519.secretKey seedBytes of
