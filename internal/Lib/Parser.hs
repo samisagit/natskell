@@ -144,8 +144,22 @@ take' :: Int -> Parser W8.Word8 -> Parser [W8.Word8]
 take' 0 _ = string ""
 take' n p = (:) <$> p <*> take' (n -1) p
 
+-- | Parse a subject token (segment between dots)
+-- NATS subjects can contain alphanumerics, hyphens, and underscores
+-- Special tokens: * (wildcard) and > (full wildcard, handled by wireTapParser)
 tokenParser :: Parser [W8.Word8]
-tokenParser = alphaNumerics <|> string "*"
+tokenParser = subjectChars <|> string "*"
+  where
+    -- Allow alphanumeric plus hyphen and underscore
+    subjectChars = some subjectChar
+    subjectChar = Parser charP
+      where
+        charP bs
+          | BS.empty == bs = Left (UnexpectedEndOfInput "nothing to read" (BS.length bs))
+          | isSubjectChar (BS.head bs) = Right (BS.head bs, BS.tail bs)
+          | otherwise = Left (UnexpectedChar (w8sToString [BS.head bs] ++ " is not a valid subject char in " ++ C.unpack bs) (BS.length bs))
+        -- Subject tokens can contain: a-z, A-Z, 0-9, hyphen, underscore
+        isSubjectChar c = W8.isAlphaNum c || c == W8._hyphen || c == W8._underscore
 
 wireTapParser :: Parser [W8.Word8]
 wireTapParser = do
