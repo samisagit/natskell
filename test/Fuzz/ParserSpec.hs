@@ -208,8 +208,11 @@ propTokenParser :: BS.ByteString -> Bool
 propTokenParser i = do
   let output = Parser.runParser Parser.tokenParser i
   case output of
-    Right (struct, _)    -> all W8.isAlphaNum struct || struct == [W8._asterisk]
-    Left _               -> BS.null i || BS.head i /= W8._asterisk || not (W8.isAlphaNum (BS.head i))
+    -- Subject tokens can be: alphanumeric, hyphen, underscore, or asterisk wildcard
+    Right (struct, _)    -> all isSubjectChar struct || struct == [W8._asterisk]
+    Left _               -> BS.null i || not (isSubjectChar (BS.head i)) && BS.head i /= W8._asterisk
+  where
+    isSubjectChar c = W8.isAlphaNum c || c == W8._hyphen || c == W8._underscore
 
 propWireTapParser :: BS.ByteString -> Bool
 propWireTapParser i = do
