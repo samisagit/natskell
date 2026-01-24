@@ -1,7 +1,7 @@
 name: Haskell CI
 
 on:
-  pull_request:
+  workflow_call:
 
 permissions:
   contents: read
