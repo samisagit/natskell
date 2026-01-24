@@ -437,18 +437,23 @@ subscribe' isReply client subject opts callback = do
 -- TODO: we could make all these monadic functions so we have access to the logger, and later the config
 -- +1 I'd like to log these actions
 router :: Client -> ParsedMessage -> IO ()
-router client msg = do
+router client = runClient client . routerM client
+
+routerM :: Client -> ParsedMessage -> AppM ()
+routerM client msg = do
   case msg of
-    ParsedMsg a  -> msgRouter client a
-    ParsedInfo i -> connect client >> atomically (setServerInfo client i)
-    ParsedPing _ -> pong client
-    ParsedPong _ -> sequenceActions (pings client)
+    ParsedMsg a  -> msgRouterM client a
+    ParsedInfo i -> liftIO $ do
+      connect client
+      atomically (setServerInfo client i)
+    ParsedPing _ -> liftIO $ pong client
+    ParsedPong _ -> liftIO $ sequenceActions (pings client)
     ParsedOk   _ -> return ()
     ParsedErr err -> case E.isFatal err of
       True  -> do
-        runClient client . logError $ ("Fatal error: " ++ show err)
-        Client.close client -- TODO: this should be more like a reset.. we don't want to wait for a graceful close as the server is already disconnected
-      False -> runClient client . logWarn $ ("Error: " ++ show err)
+        logError $ "Fatal error: " ++ show err
+        liftIO $ Client.close client -- TODO: this should be more like a reset.. we don't want to wait for a graceful close as the server is already disconnected
+      False -> logWarn $ "Error: " ++ show err
 
 logAuthMethod :: Auth -> AppM ()
 logAuthMethod auth = case auth of
@@ -467,15 +472,15 @@ sequenceActions actionsVar = do
     return as
   sequence_ actions
 
-msgRouter :: Client -> M.Msg -> IO ()
-msgRouter client msg = do
+msgRouterM :: Client -> M.Msg -> AppM ()
+msgRouterM client msg = do
   let sid = M.sid msg
-  callbacks <- subscriptionCallbacks <$> readTVarIO (subscriptions client)
+  callbacks <- liftIO $ subscriptionCallbacks <$> readTVarIO (subscriptions client)
   case lookup sid callbacks of
     Just callback -> do
-      runClient client . logDebug $ ("Running callback for SID: " ++ show sid)
-      callback $ Just msg
-    Nothing       -> runClient client . logError $ ("No callback for SID: " ++ show sid)
+      logDebug $ "Running callback for SID: " ++ show sid
+      liftIO $ callback $ Just msg
+    Nothing       -> logError $ "No callback for SID: " ++ show sid
 
 newHash :: Client -> IO SID
 newHash client = atomically $ do
