@@ -104,8 +104,8 @@
       in {
         packages.sdist = sdist;
         packages.docs = haddock;
-	packages.default = drv;
-	packages.system-test = sysTest;
+	      packages.default = drv;
+	      packages.system-test = sysTest;
 
         devShells.default = devEnv;
 

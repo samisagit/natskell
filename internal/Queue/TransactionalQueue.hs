@@ -5,6 +5,7 @@
 module Queue.TransactionalQueue where
 
 import           Control.Concurrent.STM
+import qualified Control.Monad
 import           Queue.API
 import           Transformers.Transformers
 
@@ -13,31 +14,27 @@ data QueueItem = forall m. Transformer m => QueueItem m
 instance Transformer QueueItem where
   transform (QueueItem m) = transform m
 
-data Q t = Q (TBQueue t) (TVar Bool)
+data Q t = Q (TBQueue t) (TMVar ())
 
 newQ :: IO (Q QueueItem)
-newQ = Q <$> newTBQueueIO 1000 <*> newTVarIO False
+newQ = Q <$> newTBQueueIO 1000 <*> newEmptyTMVarIO
 
 instance Transformer t => Queue (Q t) t where
   enqueue (Q q p) t = do
-    poisoned <- readTVarIO p
-    if poisoned
-      then return $ Left "Queue is poisoned"
-      else atomically $ do
+    isOpen <- atomically $ isEmptyTMVar p
+    if isOpen
+      then atomically $ do
         writeTBQueue q t
         return $ Right ()
+      else return $ Left "Queue is closed"
   dequeue (Q q p) = do
     atomically $
       (Right <$> readTBQueue q)
       `orElse`
       (do
-        poisoned <- readTVar p
-        check poisoned
-        return $ Left "Queue is poisoned")
-  isEmpty (Q q p) = do
-    poisoned <- readTVarIO p
-    if poisoned
-      then return True
-      else atomically $ isEmptyTBQueue q
-  close (Q _ p) = atomically $ writeTVar p True
+        isOpen <- isEmptyTMVar p
+        check (not isOpen)
+        return $ Left "Queue is closed")
+  close (Q _ p) = atomically $ writeTMVar p ()
+  open (Q _ p) = Control.Monad.void (atomically (tryTakeTMVar p))
 

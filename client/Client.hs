@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE GADTs                 #-}
+{-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE TypeApplications      #-}
@@ -10,8 +11,11 @@ module Client (
   newClient,
   publish,
   subscribe,
+  subscribeWithOpts,
+  requestWithOpts,
   unsubscribe,
   ping,
+  reset,
   Client.close,
   withPayload,
   withReplyCallback,
@@ -25,6 +29,7 @@ module Client (
   withLoggerConfig,
   withConnectionAttempts,
   withExitAction,
+  withSubscriptionExpiry,
   LoggerConfig (..),
   LogLevel (..),
   AuthTokenData,
@@ -34,6 +39,7 @@ module Client (
   TLSPublicKey,
   TLSPrivateKey,
   TLSCertData,
+  SubscribeOpts,
   ) where
 
 import           Control.Concurrent
@@ -42,7 +48,16 @@ import           Control.Exception
 import           Control.Monad
 import           Control.Monad.IO.Class
 import qualified Data.ByteString           as BS
+import           Data.Heap
+    ( MinHeap
+    , empty
+    , insert
+    , view
+    , viewHead
+    )
 import           Data.Map                  (Map, delete, insert, lookup)
+import           Data.Maybe
+import           Data.Time.Clock
 import           Lib.CallOption
 import           Lib.Logger
 import           MSGView
@@ -72,17 +87,116 @@ import qualified Types.Sub                 as Sub
 import qualified Types.Unsub               as Unsub
 import           WaitGroup
 
+data SubscriptionHeapItem = SubscriptionHeapItem
+                              { sid'   :: SID
+                              , expiry :: UTCTime
+                              }
+
+instance Eq SubscriptionHeapItem where
+  a == b = sid' a == sid' b && expiry a == expiry b
+
+instance Ord SubscriptionHeapItem where
+  a `compare` b = expiry a `compare` expiry b
+
+type SubscriptionHeap = MinHeap SubscriptionHeapItem
+
+data SubscriptionState = SubscriptionState
+                           { subscriptionCallbacks :: Map SID (Maybe M.Msg -> IO ())
+                           , subscriptionExpiries :: SubscriptionHeap
+                           }
+
+emptySubscriptionState :: SubscriptionState
+emptySubscriptionState = SubscriptionState mempty empty
+
+data ConfigState = ConfigState
+                     { cfgConfig     :: Config
+                     , cfgServerInfo :: Maybe I.Info
+                     }
+
+initialConfigState :: Config -> ConfigState
+initialConfigState cfg = ConfigState cfg Nothing
+
+data LifecycleState = Running | Closing | Closed
+
+readConfigState :: Client -> IO ConfigState
+readConfigState client = readTVarIO (configState client)
+
+readConfig :: Client -> IO Config
+readConfig = fmap cfgConfig . readConfigState
+
+setServerInfo :: Client -> I.Info -> STM ()
+setServerInfo client info =
+  modifyTVar' (configState client) (\state -> state { cfgServerInfo = Just info })
+
+setLifecycleClosing :: Client -> STM ()
+setLifecycleClosing client =
+  modifyTVar' (lifecycle client) $ \case
+    Closed -> Closed
+    _      -> Closing
+
+markClosed :: Client -> STM Bool
+markClosed client = do
+  state <- readTVar (lifecycle client)
+  case state of
+    Closed -> return False
+    _      -> writeTVar (lifecycle client) Closed >> return True
+
+waitForClosed :: Client -> STM ()
+waitForClosed client = do
+  state <- readTVar (lifecycle client)
+  case state of
+    Closed -> return ()
+    _      -> retry
+
+waitForServerInfo :: Client -> STM ()
+waitForServerInfo client = do
+  cfgState <- readTVar (configState client)
+  case cfgServerInfo cfgState of
+    Just _  -> return ()
+    Nothing -> retry
+
+cancelExpiredSubscriptions :: Client -> IO ()
+cancelExpiredSubscriptions client = do
+  runClient client $ logDebug "Running subscription GC"
+  now <- getCurrentTime
+  action <- atomically $ do
+    state <- readTVar (subscriptions client)
+    let viewed = viewHead (subscriptionExpiries state)
+    case viewed of
+      Nothing -> retry
+      Just item ->
+        if now < expiry item
+          then return Nothing
+          else do
+            case view (subscriptionExpiries state) of
+              Nothing -> return Nothing
+              Just (_, heapTail) -> do
+                let callback = lookup (sid' item) (subscriptionCallbacks state)
+                    newCallbacks = maybe (subscriptionCallbacks state) (const (delete (sid' item) (subscriptionCallbacks state))) callback
+                    newState = state { subscriptionCallbacks = newCallbacks, subscriptionExpiries = heapTail }
+                writeTVar (subscriptions client) newState
+                return callback
+  runClient client $ case action of
+    Just a -> liftIO $ a Nothing
+    Nothing  -> do
+      liftIO $ threadDelay 1000000 -- 1 second
+      return ()
+
+awaitSubscriptionGC :: Client -> IO ()
+awaitSubscriptionGC client = do
+  atomically $ do
+    subs <- readTVar (subscriptions client)
+    when (isJust (viewHead (subscriptionExpiries subs))) retry
+
 -- | Client is used to interact with the NATS server.
 data Client = Client'
                 { queue               :: Q QueueItem
-                , routes              :: TVar (Map Subject (M.Msg -> IO ()))
+                , subscriptions       :: TVar SubscriptionState
                 , pings               :: TVar [IO ()]
                 , randomGen           :: TVar StdGen
-                , serverInfo          :: TMVar I.Info
+                , configState         :: TVar ConfigState
                 , connectionAttempts' :: TVar Int
-                , poisonpill          :: TVar Bool
-                , exited              :: TMVar ()
-                , config              :: Config
+                , lifecycle           :: TVar LifecycleState
                 , conn                :: Conn
                 }
 
@@ -103,32 +217,27 @@ newClient servers conOpts = do
 
   client <- liftIO $ Client'
     <$> newQ
-    <*> newTVarIO mempty
+    <*> newTVarIO emptySubscriptionState
     <*> newTVarIO []
     <*> (newTVarIO =<< newStdGen)
-    <*> newEmptyTMVarIO
+    <*> newTVarIO (initialConfigState defaultConfig)
     <*> newTVarIO (connectionAttempts defaultConfig)
-    <*> newTVarIO False
-    <*> newEmptyTMVarIO
-    <*> pure defaultConfig
+    <*> newTVarIO Running
     <*> pure c
 
   runClient client . logAuthMethod $ auth defaultConfig
   forkIO $ retryLoop client
 
-   -- ensure that the server info is initialized
-  atomically $ do
-    readTMVar (serverInfo client)
-    return ()
-    `orElse`
-    readTMVar (exited client)
+  -- ensure that the server info is initialized
+  atomically $ waitForServerInfo client `orElse` waitForClosed client
 
   return client
 
 acquireHandle :: Client -> IO (Either String Conn)
 acquireHandle client = do
   attempts <- readTVarIO (connectionAttempts' client)
-  case connectOptions (config client) of
+  cfg <- readConfig client
+  case connectOptions cfg of
     []             -> return (Left "No servers provided")
     xs -> do
       let (host, port) = cycle xs !! attempts
@@ -151,43 +260,70 @@ withHandle client = bracket
 withRetry :: Client -> Int -> IO () -> IO ()
 withRetry c 0 _ = do
   runClient c $ logInfo "Ran out of retries, exiting"
-  exitAction . config $ c
-  atomically $ putTMVar (exited c) ()
-  return ()
+  cfg <- readConfig c
+  closed <- atomically $ markClosed c
+  when closed $ exitAction cfg
 withRetry c x action = do
-  pp <- readTVarIO (poisonpill c)
-  when pp $ do
-    runClient c $ logInfo "Client closing, skipping retries"
-    exitAction . config $ c
-    atomically $ putTMVar (exited c) ()
-    return ()
-  unless pp $ do
-    action
-    runClient c $ logInfo "Retrying client connection"
-    atomically $ modifyTVar (connectionAttempts' c) (+1)
-    withRetry c (x-1) action
+  state <- readTVarIO (lifecycle c)
+  case state of
+    Closing -> do
+      runClient c $ logInfo "Client closing, skipping retries"
+      cfg <- readConfig c
+      closed <- atomically $ markClosed c
+      when closed $ exitAction cfg
+    Closed -> return ()
+    Running -> do
+      action
+      runClient c $ logInfo "Retrying client connection"
+      atomically $ modifyTVar (connectionAttempts' c) (+1)
+      withRetry c (x-1) action
+
+withSubscriptionGC :: Client -> IO () -> IO ()
+withSubscriptionGC client action = bracket
+  (forkIO . forever . cancelExpiredSubscriptions $ client)
+  (\tid -> do
+    awaitSubscriptionGC client
+    killThread tid
+  )
+  (const action)
 
 retryLoop :: Client -> IO ()
 retryLoop client = do
-  let attemptsLeft = connectionAttempts . config $ client
+  cfg <- readConfig client
+  let attemptsLeft = connectionAttempts cfg
   withRetry client attemptsLeft $ do
-    withHandle client $ \handle -> do
-      case handle of
-        (Left e) -> runClient client . logError $ show e
-        (Right h) -> do
-          runClient client $ do
-            wg <- liftIO $ newWaitGroup 2
-            logDebug "Starting the client streaming threads"
-            liftIO . void . forkIO $ do
-              runClient client $ B.run (queue client) h
-              runClient client $ logDebug "Broadcasting thread has exited"
-              done wg
-            liftIO . void . forkIO $ do
-              runClient client $ S.run h genericParse (router client)
-              runClient client $ logDebug "Streaming thread has exited"
-              done wg
-            liftIO $ wait wg
-            logDebug "Streaming threads have exited, closing connection"
+    Queue.API.open (queue client)
+    Network.Connection.open (conn client)
+    withSubscriptionGC client $ do
+      withHandle client $ \handle -> do
+        case handle of
+          (Left e) -> runClient client . logError $ show e
+          (Right h) -> do
+            runClient client $ do
+              wgs <- liftIO $ newWaitGroup 1
+              wgb <- liftIO $ newWaitGroup 1
+              logDebug "Starting the client streaming threads"
+              liftIO . void . forkIO $ do
+                runClient client $ B.run (queue client) h
+                runClient client $ logDebug "Broadcasting thread has exited"
+                done wgb
+              liftIO . void . forkIO $ do
+                runClient client $ S.run h genericParse (router client)
+                runClient client $ logDebug "Streaming thread has exited"
+                done wgs
+              wg <- liftIO $ newWaitGroup 2
+              liftIO . void . forkIO $ do
+                wait wgs
+                -- close broadcasting
+                liftIO $ Queue.API.close (queue client)
+                done wg
+              liftIO . void . forkIO $ do
+                wait wgb
+                -- close streaming
+                closeReader h
+                done wg
+              liftIO $ wait wg
+              logDebug "Streaming threads have exited, closing connection"
 
 -- | publish sends a message to the NATS server.
 publish :: Client -> Subject -> [PubOptions -> PubOptions] -> IO ()
@@ -213,18 +349,24 @@ publish client subject opts = do
   writeToClientQueue client (QueueItem msg)
 
 -- | subscribe is used to subscribe to a subject on the NATS server.
-subscribe :: Client -> Subject -> (MsgView -> IO ()) -> IO SID
-subscribe = subscribe' False
+subscribe :: Client -> Subject -> (Maybe MsgView -> IO ()) -> IO SID
+subscribe client subject = subscribeWithOpts client subject []
 
-request :: Client -> Subject -> (MsgView -> IO ()) -> IO SID
-request = do
-  subscribe' True
+-- | subscribeWithOpts allows callers to set subscription behaviour (e.g., reply expiry).
+subscribeWithOpts :: Client -> Subject -> [SubscribeOpts] -> (Maybe MsgView -> IO ()) -> IO SID
+subscribeWithOpts = subscribe' False
+
+request :: Client -> Subject -> (Maybe MsgView -> IO ()) -> IO SID
+request client subject = requestWithOpts client subject []
+
+requestWithOpts :: Client -> Subject -> [SubscribeOpts] -> (Maybe MsgView -> IO ()) -> IO SID
+requestWithOpts = subscribe' True
 
 -- | unsubscribe is used to unsubscribe from a subject on the NATS server.
 unsubscribe :: Client -> SID -> IO ()
 unsubscribe client sid = do
   runClient client . logDebug $ ("Unsubscribing from subject with SID: " ++ show sid)
-  atomically $ modifyTVar' (routes client) (delete sid)
+  atomically $ modifyTVar' (subscriptions client) (\s -> s { subscriptionCallbacks = delete sid (subscriptionCallbacks s) })
   let unsub = Unsub.Unsub {
     Unsub.sid = sid,
     Unsub.maxMsg = Nothing
@@ -242,17 +384,26 @@ ping client action = do
 -- | close is used to close the connection to the NATS server.
 close :: Client -> IO ()
 close client = do
-  atomically $ writeTVar (poisonpill client) True
+  atomically $ setLifecycleClosing client
   runClient client $ logInfo "Closing the client connection"
   Queue.API.close $ queue client
   closeReader (conn client)
-  atomically $ takeTMVar (exited client)
+  atomically $ waitForClosed client
+
+-- reset is used to abort the current connection and trigger lifecycle closure without attempting graceful drain
+reset :: Client -> IO ()
+reset client = do
+  atomically $ setLifecycleClosing client
+  runClient client $ logInfo "Resetting the client connection"
+  Queue.API.close $ queue client
+  closeReader (conn client)
+  atomically $ waitForClosed client
 
 -- internal handlers
 
 runClient :: Client -> AppM a -> IO a
 runClient client action = do
-  let cfg = config client
+  cfg <- readConfig client
   runWithLogger (loggerConfig cfg) action
 
 defaultConn :: String -> Int -> IO Handle
@@ -266,15 +417,25 @@ defaultConn host port = do
   hSetBuffering handle NoBuffering
   return handle
 
--- TODO: need to build in the timeout handling here
-subscribe' :: Bool -> Client -> Subject -> (MsgView -> IO ()) -> IO SID
-subscribe' isReply client subject callback = do
+subscribe' :: Bool -> Client -> Subject -> [SubscribeOpts] -> (Maybe MsgView -> IO ()) -> IO SID
+subscribe' isReply client subject opts callback = do
   runClient client . logDebug $ ("Subscribing to subject: " ++ show subject)
   sid <- newHash client
+  let subConfig = applyCallOptions opts defaultSubscribeConfig
   let cb = if isReply
-        then \m -> callback (transformMsg m) >> unsubscribe client sid
-        else callback . transformMsg
-  atomically $ modifyTVar' (routes client) (insert sid cb)
+        then \m -> do
+          callback (fmap transformMsg m)
+          unsubscribe client sid
+        else callback . fmap transformMsg
+  let replyExpiry = subscriptionExpiry subConfig
+  expiry <- addUTCTime replyExpiry <$> getCurrentTime
+  atomically $ do
+    modifyTVar' (subscriptions client) $ \subs ->
+      let callbacks' = Data.Map.insert sid cb (subscriptionCallbacks subs)
+          expiries' = if isReply
+            then Data.Heap.insert (SubscriptionHeapItem sid expiry) (subscriptionExpiries subs)
+            else subscriptionExpiries subs
+      in subs { subscriptionCallbacks = callbacks', subscriptionExpiries = expiries' }
   let sub = Sub.Sub {
     Sub.subject = subject,
     Sub.queueGroup = Nothing,
@@ -282,24 +443,35 @@ subscribe' isReply client subject callback = do
   }
 
   writeToClientQueue client (QueueItem sub)
-
   return sid
 
--- TODO: we could make all these monadic functions so we have access to the logger, and later the config
--- +1 I'd like to log these actions
 router :: Client -> ParsedMessage -> IO ()
-router client msg = do
+router client = runClient client . routerM client
+
+routerM :: Client -> ParsedMessage -> AppM ()
+routerM client msg = do
   case msg of
-    ParsedMsg a  -> msgRouter client a
-    ParsedInfo i -> connect client >> atomically (putTMVar (serverInfo client) i)
-    ParsedPing _ -> pong client
-    ParsedPong _ -> sequenceActions (pings client)
-    ParsedOk   _ -> return ()
-    ParsedErr err -> case E.isFatal err of
-      True  -> do
-        runClient client . logError $ ("Fatal error: " ++ show err)
-        Client.close client
-      False -> runClient client . logWarn $ ("Error: " ++ show err)
+    ParsedMsg a  -> do
+      logDebug $ "Routing MSG: " ++ show a
+      msgRouterM client a
+    ParsedInfo i -> do
+      logDebug $ "Routing INFO: " ++ show i
+      liftIO $ connect client
+      liftIO $ atomically (setServerInfo client i)
+    ParsedPing _ -> do
+      logDebug "Routing PING"
+      liftIO $ pong client
+    ParsedPong _ -> do
+      logDebug "Routing PONG"
+      liftIO $ sequenceActions (pings client)
+    ParsedOk   okMsg -> logDebug $ "Routing OK: " ++ show okMsg
+    ParsedErr err -> do
+      logDebug $ "Routing ERR: " ++ show err
+      case E.isFatal err of
+        True  -> do
+          logError $ "Fatal error: " ++ show err
+          liftIO $ reset client
+        False -> logWarn $ "Error: " ++ show err
 
 logAuthMethod :: Auth -> AppM ()
 logAuthMethod auth = case auth of
@@ -318,16 +490,15 @@ sequenceActions actionsVar = do
     return as
   sequence_ actions
 
-msgRouter :: Client -> M.Msg -> IO ()
-msgRouter client msg = do
+msgRouterM :: Client -> M.Msg -> AppM ()
+msgRouterM client msg = do
   let sid = M.sid msg
-  callbacks <- readTVarIO (routes client)
+  callbacks <- liftIO $ subscriptionCallbacks <$> readTVarIO (subscriptions client)
   case lookup sid callbacks of
     Just callback -> do
-      runClient client . logDebug $ ("Running callback for SID: " ++ show sid)
-      callback msg
-    Nothing       -> runClient client . logError $ ("No callback for SID: " ++ show sid)
-
+      logDebug $ "Running callback for SID: " ++ show sid
+      liftIO . callback $ Just msg
+    Nothing       -> logError $ "No callback for SID: " ++ show sid
 
 newHash :: Client -> IO SID
 newHash client = atomically $ do
@@ -357,7 +528,8 @@ defaultConnect = Connect.Connect{
 connect :: Client -> IO ()
 connect client = do
   runClient client $ logDebug "Connecting to the NATS server"
-  let dat = connectConfig . config $ client
+  cfg <- readConfig client
+  let dat = connectConfig cfg
   writeToClientQueue client (QueueItem dat)
 
 pong :: Client -> IO ()
@@ -370,4 +542,3 @@ writeToClientQueue client item = do
   case res of
     Left err -> runClient client . logError $ ("Error enqueueing item: " ++ err)
     Right () -> return ()
-
