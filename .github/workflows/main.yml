@@ -1,0 +1,12 @@
+name: main merge
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    uses: ./.github/workflows/haskell.yml
+  package:
+    uses: ./.github/workflows/package.yml
