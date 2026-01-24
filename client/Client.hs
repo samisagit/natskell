@@ -102,6 +102,31 @@ data SubscriptionState = SubscriptionState
 emptySubscriptionState :: SubscriptionState
 emptySubscriptionState = SubscriptionState mempty empty
 
+data ConfigState = ConfigState
+  { cfgConfig     :: Config
+  , cfgServerInfo :: Maybe I.Info
+  }
+
+initialConfigState :: Config -> ConfigState
+initialConfigState cfg = ConfigState cfg Nothing
+
+readConfigState :: Client -> IO ConfigState
+readConfigState client = readTVarIO (configState client)
+
+readConfig :: Client -> IO Config
+readConfig = fmap cfgConfig . readConfigState
+
+setServerInfo :: Client -> I.Info -> STM ()
+setServerInfo client info =
+  modifyTVar' (configState client) (\state -> state { cfgServerInfo = Just info })
+
+waitForServerInfo :: Client -> STM ()
+waitForServerInfo client = do
+  cfgState <- readTVar (configState client)
+  case cfgServerInfo cfgState of
+    Just _  -> return ()
+    Nothing -> retry
+
 cancelExpiredSubscriptions :: Client -> IO ()
 cancelExpiredSubscriptions client = do
   runClient client $ logDebug "Running subscription GC"
@@ -141,13 +166,11 @@ data Client = Client'
                 , subscriptions :: TVar SubscriptionState
                 , pings :: TVar [IO ()]
                 , randomGen :: TVar StdGen
-                , serverInfo :: TMVar I.Info
-                  -- TODO: could make config a TVar and have this inside it
+                , configState :: TVar ConfigState
                 , connectionAttempts' :: TVar Int
                 , poisonpill :: TVar Bool
                 , exited :: TMVar ()
                   -- TODO: combine with poisonpill under a state type
-                , config :: Config
                 , conn :: Conn
                 }
 
@@ -171,29 +194,25 @@ newClient servers conOpts = do
     <*> newTVarIO emptySubscriptionState
     <*> newTVarIO []
     <*> (newTVarIO =<< newStdGen)
-    <*> newEmptyTMVarIO
+    <*> newTVarIO (initialConfigState defaultConfig)
     <*> newTVarIO (connectionAttempts defaultConfig)
     <*> newTVarIO False
     <*> newEmptyTMVarIO
-    <*> pure defaultConfig
     <*> pure c
 
   runClient client . logAuthMethod $ auth defaultConfig
   forkIO $ retryLoop client
 
-   -- ensure that the server info is initialized
-  atomically $ do
-    readTMVar (serverInfo client)
-    return ()
-    `orElse`
-    readTMVar (exited client)
+  -- ensure that the server info is initialized
+  atomically $ waitForServerInfo client `orElse` readTMVar (exited client)
 
   return client
 
 acquireHandle :: Client -> IO (Either String Conn)
 acquireHandle client = do
   attempts <- readTVarIO (connectionAttempts' client)
-  case connectOptions (config client) of
+  cfg <- readConfig client
+  case connectOptions cfg of
     []             -> return (Left "No servers provided")
     xs -> do
       let (host, port) = cycle xs !! attempts
@@ -216,14 +235,16 @@ withHandle client = bracket
 withRetry :: Client -> Int -> IO () -> IO ()
 withRetry c 0 _ = do
   runClient c $ logInfo "Ran out of retries, exiting"
-  exitAction . config $ c
+  cfg <- readConfig c
+  exitAction cfg
   atomically $ putTMVar (exited c) ()
   return ()
 withRetry c x action = do
   pp <- readTVarIO (poisonpill c)
   when pp $ do
     runClient c $ logInfo "Client closing, skipping retries"
-    exitAction . config $ c
+    cfg <- readConfig c
+    exitAction cfg
     atomically $ putTMVar (exited c) ()
     return ()
   unless pp $ do
@@ -243,7 +264,8 @@ withSubscriptionGC client action = bracket
 
 retryLoop :: Client -> IO ()
 retryLoop client = do
-  let attemptsLeft = connectionAttempts . config $ client
+  cfg <- readConfig client
+  let attemptsLeft = connectionAttempts cfg
   withRetry client attemptsLeft $ do
     Queue.API.open (queue client)
     Network.Connection.open (conn client)
@@ -341,7 +363,7 @@ close client = do
 
 runClient :: Client -> AppM a -> IO a
 runClient client action = do
-  let cfg = config client
+  cfg <- readConfig client
   runWithLogger (loggerConfig cfg) action
 
 defaultConn :: String -> Int -> IO Handle
@@ -388,7 +410,7 @@ router :: Client -> ParsedMessage -> IO ()
 router client msg = do
   case msg of
     ParsedMsg a  -> msgRouter client a
-    ParsedInfo i -> connect client >> atomically (putTMVar (serverInfo client) i)
+    ParsedInfo i -> connect client >> atomically (setServerInfo client i)
     ParsedPing _ -> pong client
     ParsedPong _ -> sequenceActions (pings client)
     ParsedOk   _ -> return ()
@@ -453,7 +475,8 @@ defaultConnect = Connect.Connect{
 connect :: Client -> IO ()
 connect client = do
   runClient client $ logDebug "Connecting to the NATS server"
-  let dat = connectConfig . config $ client
+  cfg <- readConfig client
+  let dat = connectConfig cfg
   writeToClientQueue client (QueueItem dat)
 
 pong :: Client -> IO ()
