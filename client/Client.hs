@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE GADTs                 #-}
+{-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE TypeApplications      #-}
@@ -100,17 +101,17 @@ instance Ord SubscriptionHeapItem where
 type SubscriptionHeap = MinHeap SubscriptionHeapItem
 
 data SubscriptionState = SubscriptionState
-  { subscriptionCallbacks :: Map SID (Maybe M.Msg -> IO ())
-  , subscriptionExpiries  :: SubscriptionHeap
-  }
+                           { subscriptionCallbacks :: Map SID (Maybe M.Msg -> IO ())
+                           , subscriptionExpiries :: SubscriptionHeap
+                           }
 
 emptySubscriptionState :: SubscriptionState
 emptySubscriptionState = SubscriptionState mempty empty
 
 data ConfigState = ConfigState
-  { cfgConfig     :: Config
-  , cfgServerInfo :: Maybe I.Info
-  }
+                     { cfgConfig     :: Config
+                     , cfgServerInfo :: Maybe I.Info
+                     }
 
 initialConfigState :: Config -> ConfigState
 initialConfigState cfg = ConfigState cfg Nothing
@@ -129,16 +130,16 @@ setServerInfo client info =
 
 setLifecycleClosing :: Client -> STM ()
 setLifecycleClosing client =
-  modifyTVar' (lifecycle client) $ \state -> case state of
-    Closed  -> Closed
-    _       -> Closing
+  modifyTVar' (lifecycle client) $ \case
+    Closed -> Closed
+    _      -> Closing
 
 markClosed :: Client -> STM Bool
 markClosed client = do
   state <- readTVar (lifecycle client)
   case state of
     Closed -> return False
-    _ -> writeTVar (lifecycle client) Closed >> return True
+    _      -> writeTVar (lifecycle client) Closed >> return True
 
 waitForClosed :: Client -> STM ()
 waitForClosed client = do
@@ -189,14 +190,14 @@ awaitSubscriptionGC client = do
 
 -- | Client is used to interact with the NATS server.
 data Client = Client'
-                { queue :: Q QueueItem
-                , subscriptions :: TVar SubscriptionState
-                , pings :: TVar [IO ()]
-                , randomGen :: TVar StdGen
-                , configState :: TVar ConfigState
+                { queue               :: Q QueueItem
+                , subscriptions       :: TVar SubscriptionState
+                , pings               :: TVar [IO ()]
+                , randomGen           :: TVar StdGen
+                , configState         :: TVar ConfigState
                 , connectionAttempts' :: TVar Int
-                , lifecycle :: TVar LifecycleState
-                , conn :: Conn
+                , lifecycle           :: TVar LifecycleState
+                , conn                :: Conn
                 }
 
 -- | newClient creates a new client with optional overrides to default settings
@@ -349,14 +350,14 @@ publish client subject opts = do
 
 -- | subscribe is used to subscribe to a subject on the NATS server.
 subscribe :: Client -> Subject -> (Maybe MsgView -> IO ()) -> IO SID
-subscribe client subject cb = subscribeWithOpts client subject [] cb
+subscribe client subject = subscribeWithOpts client subject []
 
 -- | subscribeWithOpts allows callers to set subscription behaviour (e.g., reply expiry).
 subscribeWithOpts :: Client -> Subject -> [SubscribeOpts] -> (Maybe MsgView -> IO ()) -> IO SID
 subscribeWithOpts = subscribe' False
 
 request :: Client -> Subject -> (Maybe MsgView -> IO ()) -> IO SID
-request client subject cb = requestWithOpts client subject [] cb
+request client subject = requestWithOpts client subject []
 
 requestWithOpts :: Client -> Subject -> [SubscribeOpts] -> (Maybe MsgView -> IO ()) -> IO SID
 requestWithOpts = subscribe' True
@@ -496,7 +497,7 @@ msgRouterM client msg = do
   case lookup sid callbacks of
     Just callback -> do
       logDebug $ "Running callback for SID: " ++ show sid
-      liftIO $ callback $ Just msg
+      liftIO . callback $ Just msg
     Nothing       -> logError $ "No callback for SID: " ++ show sid
 
 newHash :: Client -> IO SID

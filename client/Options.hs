@@ -1,11 +1,11 @@
 module Options where
 import qualified Data.ByteString as BS
+import           Data.Time.Clock (NominalDiffTime)
 import           Lib.CallOption
 import           Lib.Logger
 import           MSGView
 import           Types
 import qualified Types.Connect   as Connect
-import           Data.Time.Clock (NominalDiffTime)
 
 type ConfigOpts = CallOption Config
 
@@ -69,9 +69,7 @@ withExitAction action config = config { exitAction = action }
 
 type PubOptions = (Maybe Payload, Maybe (Maybe MsgView -> IO ()), Maybe Headers)
 
-data SubscribeConfig = SubscribeConfig
-  { subscriptionExpiry :: NominalDiffTime
-  }
+newtype SubscribeConfig = SubscribeConfig { subscriptionExpiry :: NominalDiffTime }
 
 defaultSubscribeConfig :: SubscribeConfig
 defaultSubscribeConfig = SubscribeConfig 5.0
