@@ -7,7 +7,6 @@ import           Control.Concurrent
 import           Control.Concurrent.STM
 import qualified Data.ByteString        as BS
 import           Data.Maybe
-import           GHC.MVar
 import           Test.Hspec
 import           TestContainers
 import qualified TestContainers.Hspec   as TC
@@ -39,7 +38,7 @@ breakLogFile fp = do
 testLoggerConfig :: IO LoggerConfig
 testLoggerConfig = do
   lock <- newTMVarIO ()
-  pure $ LoggerConfig Debug (\l s -> putStrLn s) lock
+  pure $ LoggerConfig Debug (\_ s -> putStrLn s) lock
 
 container :: TC.TestContainer Endpoints
 container = do
@@ -79,6 +78,14 @@ sys = parallel $ do
           ping c $ done wg
           wait wg
           close c
+        it "exits immediately on fatal error" $ \(Endpoints _ _) -> do
+          wg <- newWaitGroup 1
+          _ <- newClient [("0.0.0.0", 4999)] [
+            withConnectName "fatal-reset-test",
+            withExitAction (done wg),
+            withLoggerConfig logger
+            ]
+          wait wg
         it "user can close connection" $ \(Endpoints natsHost natsPort) -> do
           wg <- newWaitGroup 1
           client <- newClient [(natsHost, natsPort)] [

@@ -14,6 +14,7 @@ module Client (
   requestWithOpts,
   unsubscribe,
   ping,
+  reset,
   Client.close,
   withPayload,
   withReplyCallback,
@@ -388,6 +389,15 @@ close client = do
   closeReader (conn client)
   atomically $ waitForClosed client
 
+-- reset is used to abort the current connection and trigger lifecycle closure without attempting graceful drain
+reset :: Client -> IO ()
+reset client = do
+  atomically $ setLifecycleClosing client
+  runClient client $ logInfo "Resetting the client connection"
+  Queue.API.close $ queue client
+  closeReader (conn client)
+  atomically $ waitForClosed client
+
 -- internal handlers
 
 runClient :: Client -> AppM a -> IO a
@@ -452,7 +462,7 @@ routerM client msg = do
     ParsedErr err -> case E.isFatal err of
       True  -> do
         logError $ "Fatal error: " ++ show err
-        liftIO $ Client.close client -- TODO: this should be more like a reset.. we don't want to wait for a graceful close as the server is already disconnected
+        liftIO $ reset client
       False -> logWarn $ "Error: " ++ show err
 
 logAuthMethod :: Auth -> AppM ()
