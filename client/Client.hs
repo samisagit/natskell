@@ -94,26 +94,35 @@ instance Ord SubscriptionHeapItem where
 
 type SubscriptionHeap = MinHeap SubscriptionHeapItem
 
+data SubscriptionState = SubscriptionState
+  { subscriptionCallbacks :: Map SID (Maybe M.Msg -> IO ())
+  , subscriptionExpiries  :: SubscriptionHeap
+  }
+
+emptySubscriptionState :: SubscriptionState
+emptySubscriptionState = SubscriptionState mempty empty
+
 cancelExpiredSubscriptions :: Client -> IO ()
 cancelExpiredSubscriptions client = do
   runClient client $ logDebug "Running subscription GC"
   now <- getCurrentTime
   action <- atomically $ do
-    heap <- readTVar (subscriptionHeap client)
-    let viewed = viewHead heap
+    state <- readTVar (subscriptions client)
+    let viewed = viewHead (subscriptionExpiries state)
     case viewed of
       Nothing -> retry
-      Just item -> do
+      Just item ->
         if now < expiry item
           then return Nothing
           else do
-            modifyTVar' (subscriptionHeap client) (snd . fromJust . view)
-            router <- readTVar (routes client)
-            case lookup (sid' item) router of
-              Just action -> do
-                modifyTVar' (routes client) (delete (sid' item))
-                return $ Just action
+            case view (subscriptionExpiries state) of
               Nothing -> return Nothing
+              Just (_, heapTail) -> do
+                let callback = lookup (sid' item) (subscriptionCallbacks state)
+                    newCallbacks = maybe (subscriptionCallbacks state) (const (delete (sid' item) (subscriptionCallbacks state))) callback
+                    newState = state { subscriptionCallbacks = newCallbacks, subscriptionExpiries = heapTail }
+                writeTVar (subscriptions client) newState
+                return callback
   runClient client $ case action of
     Just a -> liftIO $ a Nothing
     Nothing  -> do
@@ -123,15 +132,13 @@ cancelExpiredSubscriptions client = do
 awaitSubscriptionGC :: Client -> IO ()
 awaitSubscriptionGC client = do
   atomically $ do
-    heap <- readTVar (subscriptionHeap client)
-    when (isJust (viewHead heap)) retry
+    subs <- readTVar (subscriptions client)
+    when (isJust (viewHead (subscriptionExpiries subs))) retry
 
 -- | Client is used to interact with the NATS server.
 data Client = Client'
                 { queue :: Q QueueItem
-                , routes :: TVar (Map Subject (Maybe M.Msg -> IO ()))
-                , subscriptionHeap :: TVar SubscriptionHeap
-                  -- TODO: combine routes with this under a domain type
+                , subscriptions :: TVar SubscriptionState
                 , pings :: TVar [IO ()]
                 , randomGen :: TVar StdGen
                 , serverInfo :: TMVar I.Info
@@ -161,8 +168,7 @@ newClient servers conOpts = do
 
   client <- liftIO $ Client'
     <$> newQ
-    <*> newTVarIO mempty
-    <*> newTVarIO empty
+    <*> newTVarIO emptySubscriptionState
     <*> newTVarIO []
     <*> (newTVarIO =<< newStdGen)
     <*> newEmptyTMVarIO
@@ -307,7 +313,7 @@ request = do
 unsubscribe :: Client -> SID -> IO ()
 unsubscribe client sid = do
   runClient client . logDebug $ ("Unsubscribing from subject with SID: " ++ show sid)
-  atomically $ modifyTVar' (routes client) (delete sid)
+  atomically $ modifyTVar' (subscriptions client) (\s -> s { subscriptionCallbacks = delete sid (subscriptionCallbacks s) })
   let unsub = Unsub.Unsub {
     Unsub.sid = sid,
     Unsub.maxMsg = Nothing
@@ -361,9 +367,12 @@ subscribe' isReply client subject callback = do
   -- TODO: there should probably be an option to set the expiry time
   expiry <- addUTCTime 5.0 <$> getCurrentTime
   atomically $ do
-    modifyTVar' (routes client) (Data.Map.insert sid cb)
-    when isReply $
-      modifyTVar' (subscriptionHeap client) (Data.Heap.insert (SubscriptionHeapItem sid expiry))
+    modifyTVar' (subscriptions client) $ \subs ->
+      let callbacks' = Data.Map.insert sid cb (subscriptionCallbacks subs)
+          expiries' = if isReply
+            then Data.Heap.insert (SubscriptionHeapItem sid expiry) (subscriptionExpiries subs)
+            else subscriptionExpiries subs
+      in subs { subscriptionCallbacks = callbacks', subscriptionExpiries = expiries' }
   let sub = Sub.Sub {
     Sub.subject = subject,
     Sub.queueGroup = Nothing,
@@ -409,7 +418,7 @@ sequenceActions actionsVar = do
 msgRouter :: Client -> M.Msg -> IO ()
 msgRouter client msg = do
   let sid = M.sid msg
-  callbacks <- readTVarIO (routes client)
+  callbacks <- subscriptionCallbacks <$> readTVarIO (subscriptions client)
   case lookup sid callbacks of
     Just callback -> do
       runClient client . logDebug $ ("Running callback for SID: " ++ show sid)
@@ -457,4 +466,3 @@ writeToClientQueue client item = do
   case res of
     Left err -> runClient client . logError $ ("Error enqueueing item: " ++ err)
     Right () -> return ()
-
