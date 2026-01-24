@@ -110,6 +110,8 @@ data ConfigState = ConfigState
 initialConfigState :: Config -> ConfigState
 initialConfigState cfg = ConfigState cfg Nothing
 
+data LifecycleState = Running | Closing | Closed
+
 readConfigState :: Client -> IO ConfigState
 readConfigState client = readTVarIO (configState client)
 
@@ -119,6 +121,26 @@ readConfig = fmap cfgConfig . readConfigState
 setServerInfo :: Client -> I.Info -> STM ()
 setServerInfo client info =
   modifyTVar' (configState client) (\state -> state { cfgServerInfo = Just info })
+
+setLifecycleClosing :: Client -> STM ()
+setLifecycleClosing client =
+  modifyTVar' (lifecycle client) $ \state -> case state of
+    Closed  -> Closed
+    _       -> Closing
+
+markClosed :: Client -> STM Bool
+markClosed client = do
+  state <- readTVar (lifecycle client)
+  case state of
+    Closed -> return False
+    _ -> writeTVar (lifecycle client) Closed >> return True
+
+waitForClosed :: Client -> STM ()
+waitForClosed client = do
+  state <- readTVar (lifecycle client)
+  case state of
+    Closed -> return ()
+    _      -> retry
 
 waitForServerInfo :: Client -> STM ()
 waitForServerInfo client = do
@@ -168,9 +190,7 @@ data Client = Client'
                 , randomGen :: TVar StdGen
                 , configState :: TVar ConfigState
                 , connectionAttempts' :: TVar Int
-                , poisonpill :: TVar Bool
-                , exited :: TMVar ()
-                  -- TODO: combine with poisonpill under a state type
+                , lifecycle :: TVar LifecycleState
                 , conn :: Conn
                 }
 
@@ -196,15 +216,14 @@ newClient servers conOpts = do
     <*> (newTVarIO =<< newStdGen)
     <*> newTVarIO (initialConfigState defaultConfig)
     <*> newTVarIO (connectionAttempts defaultConfig)
-    <*> newTVarIO False
-    <*> newEmptyTMVarIO
+    <*> newTVarIO Running
     <*> pure c
 
   runClient client . logAuthMethod $ auth defaultConfig
   forkIO $ retryLoop client
 
   -- ensure that the server info is initialized
-  atomically $ waitForServerInfo client `orElse` readTMVar (exited client)
+  atomically $ waitForServerInfo client `orElse` waitForClosed client
 
   return client
 
@@ -236,22 +255,22 @@ withRetry :: Client -> Int -> IO () -> IO ()
 withRetry c 0 _ = do
   runClient c $ logInfo "Ran out of retries, exiting"
   cfg <- readConfig c
-  exitAction cfg
-  atomically $ putTMVar (exited c) ()
-  return ()
+  closed <- atomically $ markClosed c
+  when closed $ exitAction cfg
 withRetry c x action = do
-  pp <- readTVarIO (poisonpill c)
-  when pp $ do
-    runClient c $ logInfo "Client closing, skipping retries"
-    cfg <- readConfig c
-    exitAction cfg
-    atomically $ putTMVar (exited c) ()
-    return ()
-  unless pp $ do
-    action
-    runClient c $ logInfo "Retrying client connection"
-    atomically $ modifyTVar (connectionAttempts' c) (+1)
-    withRetry c (x-1) action
+  state <- readTVarIO (lifecycle c)
+  case state of
+    Closing -> do
+      runClient c $ logInfo "Client closing, skipping retries"
+      cfg <- readConfig c
+      closed <- atomically $ markClosed c
+      when closed $ exitAction cfg
+    Closed -> return ()
+    Running -> do
+      action
+      runClient c $ logInfo "Retrying client connection"
+      atomically $ modifyTVar (connectionAttempts' c) (+1)
+      withRetry c (x-1) action
 
 withSubscriptionGC :: Client -> IO () -> IO ()
 withSubscriptionGC client action = bracket
@@ -353,11 +372,11 @@ ping client action = do
 -- | close is used to close the connection to the NATS server.
 close :: Client -> IO ()
 close client = do
-  atomically $ writeTVar (poisonpill client) True
+  atomically $ setLifecycleClosing client
   runClient client $ logInfo "Closing the client connection"
   Queue.API.close $ queue client
   closeReader (conn client)
-  atomically $ readTMVar (exited client)
+  atomically $ waitForClosed client
 
 -- internal handlers
 
