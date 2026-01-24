@@ -444,26 +444,33 @@ subscribe' isReply client subject opts callback = do
   writeToClientQueue client (QueueItem sub)
   return sid
 
--- TODO: we could make all these monadic functions so we have access to the logger, and later the config
--- +1 I'd like to log these actions
 router :: Client -> ParsedMessage -> IO ()
 router client = runClient client . routerM client
 
 routerM :: Client -> ParsedMessage -> AppM ()
 routerM client msg = do
   case msg of
-    ParsedMsg a  -> msgRouterM client a
-    ParsedInfo i -> liftIO $ do
-      connect client
-      atomically (setServerInfo client i)
-    ParsedPing _ -> liftIO $ pong client
-    ParsedPong _ -> liftIO $ sequenceActions (pings client)
-    ParsedOk   _ -> return ()
-    ParsedErr err -> case E.isFatal err of
-      True  -> do
-        logError $ "Fatal error: " ++ show err
-        liftIO $ reset client
-      False -> logWarn $ "Error: " ++ show err
+    ParsedMsg a  -> do
+      logDebug $ "Routing MSG: " ++ show a
+      msgRouterM client a
+    ParsedInfo i -> do
+      logDebug $ "Routing INFO: " ++ show i
+      liftIO $ connect client
+      liftIO $ atomically (setServerInfo client i)
+    ParsedPing _ -> do
+      logDebug "Routing PING"
+      liftIO $ pong client
+    ParsedPong _ -> do
+      logDebug "Routing PONG"
+      liftIO $ sequenceActions (pings client)
+    ParsedOk   okMsg -> logDebug $ "Routing OK: " ++ show okMsg
+    ParsedErr err -> do
+      logDebug $ "Routing ERR: " ++ show err
+      case E.isFatal err of
+        True  -> do
+          logError $ "Fatal error: " ++ show err
+          liftIO $ reset client
+        False -> logWarn $ "Error: " ++ show err
 
 logAuthMethod :: Auth -> AppM ()
 logAuthMethod auth = case auth of
