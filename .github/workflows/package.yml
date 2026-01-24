@@ -17,6 +17,6 @@ jobs:
         github_access_token: ${{ secrets.GITHUB_TOKEN }}
     - run: nix build .#sdist
     - name: Upload artifact
-      uses: actions/actions/upload-artifact@v4
+      uses: actions/upload-artifact@v4
       with:
         path: 'result/*.tar.gz'
