@@ -5,6 +5,7 @@ import           Lib.Logger
 import           MSGView
 import           Types
 import qualified Types.Connect   as Connect
+import           Data.Time.Clock (NominalDiffTime)
 
 type ConfigOpts = CallOption Config
 
@@ -68,6 +69,18 @@ withExitAction action config = config { exitAction = action }
 
 type PubOptions = (Maybe Payload, Maybe (Maybe MsgView -> IO ()), Maybe Headers)
 
+data SubscribeConfig = SubscribeConfig
+  { subscriptionExpiry :: NominalDiffTime
+  }
+
+defaultSubscribeConfig :: SubscribeConfig
+defaultSubscribeConfig = SubscribeConfig 5.0
+
+type SubscribeOpts = CallOption SubscribeConfig
+
+withSubscriptionExpiry :: NominalDiffTime -> SubscribeOpts
+withSubscriptionExpiry expirySeconds cfg = cfg { subscriptionExpiry = expirySeconds }
+
 -- | withPayload is used to set the payload for a publish operation.
 withPayload :: Payload -> PubOptions -> PubOptions
 withPayload payload (_, callback, headers) = (Just payload, callback, headers)
@@ -79,4 +92,3 @@ withReplyCallback callback (payload, _, headers) = (payload, Just callback, head
 -- | withHeaders is used to set headers for a publish operation.
 withHeaders :: Headers -> PubOptions -> PubOptions
 withHeaders headers (payload, callback, _) = (payload, callback, Just headers)
-

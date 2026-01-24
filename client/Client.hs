@@ -10,6 +10,8 @@ module Client (
   newClient,
   publish,
   subscribe,
+  subscribeWithOpts,
+  requestWithOpts,
   unsubscribe,
   ping,
   Client.close,
@@ -25,6 +27,7 @@ module Client (
   withLoggerConfig,
   withConnectionAttempts,
   withExitAction,
+  withSubscriptionExpiry,
   LoggerConfig (..),
   LogLevel (..),
   AuthTokenData,
@@ -34,6 +37,7 @@ module Client (
   TLSPublicKey,
   TLSPrivateKey,
   TLSCertData,
+  SubscribeOpts,
   ) where
 
 import           Control.Concurrent
@@ -344,11 +348,17 @@ publish client subject opts = do
 
 -- | subscribe is used to subscribe to a subject on the NATS server.
 subscribe :: Client -> Subject -> (Maybe MsgView -> IO ()) -> IO SID
-subscribe = subscribe' False
+subscribe client subject cb = subscribeWithOpts client subject [] cb
+
+-- | subscribeWithOpts allows callers to set subscription behaviour (e.g., reply expiry).
+subscribeWithOpts :: Client -> Subject -> [SubscribeOpts] -> (Maybe MsgView -> IO ()) -> IO SID
+subscribeWithOpts = subscribe' False
 
 request :: Client -> Subject -> (Maybe MsgView -> IO ()) -> IO SID
-request = do
-  subscribe' True
+request client subject cb = requestWithOpts client subject [] cb
+
+requestWithOpts :: Client -> Subject -> [SubscribeOpts] -> (Maybe MsgView -> IO ()) -> IO SID
+requestWithOpts = subscribe' True
 
 -- | unsubscribe is used to unsubscribe from a subject on the NATS server.
 unsubscribe :: Client -> SID -> IO ()
@@ -396,17 +406,18 @@ defaultConn host port = do
   hSetBuffering handle NoBuffering
   return handle
 
-subscribe' :: Bool -> Client -> Subject -> (Maybe MsgView -> IO ()) -> IO SID
-subscribe' isReply client subject callback = do
+subscribe' :: Bool -> Client -> Subject -> [SubscribeOpts] -> (Maybe MsgView -> IO ()) -> IO SID
+subscribe' isReply client subject opts callback = do
   runClient client . logDebug $ ("Subscribing to subject: " ++ show subject)
   sid <- newHash client
+  let subConfig = applyCallOptions opts defaultSubscribeConfig
   let cb = if isReply
         then \m -> do
           callback (fmap transformMsg m)
           unsubscribe client sid
         else callback . fmap transformMsg
-  -- TODO: there should probably be an option to set the expiry time
-  expiry <- addUTCTime 5.0 <$> getCurrentTime
+  let replyExpiry = subscriptionExpiry subConfig
+  expiry <- addUTCTime replyExpiry <$> getCurrentTime
   atomically $ do
     modifyTVar' (subscriptions client) $ \subs ->
       let callbacks' = Data.Map.insert sid cb (subscriptionCallbacks subs)
