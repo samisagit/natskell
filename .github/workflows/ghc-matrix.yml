@@ -1,0 +1,47 @@
+name: GHC Matrix
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cabal:
+    name: ghc ${{ matrix.ghc }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ghc: ["9.2.8", "9.4.8", "9.6.5"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Haskell
+        uses: haskell/actions/setup@v2
+        with:
+          ghc-version: ${{ matrix.ghc }}
+          cabal-version: "latest"
+
+      - name: Cache cabal store
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cabal/store
+            dist-newstyle
+          key: ${{ runner.os }}-cabal-${{ matrix.ghc }}-${{ hashFiles('cabal.project', 'natskell.cabal') }}
+          restore-keys: |
+            ${{ runner.os }}-cabal-${{ matrix.ghc }}-
+
+      - name: Update package index
+        run: cabal update
+
+      - name: Build dependencies
+        run: cabal build all --enable-tests --enable-benchmarks --only-dependencies
+
+      - name: Build
+        run: cabal build all --enable-tests --enable-benchmarks
+
+      - name: Test
+        run: cabal test all --test-show-details=direct
