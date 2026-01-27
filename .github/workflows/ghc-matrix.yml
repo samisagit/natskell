@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ["8.0.1", "9.2.8", "9.4.8", "9.6.5", "9.8.2", "9.12.3"]
+        ghc: ["8.0.2", "9.2.8", "9.4.8", "9.6.5", "9.8.2", "9.12.2"]
     steps:
       - uses: actions/checkout@v4
 
