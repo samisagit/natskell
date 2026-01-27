@@ -1,8 +1,7 @@
 name: GHC Matrix
 
 on:
-  pull_request:
-  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -14,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ["9.2.8", "9.4.8", "9.6.5"]
+        ghc: ["8.0.1", "9.2.8", "9.4.8", "9.6.5", "9.8.2", "9.12.3"]
     steps:
       - uses: actions/checkout@v4
 
@@ -45,8 +44,5 @@ jobs:
       - name: Build dependencies
         run: cabal build all --enable-tests --enable-benchmarks --only-dependencies
 
-      - name: Build
-        run: cabal build all --enable-tests --enable-benchmarks
-
       - name: Test
-        run: cabal test all --test-show-details=direct
+        run: cabal test unit-test fuzz-test client-test --test-show-details=direct
