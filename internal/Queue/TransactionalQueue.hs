@@ -9,7 +9,7 @@ import qualified Control.Monad
 import           Queue.API
 import           Transformers.Transformers
 
-data QueueItem = forall m. Transformer m => QueueItem m
+data QueueItem where QueueItem :: Transformer m => m -> QueueItem
 
 instance Transformer QueueItem where
   transform (QueueItem m) = transform m

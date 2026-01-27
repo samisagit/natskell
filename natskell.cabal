@@ -28,7 +28,7 @@ source-repository head
 common shared
   default-language:     Haskell2010
   build-depends:
-    base  >= 4.14 && < 5,
+    base  >= 4.11 && < 5,
   ghc-options:
     -haddock -W -Wunused-packages
   pkgconfig-depends: zlib
@@ -182,13 +182,14 @@ test-suite system-test
     test-common,
     bytestring,
     stm,
-    hspec,
-    testcontainers
+    hspec
   other-modules:
       ClientSpec
   if flag (impure)
     type: exitcode-stdio-1.0
     main-is: Main.hs
+    build-depends:
+      testcontainers
   else
     type: exitcode-stdio-1.0
     main-is: Skip.hs

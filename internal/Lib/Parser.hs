@@ -3,9 +3,11 @@
 module Lib.Parser where
 
 import           Control.Applicative
+import           Control.Monad.Fail    (MonadFail (..))
 import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as C
 import qualified Data.Word8            as W8
+import           Prelude               hiding (fail)
 
 data ParserErr = UnexpectedEndOfInput String Int
                | UnexpectedChar String Int
