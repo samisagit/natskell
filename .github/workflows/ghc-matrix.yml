@@ -37,6 +37,11 @@ jobs:
       - name: Update package index
         run: cabal update
 
+      - name: Install hspec-discover
+        run: |
+          cabal install hspec-discover --installdir=$HOME/.cabal/bin --overwrite-policy=always
+          echo "$HOME/.cabal/bin" >> $GITHUB_PATH
+
       - name: Build dependencies
         run: cabal build all --enable-tests --enable-benchmarks --only-dependencies
 
