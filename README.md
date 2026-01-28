@@ -31,4 +31,4 @@ There is a public cachix store at samisagit-natskell for this flake.
 
 You can run the pure tests with `nix flake check`.
 
-System tests need access to a NATS server, so you will need to run `nix develop --command bash -c "cabal test natskell:test:system-test"` to run them.
+System tests need access to a NATS server, so you will need to run `nix develop --command bash -c "cabal --project-file=cabal.project.system-tests test natskell-system-tests"` to run them.

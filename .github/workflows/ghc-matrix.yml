@@ -41,7 +41,7 @@ jobs:
           echo "$HOME/.cabal/bin" >> $GITHUB_PATH
 
       - name: Build dependencies
-        run: cabal build unit-test fuzz-test client-test --enable-tests --only-dependencies
+        run: cabal build natskell --enable-tests --only-dependencies
 
       - name: Test
         run: cabal test unit-test fuzz-test client-test --enable-tests --test-show-details=direct

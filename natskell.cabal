@@ -174,26 +174,6 @@ flag impure
   default: False
   manual: True
 
-test-suite system-test
-  import:         shared
-  hs-source-dirs: test/System
-  build-depends:
-    natskell,
-    test-common,
-    bytestring,
-    stm,
-    hspec
-  other-modules:
-      ClientSpec
-  if flag (impure)
-    type: exitcode-stdio-1.0
-    main-is: Main.hs
-    build-depends:
-      testcontainers
-  else
-    type: exitcode-stdio-1.0
-    main-is: Skip.hs
-
 test-suite client-test
   import:         shared
   hs-source-dirs: test/Integration

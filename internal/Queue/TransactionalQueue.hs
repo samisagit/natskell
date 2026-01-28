@@ -35,6 +35,7 @@ instance Transformer t => Queue (Q t) t where
         isOpen <- isEmptyTMVar p
         check (not isOpen)
         return $ Left "Queue is closed")
-  close (Q _ p) = atomically $ writeTMVar p ()
+  close (Q _ p) = atomically $ do
+    _ <- tryTakeTMVar p
+    putTMVar p ()
   open (Q _ p) = Control.Monad.void (atomically (tryTakeTMVar p))
-

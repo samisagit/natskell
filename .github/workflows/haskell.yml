@@ -24,7 +24,7 @@ jobs:
     - uses: cachix/install-nix-action@v31
       with:
         github_access_token: ${{ secrets.GITHUB_TOKEN }}
-    - run: nix develop --command bash -c "cabal test natskell:test:system-test -fimpure"
+    - run: nix develop --command bash -c "cabal test --project-file=cabal.project.system-tests natskell-system-tests"
   build:
     name: build
     needs: [check, system-test]

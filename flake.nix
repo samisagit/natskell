@@ -13,13 +13,19 @@
           inherit system;
           config.allowUnfree = true;
         };
-        hsPkgs = pkgs.haskellPackages;
-
         src = ./.;
-        drv = hsPkgs.callCabal2nix "natskell" src {};
+        hsPkgs = pkgs.haskellPackages.override {
+          overrides = self: super: {
+            natskell = self.callCabal2nix "natskell" src {};
+            natskell-system-tests = self.callCabal2nix "natskell-system-tests" ./system-tests {};
+          };
+        };
+
+        drv = hsPkgs.natskell;
+        sysTestDrv = hsPkgs.natskell-system-tests;
 
         buildEnv = hsPkgs.shellFor {
-          packages = p: [ drv ];
+          packages = p: [ drv sysTestDrv ];
           nativeBuildInputs = [
             hsPkgs.cabal-install
             hsPkgs.ghc
@@ -30,7 +36,7 @@
         };
 
         devEnv = hsPkgs.shellFor {
-          packages = p: [ drv ];
+          packages = p: [ drv sysTestDrv ];
           nativeBuildInputs = [
             hsPkgs.cabal-install
             hsPkgs.ghc
@@ -69,10 +75,6 @@
           inherit (buildEnv) buildInputs nativeBuildInputs;
         } (withCabalEnv ''cabal test natskell:test:fuzz-test --only --test-show-details=failures'');
 
-        sysTest = pkgs.runCommand "sys-test" {
-          inherit (devEnv) buildInputs nativeBuildInputs;
-        } (withCabalEnv ''cabal test natskell:test:system-test --only --test-show-details=direct -fimpure'');
-
         cabalCheck = pkgs.runCommand "cabal-check" {
           inherit (buildEnv) buildInputs nativeBuildInputs;
         } (withCabalEnv "cabal check");
@@ -104,8 +106,7 @@
       in {
         packages.sdist = sdist;
         packages.docs = haddock;
-	      packages.default = drv;
-	      packages.system-test = sysTest;
+        packages.default = drv;
 
         devShells.default = devEnv;
 
@@ -118,4 +119,3 @@
         };
       });
 }
-
