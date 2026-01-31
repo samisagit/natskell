@@ -10,6 +10,7 @@ jobs:
   cabal:
     name: ghc ${{ matrix.ghc }}
     runs-on: ubuntu-latest
+    environment: main-gate
     strategy:
       fail-fast: true
       matrix:
