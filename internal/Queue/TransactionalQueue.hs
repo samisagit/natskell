@@ -9,7 +9,7 @@ import qualified Control.Monad
 import           Queue.API
 import           Transformers.Transformers
 
-data QueueItem = forall m. Transformer m => QueueItem m
+data QueueItem where QueueItem :: Transformer m => m -> QueueItem
 
 instance Transformer QueueItem where
   transform (QueueItem m) = transform m
@@ -35,6 +35,7 @@ instance Transformer t => Queue (Q t) t where
         isOpen <- isEmptyTMVar p
         check (not isOpen)
         return $ Left "Queue is closed")
-  close (Q _ p) = atomically $ writeTMVar p ()
+  close (Q _ p) = atomically $ do
+    _ <- tryTakeTMVar p
+    putTMVar p ()
   open (Q _ p) = Control.Monad.void (atomically (tryTakeTMVar p))
-

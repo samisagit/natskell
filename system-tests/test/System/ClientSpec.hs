@@ -52,7 +52,6 @@ container = do
     -- readiness can be established.
     TC.& TC.setWaitingFor (TC.waitUntilMappedPortReachable 4222)
     -- Set the arguments required to debug output, then follow the logs.
-    TC.& TC.setCmd ["-DV"]
     TC.& withFollowLogs (fileLogConsumer "nats.log")
     )
 

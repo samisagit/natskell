@@ -6,3 +6,5 @@ on:
 jobs:
   build:
     uses: ./.github/workflows/haskell.yml
+  test:
+    uses: ./.github/workflows/ghc-matrix.yml

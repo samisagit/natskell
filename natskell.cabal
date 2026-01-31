@@ -28,7 +28,7 @@ source-repository head
 common shared
   default-language:     Haskell2010
   build-depends:
-    base  >= 4.14 && < 5,
+    base  >= 4.11 && < 5,
   ghc-options:
     -haddock -W -Wunused-packages
   pkgconfig-depends: zlib
@@ -173,25 +173,6 @@ test-suite fuzz-test
 flag impure
   default: False
   manual: True
-
-test-suite system-test
-  import:         shared
-  hs-source-dirs: test/System
-  build-depends:
-    natskell,
-    test-common,
-    bytestring,
-    stm,
-    hspec,
-    testcontainers
-  other-modules:
-      ClientSpec
-  if flag (impure)
-    type: exitcode-stdio-1.0
-    main-is: Main.hs
-  else
-    type: exitcode-stdio-1.0
-    main-is: Skip.hs
 
 test-suite client-test
   import:         shared

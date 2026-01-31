@@ -69,7 +69,9 @@ instance ConnectionWriter Conn where
 
 point :: Conn -> Handle -> IO ()
 point c h = do
-  atomically $ writeTMVar (socket c) h
+  atomically $ do
+    _ <- tryTakeTMVar (socket c)
+    putTMVar (socket c) h
   return ()
 
 close :: Conn -> IO ()
@@ -87,4 +89,3 @@ open :: Conn -> IO ()
 open conn = do
   openReader conn
   openWriter conn
-

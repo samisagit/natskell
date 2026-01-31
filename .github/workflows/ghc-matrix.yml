@@ -1,0 +1,48 @@
+name: GHC Matrix
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  cabal:
+    name: ghc ${{ matrix.ghc }}
+    runs-on: ubuntu-latest
+    environment: main-gate
+    strategy:
+      fail-fast: true
+      matrix:
+        ghc: ["8.4", "8.6", "8.8", "8.10", "9.0", "9.2", "9.4", "9.6", "9.8", "9.10", "9.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Haskell
+        uses: haskell-actions/setup@v2.8.2
+        with:
+          ghc-version: ${{ matrix.ghc }}
+
+      - name: Cache cabal store
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cabal/store
+            dist-newstyle
+          key: ${{ runner.os }}-cabal-${{ matrix.ghc }}-${{ hashFiles('cabal.project', 'natskell.cabal') }}
+          restore-keys: |
+            ${{ runner.os }}-cabal-${{ matrix.ghc }}-
+
+      - name: Update package index
+        run: cabal update
+
+      - name: Install hspec-discover
+        run: |
+          cabal install hspec-discover --installdir=$HOME/.cabal/bin --overwrite-policy=always
+          echo "$HOME/.cabal/bin" >> $GITHUB_PATH
+
+      - name: Build dependencies
+        run: cabal build natskell --enable-tests --only-dependencies
+
+      - name: Test
+        run: cabal test unit-test fuzz-test client-test --enable-tests --test-show-details=direct
