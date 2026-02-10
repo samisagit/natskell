@@ -40,6 +40,10 @@ module Client (
   TLSPrivateKey,
   TLSCertData,
   SubscribeOpts,
+  ClientExitResult (..),
+  ClientExitStatus (..),
+  ClientExitReason (..),
+  exitCode,
   ) where
 
 import           Control.Concurrent
@@ -116,7 +120,9 @@ data ConfigState = ConfigState
 initialConfigState :: Config -> ConfigState
 initialConfigState cfg = ConfigState cfg Nothing
 
-data LifecycleState = Running | Closing | Closed
+data LifecycleState = Running
+                    | Closing ClientExitReason
+                    | Closed ClientExitResult
 
 readConfigState :: Client -> IO ConfigState
 readConfigState client = readTVarIO (configState client)
@@ -128,25 +134,33 @@ setServerInfo :: Client -> I.Info -> STM ()
 setServerInfo client info =
   modifyTVar' (configState client) (\state -> state { cfgServerInfo = Just info })
 
-setLifecycleClosing :: Client -> STM ()
-setLifecycleClosing client =
+setLifecycleClosing :: Client -> ClientExitReason -> STM ()
+setLifecycleClosing client reason =
   modifyTVar' (lifecycle client) $ \case
-    Closed -> Closed
-    _      -> Closing
+    Closed result -> Closed result
+    Closing r     -> Closing r
+    Running       -> Closing reason
 
-markClosed :: Client -> STM Bool
-markClosed client = do
+markClosed :: Client -> ClientExitReason -> STM (Maybe ClientExitResult)
+markClosed client fallbackReason = do
   state <- readTVar (lifecycle client)
   case state of
-    Closed -> return False
-    _      -> writeTVar (lifecycle client) Closed >> return True
+    Closed _ -> return Nothing
+    Closing reason -> do
+      let result = mkExitResult reason
+      writeTVar (lifecycle client) (Closed result)
+      return (Just result)
+    Running -> do
+      let result = mkExitResult fallbackReason
+      writeTVar (lifecycle client) (Closed result)
+      return (Just result)
 
 waitForClosed :: Client -> STM ()
 waitForClosed client = do
   state <- readTVar (lifecycle client)
   case state of
-    Closed -> return ()
-    _      -> retry
+    Closed _ -> return ()
+    _        -> retry
 
 waitForServerInfo :: Client -> STM ()
 waitForServerInfo client = do
@@ -209,7 +223,7 @@ newClient servers conOpts = do
     , auth = None
     , loggerConfig = dl
     , connectionAttempts = 5
-    , exitAction = return ()
+    , exitAction = const (return ())
     , connectOptions = servers
   }
 
@@ -261,17 +275,17 @@ withRetry :: Client -> Int -> IO () -> IO ()
 withRetry c 0 _ = do
   runClient c $ logInfo "Ran out of retries, exiting"
   cfg <- readConfig c
-  closed <- atomically $ markClosed c
-  when closed $ exitAction cfg
+  result <- atomically $ markClosed c (ExitRetriesExhausted Nothing)
+  maybe (return ()) (exitAction cfg) result
 withRetry c x action = do
   state <- readTVarIO (lifecycle c)
   case state of
-    Closing -> do
+    Closing _ -> do
       runClient c $ logInfo "Client closing, skipping retries"
       cfg <- readConfig c
-      closed <- atomically $ markClosed c
-      when closed $ exitAction cfg
-    Closed -> return ()
+      result <- atomically $ markClosed c ExitClosedByUser
+      maybe (return ()) (exitAction cfg) result
+    Closed _ -> return ()
     Running -> do
       action
       runClient c $ logInfo "Retrying client connection"
@@ -381,23 +395,21 @@ ping client action = do
   atomically $ modifyTVar' (pings client) (action :)
   writeToClientQueue client (QueueItem Ping)
 
--- | close is used to close the connection to the NATS server.
-close :: Client -> IO ()
-close client = do
-  atomically $ setLifecycleClosing client
-  runClient client $ logInfo "Closing the client connection"
+shutdownClient :: Client -> ClientExitReason -> String -> IO ()
+shutdownClient client reason message = do
+  atomically $ setLifecycleClosing client reason
+  runClient client $ logInfo message
   Queue.API.close $ queue client
   closeReader (conn client)
   atomically $ waitForClosed client
 
+-- | close is used to close the connection to the NATS server.
+close :: Client -> IO ()
+close client = shutdownClient client ExitClosedByUser "Closing the client connection"
+
 -- reset is used to abort the current connection and trigger lifecycle closure without attempting graceful drain
 reset :: Client -> IO ()
-reset client = do
-  atomically $ setLifecycleClosing client
-  runClient client $ logInfo "Resetting the client connection"
-  Queue.API.close $ queue client
-  closeReader (conn client)
-  atomically $ waitForClosed client
+reset client = shutdownClient client ExitResetRequested "Resetting the client connection"
 
 -- internal handlers
 
@@ -470,7 +482,9 @@ routerM client msg = do
       case E.isFatal err of
         True  -> do
           logError $ "Fatal error: " ++ show err
-          liftIO $ reset client
+          liftIO $ do
+            atomically $ setLifecycleClosing client (ExitServerError err)
+            reset client
         False -> logWarn $ "Error: " ++ show err
 
 logAuthMethod :: Auth -> AppM ()

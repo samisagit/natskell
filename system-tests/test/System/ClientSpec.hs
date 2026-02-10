@@ -8,7 +8,7 @@ import           Control.Concurrent.STM
 import qualified Data.ByteString        as BS
 import           Data.Maybe
 import           Test.Hspec
-import           TestContainers
+import           TestContainers         hiding (exitCode)
 import qualified TestContainers.Hspec   as TC
 import           WaitGroup
 
@@ -79,21 +79,32 @@ sys = parallel $ do
           close c
         it "exits immediately on fatal error" $ \(Endpoints _ _) -> do
           wg <- newWaitGroup 1
+          exitResult <- newEmptyTMVarIO
           _ <- newClient [("0.0.0.0", 4999)] [
             withConnectName "fatal-reset-test",
-            withExitAction (done wg),
+            withExitAction (\r -> atomically (putTMVar exitResult r) >> done wg),
             withLoggerConfig logger
             ]
           wait wg
+          result <- atomically $ readTMVar exitResult
+          exitStatus result `shouldBe` ExitStatusRetryExhausted
+          exitCode result `shouldBe` 1
+          case exitReason result of
+            ExitRetriesExhausted _ -> pure ()
+            other                  -> expectationFailure $ "Unexpected exit reason: " ++ show other
         it "user can close connection" $ \(Endpoints natsHost natsPort) -> do
           wg <- newWaitGroup 1
+          exitResult <- newEmptyTMVarIO
           client <- newClient [(natsHost, natsPort)] [
             withConnectName "b9ed73e3-9674-41a2-9979-bb63b78c6579",
-            withExitAction (done wg),
+            withExitAction (\r -> atomically (putTMVar exitResult r) >> done wg),
             withLoggerConfig logger
             ]
           close client
           wait wg
+          result <- atomically $ readTMVar exitResult
+          exitReason result `shouldBe` ExitClosedByUser
+          exitCode result `shouldBe` 0
         it "messages are sent and received"  $ \(Endpoints natsHost natsPort) -> do
           let topic = "SOME.TOPIC"
           let payload = "HELLO"
@@ -140,9 +151,16 @@ sys = parallel $ do
           close c
         it "exits when no valid servers" $ \(Endpoints _ _) -> do
           wg <- newWaitGroup 1
+          exitResult <- newEmptyTMVarIO
           newClient [("0.0.0.0", 4999)] [
             withConnectName "9b694d4e-7b78-459c-9126-57e582564a0b",
-            withExitAction (done wg),
+            withExitAction (\r -> atomically (putTMVar exitResult r) >> done wg),
             withLoggerConfig logger
             ]
           wait wg
+          result <- atomically $ readTMVar exitResult
+          exitStatus result `shouldBe` ExitStatusRetryExhausted
+          exitCode result `shouldBe` 1
+          case exitReason result of
+            ExitRetriesExhausted _ -> pure ()
+            other                  -> expectationFailure $ "Unexpected exit reason: " ++ show other
