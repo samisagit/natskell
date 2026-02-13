@@ -12,12 +12,12 @@ sink w = do
   bs <- await
   case bs of
     Nothing -> do
-      lift . logDebug $ "No more data to write, stopping sink"
+      lift . logMessage Debug $ "no more data to write; stopping sink"
       return ()
     Just bs -> do
       res <- liftIO $ writeData w bs
       case res of
         Left err -> do
-          lift . logError $ ("Error writing data: " ++ err)
+          lift . logMessage Error $ ("write failed: " ++ err)
           return ()
         Right () -> sink w

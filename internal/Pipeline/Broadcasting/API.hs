@@ -1,7 +1,7 @@
 module Pipeline.Broadcasting.API where
 
 import           Conduit
-import           Lib.Logger                        (MonadLogger)
+import           Lib.Logger
 import           Network.API
 import           Pipeline.Broadcasting.Sink
 import           Pipeline.Broadcasting.Source
@@ -13,4 +13,3 @@ run :: (MonadLogger m , MonadIO m, ConnectionWriter writer, Transformer t, Queue
   => q -> writer -> m ()
 run q w = do
   runConduit $ source q .| transformer .| sink w
-

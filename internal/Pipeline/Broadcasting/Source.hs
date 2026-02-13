@@ -1,8 +1,6 @@
-{-# LANGUAGE GADTs #-}
-
 module Pipeline.Broadcasting.Source where
 import           Conduit
-import           Lib.Logger                (MonadLogger, logError)
+import           Lib.Logger
 import           Queue.API
 import           Transformers.Transformers (Transformer)
 
@@ -13,8 +11,7 @@ source q  = do
   x <- liftIO . dequeue $ q
   case x of
     Left err -> do
-      lift . logError $ ("Error dequeueing: " ++ err)
+      lift . logMessage Error $ ("dequeue failed: " ++ err)
     Right i -> do
       yield i
       source q
-
