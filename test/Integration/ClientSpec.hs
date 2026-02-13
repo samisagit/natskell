@@ -30,7 +30,7 @@ startClient = do
   exited <- newEmptyTMVarIO
   tvb <- newEmptyTMVarIO
   void . forkIO $ do
-    c <- newClient [("127.0.0.1", p)] [withExitAction (atomically . putTMVar exited), withConnectionAttempts 1]
+    c <- newClient [("127.0.0.1", p)] [withExitAction (atomically . putTMVar exited), withConnectionAttempts 1, withConnectName "test-client"]
     atomically $ putTMVar tvb c
 
   s <- atomically $ takeTMVar tva

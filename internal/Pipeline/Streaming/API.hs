@@ -17,4 +17,3 @@ run :: (MonadLogger m , MonadIO m, ConnectionReader reader)
   -> (a -> IO ())
   -> m ()
 run reader p router = runConduit $ source reader .| parser p .| sink router
-

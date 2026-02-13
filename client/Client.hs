@@ -32,6 +32,8 @@ module Client (
   withSubscriptionExpiry,
   LoggerConfig (..),
   LogLevel (..),
+  LogEntry (..),
+  renderLogEntry,
   AuthTokenData,
   UserPassData,
   NKeyData,
@@ -52,6 +54,7 @@ import           Control.Exception
 import           Control.Monad
 import           Control.Monad.IO.Class
 import qualified Data.ByteString           as BS
+import qualified Data.ByteString.Char8     as BC
 import           Data.Heap
     ( MinHeap
     , empty
@@ -130,6 +133,12 @@ readConfigState client = readTVarIO (configState client)
 readConfig :: Client -> IO Config
 readConfig = fmap cfgConfig . readConfigState
 
+updateLogContextFromInfo :: Client -> I.Info -> IO ()
+updateLogContextFromInfo client info = do
+  updateLogContext (logContext client) (\ctx -> ctx
+    { lcClientId = I.client_id info
+    })
+
 setServerInfo :: Client -> I.Info -> STM ()
 setServerInfo client info =
   modifyTVar' (configState client) (\state -> state { cfgServerInfo = Just info })
@@ -171,7 +180,7 @@ waitForServerInfo client = do
 
 cancelExpiredSubscriptions :: Client -> IO ()
 cancelExpiredSubscriptions client = do
-  runClient client $ logDebug "Running subscription GC"
+  runClient client $ logMessage Debug "running subscription GC"
   now <- getCurrentTime
   action <- atomically $ do
     state <- readTVar (subscriptions client)
@@ -212,12 +221,14 @@ data Client = Client'
                 , connectionAttempts' :: TVar Int
                 , lifecycle           :: TVar LifecycleState
                 , conn                :: Conn
+                , logContext          :: TVar LogContext
                 }
 
 -- | newClient creates a new client with optional overrides to default settings
 newClient :: [(String, Int)] -> [ConfigOpts] -> IO Client
 newClient servers conOpts = do
   dl <- defaultLogger
+  ctx <- newLogContext
   let defaultConfig = applyCallOptions conOpts Config {
     connectConfig = defaultConnect
     , auth = None
@@ -226,6 +237,7 @@ newClient servers conOpts = do
     , exitAction = const (return ())
     , connectOptions = servers
   }
+  updateLogContext ctx (\c -> c { lcConnectName = fmap BC.unpack (Connect.name (connectConfig defaultConfig)) })
 
   c <- Conn <$> newEmptyTMVarIO <*> newEmptyTMVarIO <*> newEmptyTMVarIO
 
@@ -238,6 +250,7 @@ newClient servers conOpts = do
     <*> newTVarIO (connectionAttempts defaultConfig)
     <*> newTVarIO Running
     <*> pure c
+    <*> pure ctx
 
   runClient client . logAuthMethod $ auth defaultConfig
   forkIO $ retryLoop client
@@ -255,6 +268,7 @@ acquireHandle client = do
     []             -> return (Left "No servers provided")
     xs -> do
       let (host, port) = cycle xs !! attempts
+      updateLogContext (logContext client) (\ctx -> ctx { lcServer = Just (host ++ ":" ++ show port) })
       h <- try @SomeException (defaultConn host port)
       case h of
         Left e -> return (Left (show e))
@@ -273,7 +287,7 @@ withHandle client = bracket
 
 withRetry :: Client -> Int -> IO () -> IO ()
 withRetry c 0 _ = do
-  runClient c $ logInfo "Ran out of retries, exiting"
+  runClient c $ logMessage Info "retries exhausted; exiting"
   cfg <- readConfig c
   result <- atomically $ markClosed c (ExitRetriesExhausted Nothing)
   maybe (return ()) (exitAction cfg) result
@@ -281,14 +295,14 @@ withRetry c x action = do
   state <- readTVarIO (lifecycle c)
   case state of
     Closing _ -> do
-      runClient c $ logInfo "Client closing, skipping retries"
+      runClient c $ logMessage Info "client closing; skipping retries"
       cfg <- readConfig c
       result <- atomically $ markClosed c ExitClosedByUser
       maybe (return ()) (exitAction cfg) result
     Closed _ -> return ()
     Running -> do
       action
-      runClient c $ logInfo "Retrying client connection"
+      runClient c $ logMessage Info "retrying client connection"
       atomically $ modifyTVar (connectionAttempts' c) (+1)
       withRetry c (x-1) action
 
@@ -311,19 +325,19 @@ retryLoop client = do
     withSubscriptionGC client $ do
       withHandle client $ \handle -> do
         case handle of
-          (Left e) -> runClient client . logError $ show e
+          (Left e) -> runClient client . logMessage Error $ ("connection attempt failed: " ++ show e)
           (Right h) -> do
             runClient client $ do
               wgs <- liftIO $ newWaitGroup 1
               wgb <- liftIO $ newWaitGroup 1
-              logDebug "Starting the client streaming threads"
+              logMessage Debug "starting client streaming threads"
               liftIO . void . forkIO $ do
                 runClient client $ B.run (queue client) h
-                runClient client $ logDebug "Broadcasting thread has exited"
+                runClient client $ logMessage Debug "broadcasting thread exited"
                 done wgb
               liftIO . void . forkIO $ do
                 runClient client $ S.run h genericParse (router client)
-                runClient client $ logDebug "Streaming thread has exited"
+                runClient client $ logMessage Debug "streaming thread exited"
                 done wgs
               wg <- liftIO $ newWaitGroup 2
               liftIO . void . forkIO $ do
@@ -337,12 +351,12 @@ retryLoop client = do
                 closeReader h
                 done wg
               liftIO $ wait wg
-              logDebug "Streaming threads have exited, closing connection"
+              logMessage Debug "streaming threads exited; closing connection"
 
 -- | publish sends a message to the NATS server.
 publish :: Client -> Subject -> [PubOptions -> PubOptions] -> IO ()
 publish client subject opts = do
-  runClient client . logDebug $ ("Publishing to subject: " ++ show subject)
+  runClient client . logMessage Debug $ ("publishing to subject: " ++ show subject)
   let (payload, callback, headers) = applyCallOptions opts (Nothing, Nothing, Nothing)
 
   replyTo <- case callback of
@@ -379,7 +393,7 @@ requestWithOpts = subscribe' True
 -- | unsubscribe is used to unsubscribe from a subject on the NATS server.
 unsubscribe :: Client -> SID -> IO ()
 unsubscribe client sid = do
-  runClient client . logDebug $ ("Unsubscribing from subject with SID: " ++ show sid)
+  runClient client . logMessage Debug $ ("unsubscribing SID: " ++ show sid)
   atomically $ modifyTVar' (subscriptions client) (\s -> s { subscriptionCallbacks = delete sid (subscriptionCallbacks s) })
   let unsub = Unsub.Unsub {
     Unsub.sid = sid,
@@ -391,32 +405,32 @@ unsubscribe client sid = do
 -- | ping is used to send a ping message to the NATS server.
 ping :: Client -> IO () -> IO ()
 ping client action = do
-  runClient client $ logDebug "Sending PING to server"
+  runClient client $ logMessage Debug "sending ping to server"
   atomically $ modifyTVar' (pings client) (action :)
   writeToClientQueue client (QueueItem Ping)
 
 shutdownClient :: Client -> ClientExitReason -> String -> IO ()
 shutdownClient client reason message = do
   atomically $ setLifecycleClosing client reason
-  runClient client $ logInfo message
+  runClient client $ logMessage Info message
   Queue.API.close $ queue client
   closeReader (conn client)
   atomically $ waitForClosed client
 
 -- | close is used to close the connection to the NATS server.
 close :: Client -> IO ()
-close client = shutdownClient client ExitClosedByUser "Closing the client connection"
+close client = shutdownClient client ExitClosedByUser "closing client connection"
 
 -- reset is used to abort the current connection and trigger lifecycle closure without attempting graceful drain
 reset :: Client -> IO ()
-reset client = shutdownClient client ExitResetRequested "Resetting the client connection"
+reset client = shutdownClient client ExitResetRequested "resetting client connection"
 
 -- internal handlers
 
 runClient :: Client -> AppM a -> IO a
 runClient client action = do
   cfg <- readConfig client
-  runWithLogger (loggerConfig cfg) action
+  runWithLogger (loggerConfig cfg) (logContext client) action
 
 defaultConn :: String -> Int -> IO Handle
 defaultConn host port = do
@@ -431,7 +445,7 @@ defaultConn host port = do
 
 subscribe' :: Bool -> Client -> Subject -> [SubscribeOpts] -> (Maybe MsgView -> IO ()) -> IO SID
 subscribe' isReply client subject opts callback = do
-  runClient client . logDebug $ ("Subscribing to subject: " ++ show subject)
+  runClient client . logMessage Debug $ ("subscribing to subject: " ++ show subject)
   sid <- newHash client
   let subConfig = applyCallOptions opts defaultSubscribeConfig
   let cb = if isReply
@@ -464,37 +478,39 @@ routerM :: Client -> ParsedMessage -> AppM ()
 routerM client msg = do
   case msg of
     ParsedMsg a  -> do
-      logDebug $ "Routing MSG: " ++ show a
+      logMessage Debug $ "routing MSG: " ++ show a
       msgRouterM client a
     ParsedInfo i -> do
-      logDebug $ "Routing INFO: " ++ show i
+      logMessage Debug $ "routing INFO: " ++ show i
       liftIO $ connect client
-      liftIO $ atomically (setServerInfo client i)
+      liftIO $ do
+        atomically (setServerInfo client i)
+        updateLogContextFromInfo client i
     ParsedPing _ -> do
-      logDebug "Routing PING"
+      logMessage Debug "routing PING"
       liftIO $ pong client
     ParsedPong _ -> do
-      logDebug "Routing PONG"
+      logMessage Debug "routing PONG"
       liftIO $ sequenceActions (pings client)
-    ParsedOk   okMsg -> logDebug $ "Routing OK: " ++ show okMsg
+    ParsedOk   okMsg -> logMessage Debug $ "routing OK: " ++ show okMsg
     ParsedErr err -> do
-      logDebug $ "Routing ERR: " ++ show err
+      logMessage Debug $ "routing ERR: " ++ show err
       case E.isFatal err of
         True  -> do
-          logError $ "Fatal error: " ++ show err
+          logMessage Error $ "fatal server error: " ++ show err
           liftIO $ do
             atomically $ setLifecycleClosing client (ExitServerError err)
             reset client
-        False -> logWarn $ "Error: " ++ show err
+        False -> logMessage Warn $ "server error: " ++ show err
 
 logAuthMethod :: Auth -> AppM ()
 logAuthMethod auth = case auth of
-  None               -> logInfo "No authentication method provided"
-  AuthToken _        -> logInfo "Using auth token"
-  UserPass (user, _) -> logInfo $ "Using user/pass: " ++ show user
-  NKey _             -> logInfo "Using NKey"
-  JWT _              -> logInfo "Using JWT"
-  TLSCert _          -> logInfo "Using TLS certificate"
+  None               -> logMessage Info "no authentication method provided"
+  AuthToken _        -> logMessage Info "using auth token"
+  UserPass (user, _) -> logMessage Info $ "using user/pass: " ++ show user
+  NKey _             -> logMessage Info "using nkey"
+  JWT _              -> logMessage Info "using jwt"
+  TLSCert _          -> logMessage Info "using tls certificate"
 
 sequenceActions :: TVar [IO ()] -> IO ()
 sequenceActions actionsVar = do
@@ -510,9 +526,9 @@ msgRouterM client msg = do
   callbacks <- liftIO $ subscriptionCallbacks <$> readTVarIO (subscriptions client)
   case lookup sid callbacks of
     Just callback -> do
-      logDebug $ "Running callback for SID: " ++ show sid
+      logMessage Debug $ "running callback for SID: " ++ show sid
       liftIO . callback $ Just msg
-    Nothing       -> logError $ "No callback for SID: " ++ show sid
+    Nothing       -> logMessage Error $ "callback missing for SID: " ++ show sid
 
 newHash :: Client -> IO SID
 newHash client = atomically $ do
@@ -541,7 +557,7 @@ defaultConnect = Connect.Connect{
 
 connect :: Client -> IO ()
 connect client = do
-  runClient client $ logDebug "Connecting to the NATS server"
+  runClient client $ logMessage Debug "connecting to NATS server"
   cfg <- readConfig client
   let dat = connectConfig cfg
   writeToClientQueue client (QueueItem dat)
@@ -554,5 +570,5 @@ writeToClientQueue client item = do
   res <- case client of
     Client' {queue = q} -> enqueue q item
   case res of
-    Left err -> runClient client . logError $ ("Error enqueueing item: " ++ err)
+    Left err -> runClient client . logMessage Error $ ("enqueueing item failed: " ++ err)
     Right () -> return ()

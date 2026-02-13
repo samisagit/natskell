@@ -48,7 +48,7 @@ import           Test.Hspec
 defaultLogger' :: IO LoggerConfig
 defaultLogger' = do
   lock <- newTMVarIO ()
-  pure $ LoggerConfig Debug (\lvl msg -> putStrLn $ "[" ++ [firstChar lvl] ++ "] " ++ msg) lock
+  pure $ LoggerConfig Debug (putStrLn . renderLogEntry) lock
 
 instance ConnectionReader Handle where
   readData h n = do
@@ -68,7 +68,8 @@ spec = do
         let parser bs = Right (pack [head bs], tail bs) :: Either ParserErr (ByteString, ByteString)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
         dl <- defaultLogger'
-        (forkIO . runWithLogger dl) (run client parser sink :: AppM ())
+        ctx <- newLogContext
+        (forkIO . runWithLogger dl ctx) (run client parser sink :: AppM ())
         hPut server "Hello, World"
         atomically $ assertTVarWithRetry result "Hello, World"
         hClose server
@@ -79,7 +80,8 @@ spec = do
         let parser bs = Right (pack [head bs], tail bs) :: Either ParserErr (ByteString, ByteString)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
         dl <- defaultLogger'
-        (forkIO . runWithLogger dl) (run client parser sink :: AppM ())
+        ctx <- newLogContext
+        (forkIO . runWithLogger dl ctx) (run client parser sink :: AppM ())
         hPut server "Hello, World"
         atomically $ assertTVarWithRetry result "Hello, World"
         hPut server "Hello, again"
@@ -91,7 +93,8 @@ spec = do
         result <- newTVarIO "" :: IO (TVar ByteString)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
         dl <- defaultLogger'
-        (forkIO . runWithLogger dl) (run client testParserExcludingUpper sink :: AppM ())
+        ctx <- newLogContext
+        (forkIO . runWithLogger dl ctx) (run client testParserExcludingUpper sink :: AppM ())
         hPut server "HELLO WORLD hello, world"
         atomically $ assertTVarWithRetry result "  hello, world"
         hClose server
@@ -101,7 +104,8 @@ spec = do
         result <- newTVarIO "" :: IO (TVar ByteString)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
         dl <- defaultLogger'
-        (forkIO . runWithLogger dl) (run client testParserForExplicitWord sink :: AppM ())
+        ctx <- newLogContext
+        (forkIO . runWithLogger dl ctx) (run client testParserForExplicitWord sink :: AppM ())
         hPut server "part1"
         threadDelay 100000
         atomically $ ensureTVarIsEmpty result

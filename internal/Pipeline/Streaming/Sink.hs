@@ -8,5 +8,5 @@ sink :: (MonadIO m, MonadLogger m) => (a -> IO ()) -> ConduitT a Void m ()
 sink action = do
   awaitForever $ \ma -> do
     liftIO . void . forkIO $ action ma
-    lift . logDebug $ "executed action on message"
+    lift . logMessage Debug $ "executed action on message"
     sink action

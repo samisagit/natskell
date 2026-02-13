@@ -38,7 +38,7 @@ breakLogFile fp = do
 testLoggerConfig :: IO LoggerConfig
 testLoggerConfig = do
   lock <- newTMVarIO ()
-  pure $ LoggerConfig Debug (\_ s -> putStrLn s) lock
+  pure $ LoggerConfig Debug (putStrLn . renderLogEntry) lock
 
 container :: TC.TestContainer Endpoints
 container = do
