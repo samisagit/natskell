@@ -20,16 +20,16 @@ spec = do
 explicitTransformationCases :: [(Connect, BS.ByteString)]
 explicitTransformationCases = [
   (
-    Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" Nothing Nothing Nothing Nothing Nothing Nothing,
+    Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" Nothing Nothing Nothing Nothing Nothing Nothing Nothing,
     "CONNECT {\"verbose\": false, \"pedantic\": false, \"tls_required\": false, \"lang\": \"Haskell\", \"version\": \"1\"}"
     ),
   (
-    Connect True True True (Just "token") (Just "user") (Just "pass") (Just "name") "Haskell" "1" (Just 3) (Just True) (Just "sig") (Just "jwt") (Just True) (Just True),
-    "CONNECT {\"verbose\": true, \"pedantic\": true, \"tls_required\": true, \"auth_token\": \"token\", \"user\": \"user\", \"pass\": \"pass\", \"name\": \"name\", \"lang\": \"Haskell\", \"version\": \"1\", \"protocol\": 3, \"echo\": true, \"sig\": \"sig\", \"jwt\": \"jwt\", \"no_responders\": true, \"headers\": true}"
+    Connect True True True (Just "token") (Just "user") (Just "pass") (Just "name") "Haskell" "1" (Just 3) (Just True) (Just "sig") (Just "jwt") (Just "nkey") (Just True) (Just True),
+    "CONNECT {\"verbose\": true, \"pedantic\": true, \"tls_required\": true, \"auth_token\": \"token\", \"user\": \"user\", \"pass\": \"pass\", \"name\": \"name\", \"lang\": \"Haskell\", \"version\": \"1\", \"protocol\": 3, \"echo\": true, \"sig\": \"sig\", \"jwt\": \"jwt\", \"nkey\": \"nkey\", \"no_responders\": true, \"headers\": true}"
     ),
   (
-    Connect True True True (Just "token") (Just "user") (Just "pass") (Just "name") "Haskell" "1.0.0" (Just 3) (Just True) (Just "sig") (Just "jwt") (Just False) (Just False),
-    "CONNECT {\"verbose\": true, \"pedantic\": true, \"tls_required\": true, \"auth_token\": \"token\", \"user\": \"user\", \"pass\": \"pass\", \"name\": \"name\", \"lang\": \"Haskell\", \"version\": \"1.0.0\", \"protocol\": 3, \"echo\": true, \"sig\": \"sig\", \"jwt\": \"jwt\", \"no_responders\": false, \"headers\": false}"
+    Connect True True True (Just "token") (Just "user") (Just "pass") (Just "name") "Haskell" "1.0.0" (Just 3) (Just True) (Just "sig") (Just "jwt") (Just "nkey") (Just False) (Just False),
+    "CONNECT {\"verbose\": true, \"pedantic\": true, \"tls_required\": true, \"auth_token\": \"token\", \"user\": \"user\", \"pass\": \"pass\", \"name\": \"name\", \"lang\": \"Haskell\", \"version\": \"1.0.0\", \"protocol\": 3, \"echo\": true, \"sig\": \"sig\", \"jwt\": \"jwt\", \"nkey\": \"nkey\", \"no_responders\": false, \"headers\": false}"
     )
   ]
 
@@ -53,18 +53,19 @@ transformationCases = parallel $ do
 
 explicitValidationCases :: [(Connect, Either BS.ByteString ())]
 explicitValidationCases = [
- (Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" Nothing Nothing Nothing Nothing Nothing Nothing, Right ()),
- (Connect False False False (Just "") Nothing Nothing Nothing "Haskell" "1" Nothing Nothing Nothing Nothing Nothing Nothing, Left "explicit empty auth token"),
- (Connect False False False Nothing (Just "") Nothing Nothing "Haskell" "1" Nothing Nothing Nothing Nothing Nothing Nothing, Left "explicit empty user"),
- (Connect False False False Nothing Nothing (Just "") Nothing "Haskell" "1" Nothing Nothing Nothing Nothing Nothing Nothing, Left "explicit empty pass"),
- (Connect False False False Nothing Nothing Nothing (Just "") "Haskell" "1" Nothing Nothing Nothing Nothing Nothing Nothing, Left "explicit empty name"),
- (Connect False False False Nothing Nothing Nothing Nothing "" "1" Nothing Nothing Nothing Nothing Nothing Nothing, Left "explicit empty lang"),
- (Connect False False False Nothing Nothing Nothing Nothing "Haskell" "" Nothing Nothing Nothing Nothing Nothing Nothing, Left "explicit empty version"),
- (Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" (Just 0) Nothing Nothing Nothing Nothing Nothing, Right ()),
- (Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" (Just 1) Nothing Nothing Nothing Nothing Nothing, Right ()),
- (Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" (Just 2) Nothing Nothing Nothing Nothing Nothing, Left "invalid protocol"),
- (Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" Nothing Nothing (Just "") Nothing Nothing Nothing, Left "explicit empty sig"),
- (Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" Nothing Nothing Nothing (Just "") Nothing Nothing, Left "explicit empty jwt")
+ (Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" Nothing Nothing Nothing Nothing Nothing Nothing Nothing, Right ()),
+ (Connect False False False (Just "") Nothing Nothing Nothing "Haskell" "1" Nothing Nothing Nothing Nothing Nothing Nothing Nothing, Left "explicit empty auth token"),
+ (Connect False False False Nothing (Just "") Nothing Nothing "Haskell" "1" Nothing Nothing Nothing Nothing Nothing Nothing Nothing, Left "explicit empty user"),
+ (Connect False False False Nothing Nothing (Just "") Nothing "Haskell" "1" Nothing Nothing Nothing Nothing Nothing Nothing Nothing, Left "explicit empty pass"),
+ (Connect False False False Nothing Nothing Nothing (Just "") "Haskell" "1" Nothing Nothing Nothing Nothing Nothing Nothing Nothing, Left "explicit empty name"),
+ (Connect False False False Nothing Nothing Nothing Nothing "" "1" Nothing Nothing Nothing Nothing Nothing Nothing Nothing, Left "explicit empty lang"),
+ (Connect False False False Nothing Nothing Nothing Nothing "Haskell" "" Nothing Nothing Nothing Nothing Nothing Nothing Nothing, Left "explicit empty version"),
+ (Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" (Just 0) Nothing Nothing Nothing Nothing Nothing Nothing, Right ()),
+ (Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" (Just 1) Nothing Nothing Nothing Nothing Nothing Nothing, Right ()),
+ (Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" (Just 2) Nothing Nothing Nothing Nothing Nothing Nothing, Left "invalid protocol"),
+ (Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" Nothing Nothing (Just "") Nothing Nothing Nothing Nothing, Left "explicit empty sig"),
+ (Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" Nothing Nothing Nothing (Just "") Nothing Nothing Nothing, Left "explicit empty jwt"),
+ (Connect False False False Nothing Nothing Nothing Nothing "Haskell" "1" Nothing Nothing Nothing Nothing (Just "") Nothing Nothing, Left "explicit empty nkey")
  ]
 
 validationCases = parallel $ do
@@ -72,4 +73,3 @@ validationCases = parallel $ do
     forM_ explicitValidationCases $ \(input, want) -> do
       it (printf "correctly validates %s" (show input)) $ do
         validate input `shouldBe` want
-

@@ -24,6 +24,9 @@ sigCases = ["eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9eyJzdWIiOiIxMjM0NTY3ODkwIiwibmF
 jwtCases :: [BS.ByteString]
 jwtCases = ["eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"]
 
+nonceCases :: [BS.ByteString]
+nonceCases = ["nonce-123"]
+
 goVersionCases :: [BS.ByteString]
 goVersionCases = ["1.17"]
 
@@ -62,4 +65,3 @@ headerCases = [[("header", "abc")], [("header", "abc"), ("HEADER", "123")]]
 
 maybeify :: [a] -> [Maybe a]
 maybeify xs = Nothing : fmap Just xs
-

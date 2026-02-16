@@ -72,6 +72,7 @@ import           Network.API
 import           Network.Connection
 import qualified Network.Simple.TCP        as TCP
 import qualified Network.Socket            as NS
+import qualified Nuid
 import           Options
 import           Parsers.Parsers
 import qualified Pipeline.Broadcasting.API as B
@@ -79,9 +80,12 @@ import qualified Pipeline.Streaming.API    as S
 import           Prelude                   hiding (lookup)
 import           Queue.API
 import           Queue.TransactionalQueue
-import           Sid                       (nextSID)
+import           Sid
+    ( SIDCounter
+    , initialSIDCounter
+    , nextSID
+    )
 import           System.IO
-import           System.Random             (StdGen, newStdGen)
 import           Types
 import qualified Types.Connect             as Connect (Connect (..))
 import qualified Types.Err                 as E
@@ -216,7 +220,8 @@ data Client = Client'
                 { queue               :: Q QueueItem
                 , subscriptions       :: TVar SubscriptionState
                 , pings               :: TVar [IO ()]
-                , randomGen           :: TVar StdGen
+                , sidCounter          :: TVar SIDCounter
+                , inboxNuid           :: TVar Nuid.Nuid
                 , configState         :: TVar ConfigState
                 , connectionAttempts' :: TVar Int
                 , lifecycle           :: TVar LifecycleState
@@ -245,7 +250,8 @@ newClient servers conOpts = do
     <$> newQ
     <*> newTVarIO emptySubscriptionState
     <*> newTVarIO []
-    <*> (newTVarIO =<< newStdGen)
+    <*> newTVarIO initialSIDCounter
+    <*> (newTVarIO =<< Nuid.newNuidIO)
     <*> newTVarIO (initialConfigState defaultConfig)
     <*> newTVarIO (connectionAttempts defaultConfig)
     <*> newTVarIO Running
@@ -361,10 +367,9 @@ publish client subject opts = do
 
   replyTo <- case callback of
     Just cb -> do
-      rand <- newHash client
-      let replyTo = BS.append "RES." rand
-      request client replyTo cb
-      return (Just replyTo)
+      inbox <- nextInbox client
+      request client inbox cb
+      return (Just inbox)
     Nothing -> return Nothing
 
   let msg = P.Pub {
@@ -446,7 +451,7 @@ defaultConn host port = do
 subscribe' :: Bool -> Client -> Subject -> [SubscribeOpts] -> (Maybe MsgView -> IO ()) -> IO SID
 subscribe' isReply client subject opts callback = do
   runClient client . logMessage Debug $ ("subscribing to subject: " ++ show subject)
-  sid <- newHash client
+  sid <- nextSid client
   let subConfig = applyCallOptions opts defaultSubscribeConfig
   let cb = if isReply
         then \m -> do
@@ -530,12 +535,23 @@ msgRouterM client msg = do
       liftIO . callback $ Just msg
     Nothing       -> logMessage Error $ "callback missing for SID: " ++ show sid
 
-newHash :: Client -> IO SID
-newHash client = atomically $ do
-    rg <- readTVar (randomGen client)
-    let (rand, stdGen) = nextSID rg
-    writeTVar (randomGen client) stdGen
-    return rand
+nextSid :: Client -> IO SID
+nextSid client = atomically $ do
+  counter <- readTVar (sidCounter client)
+  let (sid, counter') = nextSID counter
+  writeTVar (sidCounter client) counter'
+  return sid
+
+nextInbox :: Client -> IO Subject
+nextInbox client = atomically $ do
+  nuid <- readTVar (inboxNuid client)
+  let (token, nuid') = Nuid.nextNuid nuid
+      inbox = BS.append inboxPrefix token
+  writeTVar (inboxNuid client) nuid'
+  return inbox
+
+inboxPrefix :: Subject
+inboxPrefix = "_INBOX."
 
 defaultConnect = Connect.Connect{
   Connect.verbose = False,

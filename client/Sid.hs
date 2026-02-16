@@ -1,17 +1,14 @@
-module Sid (nextSID) where
+module Sid (SIDCounter, initialSIDCounter, nextSID) where
 
-import qualified Data.ByteString    as BS
-import           Data.Hashable      (hash)
-import qualified Data.Text          as Text
-import           Data.Text.Encoding (encodeUtf8)
-import           System.Random
+import qualified Data.ByteString.Char8 as BC
+import           Data.Word             (Word64)
 import           Types
 
-nextSID :: StdGen -> (SID, StdGen)
-nextSID std = (hash' bs, gen)
-  where (bs, gen) = genByteString 16 std
-        hash' = packStr' . show . abs . hash
+type SIDCounter = Word64
 
-packStr' :: String -> BS.ByteString
-packStr' = encodeUtf8 . Text.pack
+initialSIDCounter :: SIDCounter
+initialSIDCounter = 0
 
+nextSID :: SIDCounter -> (SID, SIDCounter)
+nextSID counter = (BC.pack (show next), next)
+  where next = counter + 1
