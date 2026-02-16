@@ -28,6 +28,7 @@
 
 ## Commit & Pull Request Guidelines
 - Never use git unless explicitly instructed.
+- flake interactions only work on tracked files, if you need to add a file, ask for it to be added to the flake.
 
 ## Workflow Guidelines
 - Run nix flake check after changes are made, rather than suggesting the user runs tests.

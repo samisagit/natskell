@@ -65,7 +65,6 @@ data Auth = None
           | NKey NKeyData
           | AuthToken AuthTokenData
           | JWT JWTTokenData
-          | TLSCert TLSCertData
   deriving (Eq, Show)
 
 data Config = Config
@@ -73,6 +72,7 @@ data Config = Config
                 , connectConfig      :: Connect.Connect
                 , loggerConfig       :: LoggerConfig
                 , auth               :: Auth
+                , tlsCert            :: Maybe TLSCertData
                 , exitAction         :: ClientExitResult -> IO ()
                 , connectOptions     :: [(String, Int)]
                 }
@@ -93,7 +93,7 @@ withJWT :: JWTTokenData -> ConfigOpts
 withJWT jwt config = config { auth = JWT jwt }
 
 withTLSCert :: TLSCertData -> ConfigOpts
-withTLSCert (pubKey, privKey) config = config { auth = TLSCert (pubKey, privKey) }
+withTLSCert (pubKey, privKey) config = config { tlsCert = Just (pubKey, privKey) }
 
 withLoggerConfig :: LoggerConfig -> ConfigOpts
 withLoggerConfig loggerConfig config = config { loggerConfig = loggerConfig }

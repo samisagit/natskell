@@ -25,6 +25,7 @@ data Connect = Connect
                  , echo          :: Maybe Bool
                  , sig           :: Maybe BS.ByteString
                  , jwt           :: Maybe BS.ByteString
+                 , nkey          :: Maybe BS.ByteString
                  , no_responders :: Maybe Bool
                  , headers       :: Maybe Bool
                  }
@@ -52,6 +53,7 @@ instance Validator Connect where
     validateProtocol c
     validateSig c
     validateJwt c
+    validateNKey c
 
 validateAuthToken :: Connect -> Either BS.ByteString ()
 validateAuthToken c
@@ -96,6 +98,11 @@ validateSig c
 validateJwt :: Connect -> Either BS.ByteString ()
 validateJwt c
   | jwt c == Just "" = Left "explicit empty jwt"
+  | otherwise = Right ()
+
+validateNKey :: Connect -> Either BS.ByteString ()
+validateNKey c
+  | nkey c == Just "" = Left "explicit empty nkey"
   | otherwise = Right ()
 
 textToByteString :: MonadPlus m =>  T.Text -> m BS.ByteString

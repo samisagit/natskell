@@ -48,6 +48,7 @@ module Client (
   exitCode,
   ) where
 
+import qualified Auth.NKey                 as NKey
 import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Exception
@@ -67,11 +68,13 @@ import           Data.Maybe
 import           Data.Time.Clock
 import           Lib.CallOption
 import           Lib.Logger
+import qualified Lib.Parser                as Parser
 import           MSGView
 import           Network.API
 import           Network.Connection
 import qualified Network.Simple.TCP        as TCP
 import qualified Network.Socket            as NS
+import qualified Network.TLS               as TLS
 import qualified Nuid
 import           Options
 import           Parsers.Parsers
@@ -237,6 +240,7 @@ newClient servers conOpts = do
   let defaultConfig = applyCallOptions conOpts Config {
     connectConfig = defaultConnect
     , auth = None
+    , tlsCert = Nothing
     , loggerConfig = dl
     , connectionAttempts = 5
     , exitAction = const (return ())
@@ -244,7 +248,7 @@ newClient servers conOpts = do
   }
   updateLogContext ctx (\c -> c { lcConnectName = fmap BC.unpack (Connect.name (connectConfig defaultConfig)) })
 
-  c <- Conn <$> newEmptyTMVarIO <*> newEmptyTMVarIO <*> newEmptyTMVarIO
+  c <- Conn <$> newEmptyTMVarIO <*> newEmptyTMVarIO <*> newEmptyTMVarIO <*> newTVarIO mempty
 
   client <- liftIO $ Client'
     <$> newQ
@@ -258,7 +262,9 @@ newClient servers conOpts = do
     <*> pure c
     <*> pure ctx
 
-  runClient client . logAuthMethod $ auth defaultConfig
+  runClient client $ do
+    logAuthMethod (auth defaultConfig)
+    logTlsConfig (tlsCert defaultConfig)
   forkIO $ retryLoop client
 
   -- ensure that the server info is initialized
@@ -266,7 +272,7 @@ newClient servers conOpts = do
 
   return client
 
-acquireHandle :: Client -> IO (Either String Conn)
+acquireHandle :: Client -> IO (Either String (Conn, (String, Int)))
 acquireHandle client = do
   attempts <- readTVarIO (connectionAttempts' client)
   cfg <- readConfig client
@@ -280,13 +286,13 @@ acquireHandle client = do
         Left e -> return (Left (show e))
         Right h -> do
           point (conn client) h
-          return . Right $ conn client
+          return . Right $ (conn client, (host, port))
 
-decomHandle ::  Either String Conn -> IO ()
-decomHandle (Left _)  = return ()
-decomHandle (Right h) = Network.Connection.close h
+decomHandle ::  Either String (Conn, (String, Int)) -> IO ()
+decomHandle (Left _)       = return ()
+decomHandle (Right (h, _)) = Network.Connection.close h
 
-withHandle :: Client -> (Either String Conn -> IO a) -> IO a
+withHandle :: Client -> (Either String (Conn, (String, Int)) -> IO a) -> IO a
 withHandle client = bracket
     (acquireHandle client)
     decomHandle
@@ -332,32 +338,113 @@ retryLoop client = do
       withHandle client $ \handle -> do
         case handle of
           (Left e) -> runClient client . logMessage Error $ ("connection attempt failed: " ++ show e)
-          (Right h) -> do
-            runClient client $ do
-              wgs <- liftIO $ newWaitGroup 1
-              wgb <- liftIO $ newWaitGroup 1
-              logMessage Debug "starting client streaming threads"
-              liftIO . void . forkIO $ do
-                runClient client $ B.run (queue client) h
-                runClient client $ logMessage Debug "broadcasting thread exited"
-                done wgb
-              liftIO . void . forkIO $ do
-                runClient client $ S.run h genericParse (router client)
-                runClient client $ logMessage Debug "streaming thread exited"
-                done wgs
-              wg <- liftIO $ newWaitGroup 2
-              liftIO . void . forkIO $ do
-                wait wgs
-                -- close broadcasting
-                liftIO $ Queue.API.close (queue client)
-                done wg
-              liftIO . void . forkIO $ do
-                wait wgb
-                -- close streaming
-                closeReader h
-                done wg
-              liftIO $ wait wg
-              logMessage Debug "streaming threads exited; closing connection"
+          (Right (h, (host, _port))) -> do
+            initResult <- initializeConnection client h host
+            case initResult of
+              Left err ->
+                runClient client . logMessage Error $ ("connection initialization failed: " ++ err)
+              Right () -> do
+                runClient client $ do
+                  wgs <- liftIO $ newWaitGroup 1
+                  wgb <- liftIO $ newWaitGroup 1
+                  logMessage Debug "starting client streaming threads"
+                  liftIO . void . forkIO $ do
+                    runClient client $ B.run (queue client) h
+                    runClient client $ logMessage Debug "broadcasting thread exited"
+                    done wgb
+                  liftIO . void . forkIO $ do
+                    runClient client $ S.run h genericParse (router client)
+                    runClient client $ logMessage Debug "streaming thread exited"
+                    done wgs
+                  wg <- liftIO $ newWaitGroup 2
+                  liftIO . void . forkIO $ do
+                    wait wgs
+                    -- close broadcasting
+                    liftIO $ Queue.API.close (queue client)
+                    done wg
+                  liftIO . void . forkIO $ do
+                    wait wgb
+                    -- close streaming
+                    closeReader h
+                    done wg
+                  liftIO $ wait wg
+                  logMessage Debug "streaming threads exited; closing connection"
+
+initializeConnection :: Client -> Conn -> String -> IO (Either String ())
+initializeConnection client h host = do
+  infoResult <- readInitialInfo client h
+  case infoResult of
+    Left err -> return (Left err)
+    Right (info, rest) -> do
+      cfg <- readConfig client
+      let tlsRequested = isJust (tlsCert cfg) || Connect.tls_required (connectConfig cfg)
+          tlsRequired = fromMaybe False (I.tls_required info)
+          useTls = tlsRequested || tlsRequired
+      if useTls
+        then do
+          runClient client $ logMessage Info "negotiating TLS"
+          paramsResult <- buildTlsParams host (tlsCert cfg)
+          case paramsResult of
+            Left err -> return (Left err)
+            Right params -> do
+              tlsResult <- Network.Connection.upgradeToTLS h params
+              case tlsResult of
+                Left tlsErr -> return (Left tlsErr)
+                Right () -> do
+                  unless (BS.null rest)
+                    (runClient client $ logMessage Warn "dropping pre-TLS plaintext")
+                  runClient client $ routerM client (ParsedInfo info)
+                  return (Right ())
+        else do
+          bufferRead h rest
+          runClient client $ routerM client (ParsedInfo info)
+          return (Right ())
+
+readInitialInfo :: Client -> Conn -> IO (Either String (I.Info, BS.ByteString))
+readInitialInfo client h =
+  go mempty
+  where
+    go acc = do
+      result <- readData h 4096
+      case result of
+        Left err -> return (Left err)
+        Right chunk ->
+          if BS.null chunk
+            then do
+              runClient client $ logMessage Debug "no data read, waiting"
+              threadDelay 100000
+              go acc
+            else do
+              let bs = acc <> chunk
+              case genericParse bs of
+                Left err ->
+                  case Parser.solveErr err (BS.length bs) of
+                    Parser.SuggestPull ->
+                      go bs
+                    Parser.SuggestDrop n _ ->
+                      go (BS.drop n bs)
+                Right (ParsedInfo info, rest) ->
+                  return (Right (info, rest))
+                Right (ParsedErr err, _) ->
+                  return (Left ("server error before INFO: " ++ show err))
+                Right (_, rest) ->
+                  go rest
+
+buildTlsParams :: String -> Maybe TLSCertData -> IO (Either String TLS.ClientParams)
+buildTlsParams host tlsConfig = do
+  let base = TLS.defaultParamsClient host (BC.pack host)
+      hooks = TLS.clientHooks base
+      shared = TLS.clientShared base
+      acceptAny = hooks { TLS.onServerCertificate = \_ _ _ _ -> return [] }
+  case tlsConfig of
+    Just (certPem, keyPem) ->
+      case TLS.credentialLoadX509FromMemory certPem keyPem of
+        Left err -> return (Left err)
+        Right cred ->
+          let hooks' = acceptAny { TLS.onCertificateRequest = \_ -> return (Just cred) }
+              shared' = shared { TLS.sharedCredentials = TLS.Credentials [cred] }
+          in return (Right base { TLS.clientHooks = hooks', TLS.clientShared = shared' })
+    Nothing -> return (Right base { TLS.clientHooks = acceptAny })
 
 -- | publish sends a message to the NATS server.
 publish :: Client -> Subject -> [PubOptions -> PubOptions] -> IO ()
@@ -487,10 +574,10 @@ routerM client msg = do
       msgRouterM client a
     ParsedInfo i -> do
       logMessage Debug $ "routing INFO: " ++ show i
-      liftIO $ connect client
       liftIO $ do
         atomically (setServerInfo client i)
         updateLogContextFromInfo client i
+        connect client
     ParsedPing _ -> do
       logMessage Debug "routing PING"
       liftIO $ pong client
@@ -515,7 +602,11 @@ logAuthMethod auth = case auth of
   UserPass (user, _) -> logMessage Info $ "using user/pass: " ++ show user
   NKey _             -> logMessage Info "using nkey"
   JWT _              -> logMessage Info "using jwt"
-  TLSCert _          -> logMessage Info "using tls certificate"
+
+logTlsConfig :: Maybe TLSCertData -> AppM ()
+logTlsConfig tlsConfig = case tlsConfig of
+  Nothing -> pure ()
+  Just _  -> logMessage Info "using tls certificate"
 
 sequenceActions :: TVar [IO ()] -> IO ()
 sequenceActions actionsVar = do
@@ -567,6 +658,7 @@ defaultConnect = Connect.Connect{
   Connect.echo = Just True,
   Connect.sig = Nothing,
   Connect.jwt = Nothing,
+  Connect.nkey = Nothing,
   Connect.no_responders = Just True,
   Connect.headers = Just True
   }
@@ -575,8 +667,84 @@ connect :: Client -> IO ()
 connect client = do
   runClient client $ logMessage Debug "connecting to NATS server"
   cfg <- readConfig client
-  let dat = connectConfig cfg
+  info <- cfgServerInfo <$> readConfigState client
+  let nonce = info >>= I.nonce
+  let infoTlsRequired = fromMaybe False (info >>= I.tls_required)
+      tlsActive = infoTlsRequired || isJust (tlsCert cfg) || Connect.tls_required (connectConfig cfg)
+  let dat = buildConnectPayload cfg nonce tlsActive
   writeToClientQueue client (QueueItem dat)
+
+buildConnectPayload :: Config -> Maybe BS.ByteString -> Bool -> Connect.Connect
+buildConnectPayload cfg nonce tlsRequired =
+  applyAuthToConnect base (auth cfg) nonce
+  where
+    base = (connectConfig cfg) { Connect.tls_required = tlsRequired }
+
+applyAuthToConnect :: Connect.Connect -> Auth -> Maybe BS.ByteString -> Connect.Connect
+applyAuthToConnect base authType nonce =
+  case authType of
+    None ->
+      base
+    AuthToken token ->
+      (clearAuthFields base) { Connect.auth_token = nonEmpty token }
+    UserPass (user, pass) ->
+      let (user', pass') = userPassFields user pass
+      in (clearAuthFields base) { Connect.user = user', Connect.pass = pass' }
+    NKey seed ->
+      applyNKeyAuth base seed nonce
+    JWT jwtInput ->
+      applyJwtAuth base jwtInput nonce
+
+clearAuthFields :: Connect.Connect -> Connect.Connect
+clearAuthFields base =
+  base
+    { Connect.auth_token = Nothing
+    , Connect.user = Nothing
+    , Connect.pass = Nothing
+    , Connect.sig = Nothing
+    , Connect.jwt = Nothing
+    , Connect.nkey = Nothing
+    }
+
+nonEmpty :: BS.ByteString -> Maybe BS.ByteString
+nonEmpty value =
+  if BS.null value
+    then Nothing
+    else Just value
+
+userPassFields :: BS.ByteString -> BS.ByteString -> (Maybe BS.ByteString, Maybe BS.ByteString)
+userPassFields user pass
+  | BS.null user || BS.null pass = (Nothing, Nothing)
+  | otherwise = (Just user, Just pass)
+
+applyNKeyAuth :: Connect.Connect -> BS.ByteString -> Maybe BS.ByteString -> Connect.Connect
+applyNKeyAuth base seed nonce =
+  case nonce of
+    Nothing -> clearAuthFields base
+    Just nonceValue ->
+      case NKey.signNonceWithSeed seed nonceValue of
+        Left _ -> clearAuthFields base
+        Right (publicKey, signature) ->
+          (clearAuthFields base)
+            { Connect.nkey = nonEmpty publicKey
+            , Connect.sig = nonEmpty signature
+            }
+
+applyJwtAuth :: Connect.Connect -> BS.ByteString -> Maybe BS.ByteString -> Connect.Connect
+applyJwtAuth base jwtInput nonce =
+  case NKey.parseJwtBundle jwtInput of
+    Nothing ->
+      clearAuthFields base
+    Just bundle ->
+      let base' = (clearAuthFields base) { Connect.jwt = nonEmpty (NKey.jwtToken bundle) }
+      in case nonce of
+          Nothing ->
+            clearAuthFields base
+          Just nonceValue ->
+            case NKey.signNonceWithSeed (NKey.jwtSeed bundle) nonceValue of
+              Left _ -> clearAuthFields base
+              Right (_, signature) ->
+                base' { Connect.sig = nonEmpty signature }
 
 pong :: Client -> IO ()
 pong client = writeToClientQueue client (QueueItem Pong)

@@ -26,10 +26,12 @@ test-suite test
   build-depends:
     natskell,
     bytestring,
+    directory,
     stm,
     hspec,
     testcontainers
   other-modules:
     ClientSpec
+    NatsServerConfig
     WaitGroup
   main-is: Main.hs
