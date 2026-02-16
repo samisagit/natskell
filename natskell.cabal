@@ -2,6 +2,18 @@ cabal-version:          3.0
 name:                   natskell
 version:                0.0.0
 synopsis:               A NATS client library written in Haskell
+tested-with:
+  GHC ==8.4,
+  GHC ==8.6,
+  GHC ==8.8,
+  GHC ==8.10,
+  GHC ==9.0,
+  GHC ==9.2,
+  GHC ==9.4,
+  GHC ==9.6,
+  GHC ==9.8,
+  GHC ==9.10,
+  GHC ==9.12
 
 -- A longer description of the package.
 description:            Please see the README on GitHub at <https://github.com/samisagit/natskell#readme>
@@ -37,16 +49,16 @@ library
   import:         shared
   build-depends:
     natskell-internal,
-    containers >= 0.6 && < 0.9,
-    hashable  >= 1.3 && < 1.6,
-    stm  >= 2.5 && < 2.7,
-    text  >= 1.2 && < 2.3,
+    containers >= 0.5 && < 0.7,
+    hashable  >= 1.4 && < 1.6,
+    stm  >= 2.5 && < 2.6,
+    text  (>= 1.2 && < 1.3) || (>= 2.0 && < 2.2),
     network  >= 3.1 && < 3.3,
     bytestring  >= 0.10 && < 0.13,
     network-simple  >= 0.4 && < 0.5,
     heap >= 0.6 && < 1.1,
-    time >= 1.9 && < 1.16,
-    random  >= 1.1 && < 1.4
+    time >= 1.9 && < 1.13,
+    random  >= 1.1 && < 1.3
 
   exposed-modules:
     Client
@@ -66,11 +78,11 @@ library natskell-internal
   build-depends:
     conduit >= 1.3 && < 1.4,
     bytestring >= 0.10 && < 0.13,
-    aeson  >= 2.0 && < 2.4,
-    word8  < 0.2,
-    stm >= 2.5 && < 2.7,
+    aeson  >= 2.1 && < 2.3,
+    word8  >= 0.0 && < 0.2,
+    stm >= 2.5 && < 2.6,
     mtl >= 2.2 && < 2.4,
-    text >= 1.2 && < 2.3,
+    text (>= 1.2 && < 1.3) || (>= 2.0 && < 2.2),
 
   exposed-modules:
     Lib.Parser
@@ -119,7 +131,7 @@ library natskell-internal
 library test-common
     import:         shared
     build-depends:
-      stm >= 2.5 && < 2.7,
+      stm >= 2.5 && < 2.6,
     exposed-modules:
       WaitGroup
     hs-source-dirs:
@@ -132,7 +144,7 @@ test-suite unit-test
   main-is:          Spec.hs
   build-depends:   
     natskell-internal,
-    hspec,
+    hspec >= 2.7 && < 2.12,
     bytestring,
     network,
     word8,
@@ -162,10 +174,10 @@ test-suite fuzz-test
   main-is:              Spec.hs
   build-depends:    
     natskell-internal,
-    hspec,
+    hspec >= 2.7 && < 2.12,
     bytestring,
     word8,
-    QuickCheck
+    QuickCheck >= 2.14 && < 2.17
   other-modules:
     ParserSpec
     ValidatorsSpec
@@ -180,12 +192,12 @@ test-suite client-test
   build-depends:
     natskell,
     test-common,
-    port-utils,
+    port-utils >= 0.1 && < 0.3,
     bytestring,
     word8,
     network,
     stm,
-    hspec
+    hspec >= 2.7 && < 2.12
   other-modules:
       ClientSpec
   if flag (impure)

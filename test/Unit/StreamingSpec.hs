@@ -58,6 +58,7 @@ instance ConnectionReader Handle where
       Right bytes -> return $ Right bytes
 
   closeReader = hClose
+  openReader _ = pure ()
 
 spec :: Spec
 spec = do
