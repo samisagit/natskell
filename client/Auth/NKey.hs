@@ -87,7 +87,11 @@ extractBlock startMarker endMarker input = do
 
 trimAscii :: BS.ByteString -> BS.ByteString
 trimAscii =
-  BS.dropWhileEnd isSpaceAscii . BS.dropWhile isSpaceAscii
+  dropWhileEndAscii isSpaceAscii . BS.dropWhile isSpaceAscii
+
+dropWhileEndAscii :: (Word8 -> Bool) -> BS.ByteString -> BS.ByteString
+dropWhileEndAscii predicate =
+  BS.reverse . BS.dropWhile predicate . BS.reverse
 
 isSpaceAscii :: Word8 -> Bool
 isSpaceAscii w =
