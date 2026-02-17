@@ -5,13 +5,13 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE TypeApplications      #-}
 
+-- | High-level client API for NATS.
 module Client (
   Client,
   MsgView (..),
   newClient,
   publish,
   subscribe,
-  request,
   unsubscribe,
   ping,
   reset,
@@ -178,6 +178,13 @@ waitForServerInfo client = do
     Just _  -> return ()
     Nothing -> retry
 
+waitForClosing :: Client -> STM ()
+waitForClosing client = do
+  state <- readTVar (lifecycle client)
+  case state of
+    Running -> retry
+    _       -> return ()
+
 cancelExpiredSubscriptions :: Client -> IO ()
 cancelExpiredSubscriptions client = do
   runClient client $ logMessage Debug "running subscription GC"
@@ -225,7 +232,17 @@ data Client = Client'
                 , logContext          :: TVar LogContext
                 }
 
--- | newClient creates a new client with optional overrides to default settings
+-- | newClient creates a new client with optional overrides to default settings.
+--
+-- __Examples:__
+--
+-- @
+-- {-# LANGUAGE OverloadedStrings #-}
+--
+-- servers = [(\"127.0.0.1\", 4222)]
+-- opts = [withConnectName \"example-client\"]
+-- client <- newClient servers opts
+-- @
 newClient :: [(String, Int)] -> [ConfigOpts] -> IO Client
 newClient servers conOpts = do
   dl <- defaultLogger
@@ -440,29 +457,53 @@ buildTlsParams host tlsConfig = do
     Nothing -> return (Right base { TLS.clientHooks = acceptAny })
 
 -- | publish sends a message to the NATS server.
+--
+-- __Examples:__
+--
+-- @
+-- {-# LANGUAGE OverloadedStrings #-}
+--
+-- publish client \"updates\" [withPayload \"hello\"]
+-- publish client \"service.echo\"
+--   [ withPayload \"hello\"
+--   , withReplyCallback print
+--   ]
+-- @
 publish :: Client -> Subject -> [PubOptions -> PubOptions] -> IO ()
 publish client subject opts = do
   runClient client . logMessage Debug $ ("publishing to subject: " ++ show subject)
   let (payload, callback, headers) = applyCallOptions opts (Nothing, Nothing, Nothing)
 
-  replyTo <- case callback of
+  case callback of
     Just cb -> do
       inbox <- nextInbox client
       request client inbox [] cb
-      return (Just inbox)
-    Nothing -> return Nothing
-
-  let msg = P.Pub {
-    P.subject = subject,
-    P.payload = payload,
-    P.replyTo = replyTo,
-    P.headers = headers
-  }
-
-  writeToClientQueue client (QueueItem msg)
+      let msg = P.Pub {
+        P.subject = subject,
+        P.payload = payload,
+        P.replyTo = Just inbox,
+        P.headers = headers
+      }
+      flushThen client (writeToClientQueue client (QueueItem msg))
+    Nothing -> do
+      let msg = P.Pub {
+        P.subject = subject,
+        P.payload = payload,
+        P.replyTo = Nothing,
+        P.headers = headers
+      }
+      writeToClientQueue client (QueueItem msg)
 
 -- | subscribe is used to subscribe to a subject on the NATS server.
 -- Options can be passed to tune subscription behaviour (e.g., reply expiry).
+--
+-- __Examples:__
+--
+-- @
+-- {-# LANGUAGE OverloadedStrings #-}
+--
+-- subscribe client \"events.created\" [] print
+-- @
 subscribe :: Client -> Subject -> [SubscribeOpts] -> (Maybe MsgView -> IO ()) -> IO SID
 subscribe = subscribe' False
 
@@ -472,6 +513,15 @@ request :: Client -> Subject -> [SubscribeOpts] -> (Maybe MsgView -> IO ()) -> I
 request = subscribe' True
 
 -- | unsubscribe is used to unsubscribe from a subject on the NATS server.
+--
+-- __Examples:__
+--
+-- @
+-- {-# LANGUAGE OverloadedStrings #-}
+--
+-- sid <- subscribe client \"events.created\" [] print
+-- unsubscribe client sid
+-- @
 unsubscribe :: Client -> SID -> IO ()
 unsubscribe client sid = do
   runClient client . logMessage Debug $ ("unsubscribing SID: " ++ show sid)
@@ -490,6 +540,18 @@ ping client action = do
   atomically $ modifyTVar' (pings client) (action :)
   writeToClientQueue client (QueueItem Ping)
 
+flush :: Client -> IO ()
+flush client = do
+  ponged <- newEmptyTMVarIO
+  ping client (atomically (void (tryPutTMVar ponged ())))
+  atomically $ readTMVar ponged `orElse` waitForClosing client
+
+flushThen :: Client -> IO () -> IO ()
+flushThen client action = do
+  void . forkIO $ do
+    flush client
+    action
+
 shutdownClient :: Client -> ClientExitReason -> String -> IO ()
 shutdownClient client reason message = do
   atomically $ setLifecycleClosing client reason
@@ -502,7 +564,7 @@ shutdownClient client reason message = do
 close :: Client -> IO ()
 close client = shutdownClient client ExitClosedByUser "closing client connection"
 
--- reset is used to abort the current connection and trigger lifecycle closure without attempting graceful drain
+-- | reset is used to abort the current connection and trigger lifecycle closure without attempting graceful drain.
 reset :: Client -> IO ()
 reset client = shutdownClient client ExitResetRequested "resetting client connection"
 
