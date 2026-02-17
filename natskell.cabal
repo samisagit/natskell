@@ -69,6 +69,7 @@ library
     Sid
     Nuid
     Options
+    Network.Connection
     Auth.NKey
     MSGView
     State
@@ -85,8 +86,7 @@ library natskell-internal
     word8  >= 0.0 && < 0.2,
     stm >= 2.5 && < 2.6,
     mtl >= 2.2 && < 2.4,
-    text (>= 1.2 && < 1.3) || (>= 2.0 && < 2.2),
-    tls >= 1.8 && < 3.0,
+    text (>= 1.2 && < 1.3) || (>= 2.0 && < 2.2)
 
   exposed-modules:
     Lib.Parser
@@ -115,7 +115,6 @@ library natskell-internal
     Pipeline.Streaming.Parser
     Pipeline.Streaming.Sink
     Network.API
-    Network.Connection
     Queue.API
     Queue.TransactionalQueue
 

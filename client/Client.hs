@@ -11,8 +11,7 @@ module Client (
   newClient,
   publish,
   subscribe,
-  subscribeWithOpts,
-  requestWithOpts,
+  request,
   unsubscribe,
   ping,
   reset,
@@ -42,10 +41,7 @@ module Client (
   TLSPrivateKey,
   TLSCertData,
   SubscribeOpts,
-  ClientExitResult (..),
-  ClientExitStatus (..),
   ClientExitReason (..),
-  exitCode,
   ) where
 
 import qualified Auth.NKey                 as NKey
@@ -88,7 +84,6 @@ import           Sid
     , initialSIDCounter
     , nextSID
     )
-import           System.IO
 import           Types
 import qualified Types.Connect             as Connect (Connect (..))
 import qualified Types.Err                 as E
@@ -132,7 +127,7 @@ initialConfigState cfg = ConfigState cfg Nothing
 
 data LifecycleState = Running
                     | Closing ClientExitReason
-                    | Closed ClientExitResult
+                    | Closed ClientExitReason
 
 readConfigState :: Client -> IO ConfigState
 readConfigState client = readTVarIO (configState client)
@@ -157,19 +152,17 @@ setLifecycleClosing client reason =
     Closing r     -> Closing r
     Running       -> Closing reason
 
-markClosed :: Client -> ClientExitReason -> STM (Maybe ClientExitResult)
+markClosed :: Client -> ClientExitReason -> STM (Maybe ClientExitReason)
 markClosed client fallbackReason = do
   state <- readTVar (lifecycle client)
   case state of
     Closed _ -> return Nothing
     Closing reason -> do
-      let result = mkExitResult reason
-      writeTVar (lifecycle client) (Closed result)
-      return (Just result)
+      writeTVar (lifecycle client) (Closed reason)
+      return (Just reason)
     Running -> do
-      let result = mkExitResult fallbackReason
-      writeTVar (lifecycle client) (Closed result)
-      return (Just result)
+      writeTVar (lifecycle client) (Closed fallbackReason)
+      return (Just fallbackReason)
 
 waitForClosed :: Client -> STM ()
 waitForClosed client = do
@@ -248,7 +241,7 @@ newClient servers conOpts = do
   }
   updateLogContext ctx (\c -> c { lcConnectName = fmap BC.unpack (Connect.name (connectConfig defaultConfig)) })
 
-  c <- Conn <$> newEmptyTMVarIO <*> newEmptyTMVarIO <*> newEmptyTMVarIO <*> newTVarIO mempty
+  c <- newConn
 
   client <- liftIO $ Client'
     <$> newQ
@@ -272,8 +265,8 @@ newClient servers conOpts = do
 
   return client
 
-acquireHandle :: Client -> IO (Either String (Conn, (String, Int)))
-acquireHandle client = do
+acquireTransport :: Client -> IO (Either String (Conn, (String, Int)))
+acquireTransport client = do
   attempts <- readTVarIO (connectionAttempts' client)
   cfg <- readConfig client
   case connectOptions cfg of
@@ -281,21 +274,21 @@ acquireHandle client = do
     xs -> do
       let (host, port) = cycle xs !! attempts
       updateLogContext (logContext client) (\ctx -> ctx { lcServer = Just (host ++ ":" ++ show port) })
-      h <- try @SomeException (defaultConn host port)
-      case h of
+      socketResult <- try @SomeException (defaultSocket host port)
+      case socketResult of
         Left e -> return (Left (show e))
-        Right h -> do
-          point (conn client) h
+        Right socket -> do
+          pointTransport (conn client) (tcpTransport socket)
           return . Right $ (conn client, (host, port))
 
-decomHandle ::  Either String (Conn, (String, Int)) -> IO ()
-decomHandle (Left _)       = return ()
-decomHandle (Right (h, _)) = Network.Connection.close h
+decomTransport ::  Either String (Conn, (String, Int)) -> IO ()
+decomTransport (Left _)       = return ()
+decomTransport (Right (h, _)) = Network.Connection.close h
 
-withHandle :: Client -> (Either String (Conn, (String, Int)) -> IO a) -> IO a
-withHandle client = bracket
-    (acquireHandle client)
-    decomHandle
+withTransport :: Client -> (Either String (Conn, (String, Int)) -> IO a) -> IO a
+withTransport client = bracket
+    (acquireTransport client)
+    decomTransport
 
 withRetry :: Client -> Int -> IO () -> IO ()
 withRetry c 0 _ = do
@@ -335,11 +328,11 @@ retryLoop client = do
     Queue.API.open (queue client)
     Network.Connection.open (conn client)
     withSubscriptionGC client $ do
-      withHandle client $ \handle -> do
-        case handle of
+      withTransport client $ \transportResult -> do
+        case transportResult of
           (Left e) -> runClient client . logMessage Error $ ("connection attempt failed: " ++ show e)
-          (Right (h, (host, _port))) -> do
-            initResult <- initializeConnection client h host
+          (Right (connection, (host, _port))) -> do
+            initResult <- initializeConnection client connection host
             case initResult of
               Left err ->
                 runClient client . logMessage Error $ ("connection initialization failed: " ++ err)
@@ -349,11 +342,11 @@ retryLoop client = do
                   wgb <- liftIO $ newWaitGroup 1
                   logMessage Debug "starting client streaming threads"
                   liftIO . void . forkIO $ do
-                    runClient client $ B.run (queue client) h
+                    runClient client $ B.run (queue client) connection
                     runClient client $ logMessage Debug "broadcasting thread exited"
                     done wgb
                   liftIO . void . forkIO $ do
-                    runClient client $ S.run h genericParse (router client)
+                    runClient client $ S.run connection genericParse (router client)
                     runClient client $ logMessage Debug "streaming thread exited"
                     done wgs
                   wg <- liftIO $ newWaitGroup 2
@@ -365,7 +358,7 @@ retryLoop client = do
                   liftIO . void . forkIO $ do
                     wait wgb
                     -- close streaming
-                    closeReader h
+                    closeReader connection
                     done wg
                   liftIO $ wait wg
                   logMessage Debug "streaming threads exited; closing connection"
@@ -455,7 +448,7 @@ publish client subject opts = do
   replyTo <- case callback of
     Just cb -> do
       inbox <- nextInbox client
-      request client inbox cb
+      request client inbox [] cb
       return (Just inbox)
     Nothing -> return Nothing
 
@@ -469,18 +462,14 @@ publish client subject opts = do
   writeToClientQueue client (QueueItem msg)
 
 -- | subscribe is used to subscribe to a subject on the NATS server.
-subscribe :: Client -> Subject -> (Maybe MsgView -> IO ()) -> IO SID
-subscribe client subject = subscribeWithOpts client subject []
+-- Options can be passed to tune subscription behaviour (e.g., reply expiry).
+subscribe :: Client -> Subject -> [SubscribeOpts] -> (Maybe MsgView -> IO ()) -> IO SID
+subscribe = subscribe' False
 
--- | subscribeWithOpts allows callers to set subscription behaviour (e.g., reply expiry).
-subscribeWithOpts :: Client -> Subject -> [SubscribeOpts] -> (Maybe MsgView -> IO ()) -> IO SID
-subscribeWithOpts = subscribe' False
-
-request :: Client -> Subject -> (Maybe MsgView -> IO ()) -> IO SID
-request client subject = requestWithOpts client subject []
-
-requestWithOpts :: Client -> Subject -> [SubscribeOpts] -> (Maybe MsgView -> IO ()) -> IO SID
-requestWithOpts = subscribe' True
+-- | request is used to subscribe to a reply subject on the NATS server.
+-- Options can be passed to tune subscription behaviour (e.g., reply expiry).
+request :: Client -> Subject -> [SubscribeOpts] -> (Maybe MsgView -> IO ()) -> IO SID
+request = subscribe' True
 
 -- | unsubscribe is used to unsubscribe from a subject on the NATS server.
 unsubscribe :: Client -> SID -> IO ()
@@ -524,16 +513,14 @@ runClient client action = do
   cfg <- readConfig client
   runWithLogger (loggerConfig cfg) (logContext client) action
 
-defaultConn :: String -> Int -> IO Handle
-defaultConn host port = do
+defaultSocket :: String -> Int -> IO NS.Socket
+defaultSocket host port = do
   (sock, _) <- TCP.connectSock host $ show port
   NS.setSocketOption sock NS.NoDelay 1
   NS.setSocketOption sock NS.Cork 0
   NS.setSocketOption sock NS.RecvBuffer 1
   NS.setSocketOption sock NS.SendBuffer 1
-  handle <- NS.socketToHandle sock ReadWriteMode
-  hSetBuffering handle NoBuffering
-  return handle
+  return sock
 
 subscribe' :: Bool -> Client -> Subject -> [SubscribeOpts] -> (Maybe MsgView -> IO ()) -> IO SID
 subscribe' isReply client subject opts callback = do

@@ -10,7 +10,7 @@ source :: (MonadLogger m , MonadIO m, ConnectionReader reader)
   => reader
   -> ConduitT () ByteString m ()
 source reader = do
-  lift . logMessage Debug $ "reading from socket"
+  lift . logMessage Debug $ "reading from connection"
   result <- liftIO $ readData reader 4096
   case result of
     Left err -> do

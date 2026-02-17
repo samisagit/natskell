@@ -24,41 +24,11 @@ type TLSPublicKey = BS.ByteString
 type TLSPrivateKey = BS.ByteString
 type TLSCertData = (TLSPublicKey, TLSPrivateKey)
 
-data ClientExitStatus = ExitStatusOk | ExitStatusRetryExhausted | ExitStatusServerError | ExitStatusReset
-  deriving (Eq, Show)
-
-exitStatusCode :: ClientExitStatus -> Int
-exitStatusCode ExitStatusOk             = 0
-exitStatusCode ExitStatusRetryExhausted = 1
-exitStatusCode ExitStatusServerError    = 2
-exitStatusCode ExitStatusReset          = 3
-
 data ClientExitReason = ExitClosedByUser
                       | ExitRetriesExhausted (Maybe String)
                       | ExitServerError Err.Err
                       | ExitResetRequested
   deriving (Eq, Show)
-
-data ClientExitResult = ClientExitResult
-                          { exitStatus :: ClientExitStatus
-                          , exitReason :: ClientExitReason
-                          }
-  deriving (Eq, Show)
-
-exitCode :: ClientExitResult -> Int
-exitCode = exitStatusCode . exitStatus
-
-mkExitResult :: ClientExitReason -> ClientExitResult
-mkExitResult reason = ClientExitResult
-  { exitStatus = toStatus reason
-  , exitReason = reason
-  }
-
-toStatus :: ClientExitReason -> ClientExitStatus
-toStatus ExitClosedByUser         = ExitStatusOk
-toStatus (ExitRetriesExhausted _) = ExitStatusRetryExhausted
-toStatus (ExitServerError _)      = ExitStatusServerError
-toStatus ExitResetRequested       = ExitStatusReset
 
 data Auth = None
           | UserPass UserPassData
@@ -73,7 +43,7 @@ data Config = Config
                 , loggerConfig       :: LoggerConfig
                 , auth               :: Auth
                 , tlsCert            :: Maybe TLSCertData
-                , exitAction         :: ClientExitResult -> IO ()
+                , exitAction         :: ClientExitReason -> IO ()
                 , connectOptions     :: [(String, Int)]
                 }
 
@@ -101,7 +71,7 @@ withLoggerConfig loggerConfig config = config { loggerConfig = loggerConfig }
 withConnectionAttempts :: Int -> ConfigOpts
 withConnectionAttempts attempts config = config { connectionAttempts = attempts }
 
-withExitAction :: (ClientExitResult -> IO ()) -> ConfigOpts
+withExitAction :: (ClientExitReason -> IO ()) -> ConfigOpts
 withExitAction action config = config { exitAction = action }
 
 type PubOptions = (Maybe Payload, Maybe (Maybe MsgView -> IO ()), Maybe Headers)

@@ -1,16 +1,17 @@
 module NatsServerConfig
   ( NatsLogVerbosity (..)
-  , NatsAuthorization (..)
   , NatsAuthUser (..)
   , NatsAuthCallout (..)
   , NatsJwtConfig (..)
   , NatsJwtResolver (..)
   , NatsTlsConfig (..)
-  , NatsServerConfig (..)
-  , defaultNatsServerConfig
+  , NatsConfigOption (..)
+  , NatsConfigOptions
+  , renderConfig
   , writeNatsServerConfigFile
   ) where
 
+import           Data.List        (foldl')
 import           System.Directory (getTemporaryDirectory)
 import           System.IO        (hClose, hPutStr, openTempFile)
 
@@ -61,6 +62,18 @@ data NatsTlsConfig = NatsTlsConfig
                        , natsTlsTimeout      :: Maybe Int
                        }
 
+data NatsConfigOption = WithLogVerbosity NatsLogVerbosity
+                      | WithUserPass String String
+                      | WithToken String
+                      | WithUsers [NatsAuthUser]
+                      | WithNKey String
+                      | WithAuthCallout NatsAuthCallout
+                      | WithAuthorizationCustom [String]
+                      | WithJwtConfig NatsJwtConfig
+                      | WithTlsConfig NatsTlsConfig
+
+type NatsConfigOptions = [NatsConfigOption]
+
 defaultNatsServerConfig :: NatsServerConfig
 defaultNatsServerConfig =
   NatsServerConfig
@@ -70,13 +83,43 @@ defaultNatsServerConfig =
     , natsTlsConfig = Nothing
     }
 
-writeNatsServerConfigFile :: NatsServerConfig -> IO FilePath
-writeNatsServerConfigFile config = do
+writeNatsServerConfigFile :: NatsConfigOptions -> IO FilePath
+writeNatsServerConfigFile options = do
   tmpDir <- getTemporaryDirectory
   (path, handle) <- openTempFile tmpDir "nats-server.conf"
-  hPutStr handle (renderNatsServerConfig config)
+  hPutStr handle (renderConfig options)
   hClose handle
   pure path
+
+renderConfig :: NatsConfigOptions -> String
+renderConfig =
+  renderNatsServerConfig . applyConfigOptions
+
+applyConfigOptions :: NatsConfigOptions -> NatsServerConfig
+applyConfigOptions =
+  foldl' applyConfigOption defaultNatsServerConfig
+
+applyConfigOption :: NatsServerConfig -> NatsConfigOption -> NatsServerConfig
+applyConfigOption config option =
+  case option of
+    WithLogVerbosity verbosity ->
+      config { natsLogVerbosity = verbosity }
+    WithUserPass user password ->
+      config { natsAuthorization = NatsAuthorizationUserPass user password }
+    WithToken token ->
+      config { natsAuthorization = NatsAuthorizationToken token }
+    WithUsers users ->
+      config { natsAuthorization = NatsAuthorizationUsers users }
+    WithNKey nkey ->
+      config { natsAuthorization = NatsAuthorizationNKey nkey }
+    WithAuthCallout callout ->
+      config { natsAuthorization = NatsAuthorizationAuthCallout callout }
+    WithAuthorizationCustom lines ->
+      config { natsAuthorization = NatsAuthorizationCustom lines }
+    WithJwtConfig jwtConfig ->
+      config { natsJwtConfig = Just jwtConfig }
+    WithTlsConfig tlsConfig ->
+      config { natsTlsConfig = Just tlsConfig }
 
 renderNatsServerConfig :: NatsServerConfig -> String
 renderNatsServerConfig config =
@@ -162,8 +205,8 @@ renderJwtResolver resolver =
         , "dir: " ++ renderQuoted dir
         ]
     NatsJwtResolverMemory preloads ->
-      ["resolver: MEMORY"]
-        ++ renderBlock "resolver_preload" (renderResolverPreload preloads)
+      "resolver: MEMORY"
+        : renderBlock "resolver_preload" (renderResolverPreload preloads)
     NatsJwtResolverCustom lines ->
       renderBlock "resolver" lines
 
@@ -180,8 +223,8 @@ renderTlsConfig config =
     )
 
 renderResolverPreload :: [(String, String)] -> [String]
-renderResolverPreload preloads =
-  map (\(account, jwt) -> account ++ ": " ++ renderQuoted jwt) preloads
+renderResolverPreload =
+  map (\(account, jwt) -> account ++ ": " ++ renderQuoted jwt)
 
 renderObject :: [String] -> [String]
 renderObject fields =
