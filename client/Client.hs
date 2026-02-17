@@ -29,6 +29,7 @@ module Client (
   withConnectionAttempts,
   withExitAction,
   withSubscriptionExpiry,
+  withFlush,
   LoggerConfig (..),
   LogLevel (..),
   LogEntry (..),
@@ -477,14 +478,14 @@ publish client subject opts = do
   case callback of
     Just cb -> do
       inbox <- nextInbox client
-      request client inbox [] cb
+      request client inbox [withFlush] cb
       let msg = P.Pub {
         P.subject = subject,
         P.payload = payload,
         P.replyTo = Just inbox,
         P.headers = headers
       }
-      flushThen client (writeToClientQueue client (QueueItem msg))
+      writeToClientQueue client (QueueItem msg)
     Nothing -> do
       let msg = P.Pub {
         P.subject = subject,
@@ -546,12 +547,6 @@ flush client = do
   ping client (atomically (void (tryPutTMVar ponged ())))
   atomically $ readTMVar ponged `orElse` waitForClosing client
 
-flushThen :: Client -> IO () -> IO ()
-flushThen client action = do
-  void . forkIO $ do
-    flush client
-    action
-
 shutdownClient :: Client -> ClientExitReason -> String -> IO ()
 shutdownClient client reason message = do
   atomically $ setLifecycleClosing client reason
@@ -610,6 +605,7 @@ subscribe' isReply client subject opts callback = do
   }
 
   writeToClientQueue client (QueueItem sub)
+  when (subscriptionFlush subConfig) (flush client)
   return sid
 
 router :: Client -> ParsedMessage -> IO ()

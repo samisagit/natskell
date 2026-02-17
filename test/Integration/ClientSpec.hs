@@ -12,12 +12,19 @@ import           Data.Word8
 import           Network.Socket            (Socket, accept, close, listen)
 import           Network.Socket.ByteString (sendAll)
 import           Network.Socket.Free
+import           System.Timeout            (timeout)
 import           Test.Hspec
 import           WaitGroup
 
 defaultINFO = "INFO {\"server_id\": \"some-server\", \"version\": \"semver\", \"go\": \"1.13\", \"host\": \"127.0.0.1\", \"port\": 4222, \"max_payload\": 1024, \"proto\": 3}\r\n"
 
 tooLongMSG = "MSG a b 5000\r\n" <> BS.replicate 5000 _x <> "\r\n"
+
+sendPongSoon :: Socket -> IO ()
+sendPongSoon serv =
+  void . forkIO $ do
+    threadDelay 100000
+    sendAll serv "PONG\r\n"
 
 startClient :: IO (Socket, Client, Socket, TMVar ClientExitReason)
 startClient = do
@@ -57,6 +64,20 @@ spec = do
         ping client $ done wg
         sendAll serv "PONG\r\n"
         wait wg
+      it "subscribe flush waits for PONG" $ \(serv, client, _, _) -> do
+        doneVar <- newEmptyMVar
+        void . forkIO $ do
+          _ <- subscribe client "foo" [withFlush] (\_ -> pure ())
+          putMVar doneVar ()
+        threadDelay 100000
+        returnedEarly <- not <$> isEmptyMVar doneVar
+        when returnedEarly $
+          expectationFailure "subscribe returned before PONG"
+        sendAll serv "PONG\r\n"
+        result <- timeout 1000000 (takeMVar doneVar)
+        case result of
+          Nothing -> expectationFailure "subscribe did not return after PONG"
+          Just () -> pure ()
       it "reports user initiated close" $ \(_, client, _, exited) -> do
         Client.close client
         result <- atomically $ readTMVar exited
@@ -103,16 +124,18 @@ spec = do
         sendAll serv tooLongMSG
         sendAll serv "PONG\r\n"
         wait wg
-      it "unsubscribes after timeout" $ \(_, client, _, _) -> do
+      it "unsubscribes after timeout" $ \(serv, client, _, _) -> do
         wg <- newWaitGroup 1
+        sendPongSoon serv
         publish client "foo" [withReplyCallback (\x -> do
           case x of
             Nothing -> done wg
             Just _  -> error "should not receive message"
           )]
         wait wg
-      it "callback is called when expired" $ \(_, client, _, _) -> do
+      it "callback is called when expired" $ \(serv, client, _, _) -> do
         wg <- newWaitGroup 1
+        sendPongSoon serv
         publish client "foo" [withReplyCallback (\x -> do
           case x of
             Nothing -> done wg

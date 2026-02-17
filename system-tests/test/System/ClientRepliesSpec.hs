@@ -20,7 +20,7 @@ spec =
       [ withConnectName "6eff2527-1ad5-4b0c-b4e5-4a52a7d17639"
       , withLoggerConfig logger
       ]
-    subscribe remoteClient topic [] $ \msg -> do
+    subscribe remoteClient topic [withFlush] $ \msg -> do
       case msg of
         Nothing -> error "Received empty message"
         Just msg' -> do
