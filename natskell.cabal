@@ -3,8 +3,6 @@ name:                   natskell
 version:                0.0.0.1
 synopsis:               A NATS client library written in Haskell
 tested-with:
-  GHC ==8.4,
-  GHC ==8.6,
   GHC ==8.8,
   GHC ==8.10,
   GHC ==9.0,
@@ -40,7 +38,7 @@ source-repository head
 common shared
   default-language:     Haskell2010
   build-depends:
-    base  >= 4.11 && < 5,
+    base  >= 4.13 && < 5,
   ghc-options:
     -haddock -W -Wunused-packages
   pkgconfig-depends: zlib
