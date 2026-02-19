@@ -12,6 +12,7 @@ import           Data.Word8
 import           Network.Socket            (Socket, accept, close, listen)
 import           Network.Socket.ByteString (sendAll)
 import           Network.Socket.Free
+import           System.Timeout            (timeout)
 import           Test.Hspec
 import           WaitGroup
 
@@ -19,7 +20,7 @@ defaultINFO = "INFO {\"server_id\": \"some-server\", \"version\": \"semver\", \"
 
 tooLongMSG = "MSG a b 5000\r\n" <> BS.replicate 5000 _x <> "\r\n"
 
-startClient :: IO (Socket, Client, Socket, TMVar ClientExitResult)
+startClient :: IO (Socket, Client, Socket, TMVar ClientExitReason)
 startClient = do
   (p, sock) <- openFreePort
   listen sock 1
@@ -38,13 +39,13 @@ startClient = do
   c <- atomically $ takeTMVar tvb
   return (s, c, sock, exited)
 
-stopClient :: (Socket, Client, Socket, TMVar ClientExitResult) -> IO ()
+stopClient :: (Socket, Client, Socket, TMVar ClientExitReason) -> IO ()
 stopClient (s, c, sock, _) = do
   Client.close c
   Network.Socket.close sock
   Network.Socket.close s
 
-withClient :: ((Socket, Client, Socket, TMVar ClientExitResult) -> IO()) -> IO ()
+withClient :: ((Socket, Client, Socket, TMVar ClientExitReason) -> IO()) -> IO ()
 withClient action = do
   bracket startClient stopClient action
 
@@ -57,17 +58,47 @@ spec = do
         ping client $ done wg
         sendAll serv "PONG\r\n"
         wait wg
+      it "flush waits for PONG" $ \(serv, client, _, _) -> do
+        doneVar <- newEmptyMVar
+        void . forkIO $ do
+          flush client
+          putMVar doneVar ()
+        threadDelay 100000
+        returnedEarly <- not <$> isEmptyMVar doneVar
+        when returnedEarly $
+          expectationFailure "flush returned before PONG"
+        sendAll serv "PONG\r\n"
+        result <- timeout 1000000 (takeMVar doneVar)
+        case result of
+          Nothing -> expectationFailure "flush did not return after PONG"
+          Just () -> pure ()
+      it "PONG resolves one ping" $ \(serv, client, _, _) -> do
+        first <- newEmptyMVar
+        second <- newEmptyMVar
+        ping client (putMVar first ())
+        ping client (putMVar second ())
+        sendAll serv "PONG\r\n"
+        firstResult <- timeout 1000000 (takeMVar first)
+        case firstResult of
+          Nothing -> expectationFailure "first ping did not resolve"
+          Just () -> pure ()
+        threadDelay 100000
+        secondReady <- not <$> isEmptyMVar second
+        when secondReady $
+          expectationFailure "second ping resolved before second PONG"
+        sendAll serv "PONG\r\n"
+        secondResult <- timeout 1000000 (takeMVar second)
+        case secondResult of
+          Nothing -> expectationFailure "second ping did not resolve"
+          Just () -> pure ()
       it "reports user initiated close" $ \(_, client, _, exited) -> do
         Client.close client
         result <- atomically $ readTMVar exited
-        exitReason result `shouldBe` ExitClosedByUser
-        exitCode result `shouldBe` 0
+        result `shouldBe` ExitClosedByUser
       it "fatal error results in disconnect" $ \(serv, _, _, exited) -> do
         sendAll serv "-ERR 'Unknown Protocol Operation'\r\n"
         result <- atomically $ readTMVar exited
-        exitStatus result `shouldBe` ExitStatusServerError
-        exitCode result `shouldBe` 2
-        case exitReason result of
+        case result of
           ExitServerError _ -> return ()
           other             -> expectationFailure $ "Unexpected exit reason: " ++ show other
       it "non fatal error does not result in disconnect" $ \(serv, client, _, _) -> do
@@ -97,8 +128,9 @@ spec = do
       it "exits when server goes away" $ \(serv, _, _, exited) -> do
         Network.Socket.close serv
         result <- atomically $ readTMVar exited
-        exitStatus result `shouldBe` ExitStatusRetryExhausted
-        exitCode result `shouldBe` 1
+        case result of
+          ExitRetriesExhausted _ -> return ()
+          other                  -> expectationFailure $ "Unexpected exit reason: " ++ show other
       it "drops messages too long for processing" $ \(serv, client, _, _) -> do
         wg <- newWaitGroup 1
         ping client $ done wg
@@ -107,18 +139,18 @@ spec = do
         wait wg
       it "unsubscribes after timeout" $ \(_, client, _, _) -> do
         wg <- newWaitGroup 1
-        publish client "foo" [withReplyCallback (\x -> do
+        _ <- request client "foo" [withSubscriptionExpiry 1] (\x -> do
           case x of
             Nothing -> done wg
             Just _  -> error "should not receive message"
-          )]
+          )
         wait wg
       it "callback is called when expired" $ \(_, client, _, _) -> do
         wg <- newWaitGroup 1
-        publish client "foo" [withReplyCallback (\x -> do
+        _ <- request client "foo" [withSubscriptionExpiry 1] (\x -> do
           case x of
             Nothing -> done wg
             Just _  -> error "should not receive message"
-         )]
+         )
         Client.close client
         wait wg

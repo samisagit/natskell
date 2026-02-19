@@ -11,12 +11,15 @@ import qualified Lib.Parser            as Parser
 import qualified Parsers.Parsers       as P
 import           Test.Hspec
 import           Text.Printf
+import qualified Types.Msg             as Msg
 
 spec :: Spec
 spec = do
   char
   headers
   depth
+  subject
+  msg
 
 charCases :: [(BS.ByteString, W8.Word8)]
 charCases = zip (map charToByteString [(minBound::Char)..(maxBound::Char)]) [(minBound::W8.Word8)..(maxBound::W8.Word8)]
@@ -73,6 +76,71 @@ depth = parallel $ do
       outputA `shouldBe` outputB
       outputA `shouldBe` Left (Parser.UnexpectedChar "L does not match N in L" 1)
 
+subject = parallel $ do
+  describe "subject parser" $ do
+    forM_ validSubjectCases $ \input ->
+      it (printf "accepts %s" (show input)) $ do
+        case Parser.runParser Parser.subjectParser input of
+          Left err -> expectationFailure (show err)
+          Right (parsed, rest) -> do
+            BS.pack parsed `shouldBe` input
+            rest `shouldBe` ""
+    forM_ invalidSubjectCases $ \input ->
+      it (printf "rejects %s" (show input)) $ do
+        subjectParsesFully input `shouldBe` False
+
+msg = parallel $ do
+  describe "MSG parsing" $ do
+    it "accepts tab-delimited fields and non-alphanumeric subjects" $ do
+      let input = "MSG foo-bar\t1\t_INBOX.a_b\t5\r\nHELLO\r\n"
+      case P.genericParse input of
+        Left err -> expectationFailure (show err)
+        Right (parsed, rest) -> do
+          rest `shouldBe` ""
+          case parsed of
+            P.ParsedMsg msg' -> do
+              Msg.subject msg' `shouldBe` "foo-bar"
+              Msg.replyTo msg' `shouldBe` Just "_INBOX.a_b"
+              Msg.payload msg' `shouldBe` Just "HELLO"
+            other -> expectationFailure ("unexpected parse result: " ++ show other)
+
+validSubjectCases :: [BS.ByteString]
+validSubjectCases =
+  [ "FOO"
+  , "foo.bar"
+  , "foo.BAR"
+  , "_INBOX.foo"
+  , "foo-bar"
+  , "foo_bar"
+  , "foo$bar"
+  , "foo/bar"
+  , "foo.*.bar"
+  , "foo.>"
+  , "foo.*.>"
+  , "*"
+  , ">"
+  ]
+
+invalidSubjectCases :: [BS.ByteString]
+invalidSubjectCases =
+  [ "foo..bar"
+  , "foo. bar"
+  , "foo.\tbar"
+  , "foo.>bar"
+  , "foo.>.bar"
+  , "foo*.bar"
+  , "foo.*bar"
+  , "foo>bar"
+  , "foo."
+  , ".foo"
+  ]
+
+subjectParsesFully :: BS.ByteString -> Bool
+subjectParsesFully input =
+  case Parser.runParser Parser.subjectParser input of
+    Left _          -> False
+    Right (_, rest) -> rest == ""
+
 filterSameChar :: BS.ByteString -> [(BS.ByteString, W8.Word8)] -> [(BS.ByteString, W8.Word8)]
 filterSameChar _ [] = []
 filterSameChar i os = filter f os
@@ -80,4 +148,3 @@ filterSameChar i os = filter f os
 
 word8ToString :: W8.Word8 -> String
 word8ToString w = show (BS.pack [w])
-

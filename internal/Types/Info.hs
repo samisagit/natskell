@@ -18,6 +18,7 @@ data Info = Info
               , max_payload   :: Int
               , proto         :: Int
               , client_id     :: Maybe Int
+              , nonce         :: Maybe BS.ByteString
               , auth_required :: Maybe Bool
               , tls_required  :: Maybe Bool
               , connect_urls  :: Maybe [BS.ByteString]

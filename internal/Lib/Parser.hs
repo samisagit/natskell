@@ -6,6 +6,7 @@ import           Control.Applicative
 import           Control.Monad.Fail    (MonadFail (..))
 import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as C
+import           Data.Char             (ord)
 import qualified Data.Word8            as W8
 import           Prelude               hiding (fail)
 
@@ -91,7 +92,7 @@ w8sToString :: [W8.Word8] -> String
 w8sToString = C.unpack . BS.pack
 
 space :: Parser W8.Word8
-space = char W8._space
+space = charIn [spaceChar, tabChar]
 
 ss = some space
 
@@ -112,6 +113,14 @@ alphaNumeric = Parser charP
 
 alphaNumerics :: Parser [W8.Word8]
 alphaNumerics = some alphaNumeric
+
+subjectTokenChar :: Parser W8.Word8
+subjectTokenChar = Parser charP
+  where
+    charP bs
+      | BS.empty == bs = Left (UnexpectedEndOfInput "nothing to read" (BS.length bs))
+      | isSubjectTokenChar (BS.head bs) = Right (BS.head bs, BS.tail bs)
+      | otherwise = Left (UnexpectedChar (w8sToString [BS.head bs] ++ " is not a valid subject token char in " ++ C.unpack bs) (BS.length bs))
 
 ascii = Parser charP
   where
@@ -147,7 +156,7 @@ take' 0 _ = string ""
 take' n p = (:) <$> p <*> take' (n -1) p
 
 tokenParser :: Parser [W8.Word8]
-tokenParser = alphaNumerics <|> string "*"
+tokenParser = string "*" <|> some subjectTokenChar
 
 wireTapParser :: Parser [W8.Word8]
 wireTapParser = do
@@ -195,10 +204,31 @@ stripSpace :: [W8.Word8] -> [W8.Word8]
 stripSpace [] = []
 stripSpace xs = Prelude.takeWhile isNotSpace . Prelude.dropWhile isSpace $ xs
   where
-    isSpace = (==) W8._space
-    isNotSpace = (/=) W8._space
+    isSpace = isWhitespace
+    isNotSpace = not . isWhitespace
+
+spaceChar :: W8.Word8
+spaceChar = charToWord8 ' '
+
+tabChar :: W8.Word8
+tabChar = charToWord8 '\t'
+
+isWhitespace :: W8.Word8 -> Bool
+isWhitespace w = w == spaceChar || w == tabChar
+
+isSubjectTokenChar :: W8.Word8 -> Bool
+isSubjectTokenChar w =
+  w /= spaceChar
+    && w /= tabChar
+    && w /= charToWord8 '.'
+    && w /= charToWord8 '>'
+    && w /= charToWord8 '*'
+    && w /= charToWord8 '\r'
+    && w /= charToWord8 '\n'
+
+charToWord8 :: Char -> W8.Word8
+charToWord8 = fromIntegral . ord
 
 
 toInt :: BS.ByteString -> Int
 toInt bs = read (C.unpack bs) :: Int
-
