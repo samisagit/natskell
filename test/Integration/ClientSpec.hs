@@ -20,12 +20,6 @@ defaultINFO = "INFO {\"server_id\": \"some-server\", \"version\": \"semver\", \"
 
 tooLongMSG = "MSG a b 5000\r\n" <> BS.replicate 5000 _x <> "\r\n"
 
-sendPongSoon :: Socket -> IO ()
-sendPongSoon serv =
-  void . forkIO $ do
-    threadDelay 100000
-    sendAll serv "PONG\r\n"
-
 startClient :: IO (Socket, Client, Socket, TMVar ClientExitReason)
 startClient = do
   (p, sock) <- openFreePort
@@ -64,19 +58,38 @@ spec = do
         ping client $ done wg
         sendAll serv "PONG\r\n"
         wait wg
-      it "subscribe flush waits for PONG" $ \(serv, client, _, _) -> do
+      it "flush waits for PONG" $ \(serv, client, _, _) -> do
         doneVar <- newEmptyMVar
         void . forkIO $ do
-          _ <- subscribe client "foo" [withFlush] (\_ -> pure ())
+          flush client
           putMVar doneVar ()
         threadDelay 100000
         returnedEarly <- not <$> isEmptyMVar doneVar
         when returnedEarly $
-          expectationFailure "subscribe returned before PONG"
+          expectationFailure "flush returned before PONG"
         sendAll serv "PONG\r\n"
         result <- timeout 1000000 (takeMVar doneVar)
         case result of
-          Nothing -> expectationFailure "subscribe did not return after PONG"
+          Nothing -> expectationFailure "flush did not return after PONG"
+          Just () -> pure ()
+      it "PONG resolves one ping" $ \(serv, client, _, _) -> do
+        first <- newEmptyMVar
+        second <- newEmptyMVar
+        ping client (putMVar first ())
+        ping client (putMVar second ())
+        sendAll serv "PONG\r\n"
+        firstResult <- timeout 1000000 (takeMVar first)
+        case firstResult of
+          Nothing -> expectationFailure "first ping did not resolve"
+          Just () -> pure ()
+        threadDelay 100000
+        secondReady <- not <$> isEmptyMVar second
+        when secondReady $
+          expectationFailure "second ping resolved before second PONG"
+        sendAll serv "PONG\r\n"
+        secondResult <- timeout 1000000 (takeMVar second)
+        case secondResult of
+          Nothing -> expectationFailure "second ping did not resolve"
           Just () -> pure ()
       it "reports user initiated close" $ \(_, client, _, exited) -> do
         Client.close client
@@ -124,22 +137,20 @@ spec = do
         sendAll serv tooLongMSG
         sendAll serv "PONG\r\n"
         wait wg
-      it "unsubscribes after timeout" $ \(serv, client, _, _) -> do
+      it "unsubscribes after timeout" $ \(_, client, _, _) -> do
         wg <- newWaitGroup 1
-        sendPongSoon serv
-        publish client "foo" [withReplyCallback (\x -> do
+        _ <- request client "foo" [withSubscriptionExpiry 1] (\x -> do
           case x of
             Nothing -> done wg
             Just _  -> error "should not receive message"
-          )]
+          )
         wait wg
-      it "callback is called when expired" $ \(serv, client, _, _) -> do
+      it "callback is called when expired" $ \(_, client, _, _) -> do
         wg <- newWaitGroup 1
-        sendPongSoon serv
-        publish client "foo" [withReplyCallback (\x -> do
+        _ <- request client "foo" [withSubscriptionExpiry 1] (\x -> do
           case x of
             Nothing -> done wg
             Just _  -> error "should not receive message"
-         )]
+         )
         Client.close client
         wait wg

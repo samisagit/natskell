@@ -31,7 +31,9 @@
 - flake interactions only work on tracked files, if you need to add a file, ask for it to be added to the flake.
 
 ## Workflow Guidelines
-- Run nix flake check after changes are made, rather than suggesting the user runs tests.
+- Run `hlint .` before prompting for more input.
+- Run `stylish-haskell -ri -c stylish.yaml .` before prompting for more input.
+- Run `nix flake check` after changes are made, rather than suggesting the user runs tests.
 - For new features, add unit tests first, then integration tests if necessary.
 - If there are breaking changes or behaviour changes, add system tests to verify the expected behaviour of the NATS server with the new client changes.
 - Prefer TDD in general.

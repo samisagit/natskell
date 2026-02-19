@@ -162,17 +162,10 @@ withExitAction action config = config { exitAction = action }
 
 type PubOptions = (Maybe Payload, Maybe (Maybe MsgView -> IO ()), Maybe Headers)
 
-data SubscribeConfig = SubscribeConfig
-                         { subscriptionExpiry :: NominalDiffTime
-                         , subscriptionFlush  :: Bool
-                         }
+newtype SubscribeConfig = SubscribeConfig { subscriptionExpiry :: Maybe NominalDiffTime }
 
 defaultSubscribeConfig :: SubscribeConfig
-defaultSubscribeConfig =
-  SubscribeConfig
-    { subscriptionExpiry = 5.0
-    , subscriptionFlush = False
-    }
+defaultSubscribeConfig = SubscribeConfig Nothing
 
 type SubscribeOpts = CallOption SubscribeConfig
 
@@ -186,19 +179,7 @@ type SubscribeOpts = CallOption SubscribeConfig
 -- subscribe client \"events.created\" [withSubscriptionExpiry 2] print
 -- @
 withSubscriptionExpiry :: NominalDiffTime -> SubscribeOpts
-withSubscriptionExpiry expirySeconds cfg = cfg { subscriptionExpiry = expirySeconds }
-
--- | withFlush waits for a PONG after the subscription is sent.
---
--- __Examples:__
---
--- @
--- {-# LANGUAGE OverloadedStrings #-}
---
--- subscribe client \"events.created\" [withFlush] print
--- @
-withFlush :: SubscribeOpts
-withFlush cfg = cfg { subscriptionFlush = True }
+withSubscriptionExpiry expirySeconds cfg = cfg { subscriptionExpiry = Just expirySeconds }
 
 -- | withPayload is used to set the payload for a publish operation.
 --

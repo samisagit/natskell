@@ -20,12 +20,13 @@ spec =
       [ withConnectName "6eff2527-1ad5-4b0c-b4e5-4a52a7d17639"
       , withLoggerConfig logger
       ]
-    subscribe remoteClient topic [withFlush] $ \msg -> do
+    subscribe remoteClient topic [] $ \msg -> do
       case msg of
         Nothing -> error "Received empty message"
         Just msg' -> do
           publish remoteClient (fromJust . replyTo $ msg') [withPayload "WORLD"]
           unsubscribe remoteClient (sid msg')
+    flush remoteClient
     replyBox <- newEmptyTMVarIO
     publish promptClient topic [withReplyCallback (atomically . putTMVar replyBox), withPayload "HELLO"]
     reply <- atomically $ readTMVar replyBox

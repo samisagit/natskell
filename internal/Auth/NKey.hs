@@ -19,6 +19,7 @@ data JwtBundle = JwtBundle
                    { jwtToken :: BS.ByteString
                    , jwtSeed  :: BS.ByteString
                    }
+  deriving (Eq, Show)
 
 parseJwtBundle :: BS.ByteString -> Maybe JwtBundle
 parseJwtBundle input =

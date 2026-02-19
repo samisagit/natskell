@@ -24,7 +24,7 @@ spec =
       [ withConnectName "0e81e61a-932f-4036-9cdd-9a65fb4ed829"
       , withLoggerConfig logger
       ]
-    subscribe assertClient topic [withFlush] $ \msg -> do
+    subscribe assertClient topic [] $ \msg -> do
       case msg of
         Nothing -> error "Received empty message"
         Just msg' -> do
@@ -32,6 +32,7 @@ spec =
           putMVar lock msg'
           putMVar sidBox (sid msg')
           done wg
+    flush assertClient
     publish promptClient topic [withPayload payload]
     wait wg
     msg <- takeMVar lock
