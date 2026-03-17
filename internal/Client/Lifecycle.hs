@@ -1,3 +1,5 @@
+{-# LANGUAGE LambdaCase #-}
+
 module Client.Lifecycle
   ( updateLogContextFromInfo
   , setServerInfo
@@ -8,31 +10,34 @@ module Client.Lifecycle
   , waitForClosing
   ) where
 
-import           Client.Types
+import           Client.LifecycleAPI
+    ( ClientExitReason (..)
+    , LifecycleState (..)
+    )
+import           Client.RuntimeAPI      (ClientState (..), ConfigState (..))
 import           Control.Concurrent.STM
-import           Lib.Logger             (updateLogContext)
-import           Options                (ClientExitReason (..))
+import           Lib.Logger.Types       (LogContext (lcClientId))
+import           Lib.LoggerAPI          (LoggerAPI (loggerUpdateLogContext))
 import qualified Types.Info             as I
 
-updateLogContextFromInfo :: Client -> I.Info -> IO ()
-updateLogContextFromInfo client info = do
-  updateLogContext (logContext client) (\ctx -> ctx
+updateLogContextFromInfo :: LoggerAPI -> ClientState -> I.Info -> IO ()
+updateLogContextFromInfo loggerApi client info = do
+  loggerUpdateLogContext loggerApi (logContext client) (\ctx -> ctx
     { lcClientId = I.client_id info
     })
 
-setServerInfo :: Client -> I.Info -> STM ()
+setServerInfo :: ClientState -> I.Info -> STM ()
 setServerInfo client info =
   modifyTVar' (configState client) (\state -> state { cfgServerInfo = Just info })
 
-setLifecycleClosing :: Client -> ClientExitReason -> STM ()
+setLifecycleClosing :: ClientState -> ClientExitReason -> STM ()
 setLifecycleClosing client reason =
-  modifyTVar' (lifecycle client) $ \state ->
-    case state of
-      Closed result -> Closed result
-      Closing r     -> Closing r
-      Running       -> Closing reason
+  modifyTVar' (lifecycle client) $ \case
+    Closed result -> Closed result
+    Closing r     -> Closing r
+    Running       -> Closing reason
 
-markClosed :: Client -> ClientExitReason -> STM (Maybe ClientExitReason)
+markClosed :: ClientState -> ClientExitReason -> STM (Maybe ClientExitReason)
 markClosed client fallbackReason = do
   state <- readTVar (lifecycle client)
   case state of
@@ -44,21 +49,21 @@ markClosed client fallbackReason = do
       writeTVar (lifecycle client) (Closed fallbackReason)
       return (Just fallbackReason)
 
-waitForClosed :: Client -> STM ()
+waitForClosed :: ClientState -> STM ()
 waitForClosed client = do
   state <- readTVar (lifecycle client)
   case state of
     Closed _ -> return ()
     _        -> retry
 
-waitForServerInfo :: Client -> STM ()
+waitForServerInfo :: ClientState -> STM ()
 waitForServerInfo client = do
   cfgState <- readTVar (configState client)
   case cfgServerInfo cfgState of
     Just _  -> return ()
     Nothing -> retry
 
-waitForClosing :: Client -> STM ()
+waitForClosing :: ClientState -> STM ()
 waitForClosing client = do
   state <- readTVar (lifecycle client)
   case state of

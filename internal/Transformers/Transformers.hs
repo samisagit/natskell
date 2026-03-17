@@ -1,75 +1,72 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Transformers.Transformers where
+module Transformers.Transformers
+  ( module Transformers.Types
+  , headerString
+  , payloadChunk
+  , replyChunks
+  , packStr'
+  , packInt
+  , transformersApi
+  ) where
 
 import           Data.Aeson
-import qualified Data.ByteString      as BS
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Text            as Text
-import           Data.Text.Encoding   (encodeUtf8)
-import           Text.Printf
+import qualified Data.ByteString              as BS
+import qualified Data.ByteString.Lazy         as LBS
+import           Data.Maybe                   (fromMaybe)
+import qualified Data.Text                    as Text
+import           Data.Text.Encoding           (encodeUtf8)
+import           Transformers.TransformersAPI (TransformersAPI (..))
+import           Transformers.Types
 import           Types.Connect
 import           Types.Ping
 import           Types.Pong
-import qualified Types.Pub            as Pub
-import qualified Types.Sub            as Sub
-import qualified Types.Unsub          as Unsub
-
-class Transformer a where
-  transform :: a -> BS.ByteString
+import qualified Types.Pub                    as Pub
+import qualified Types.Sub                    as Sub
+import qualified Types.Unsub                  as Unsub
 
 instance Transformer Ping where
-  transform _ = "PING\r\n"
+  transform _ = LBS.fromStrict "PING\r\n"
 
 instance Transformer Pong where
-  transform _ = "PONG\r\n"
+  transform _ = LBS.fromStrict "PONG\r\n"
 
 instance Transformer Connect where
   transform c = do
     let f = encode c
-    foldr BS.append "" ["CONNECT ", LBS.toStrict f, "\r\n"]
+    LBS.fromChunks ["CONNECT ", LBS.toStrict f, "\r\n"]
 
 instance Transformer Pub.Pub where
-  transform d = case Pub.headers d of
-    Nothing -> foldr BS.append "" [
-      "PUB",
-      " ",
-      Pub.subject d,
-      " ",
-      collapseNothing (Pub.replyTo d) " ",
-      packStr' (printf "%v" (lengthNothing . Pub.payload $ d)),
-      "\r\n",
-      collapseNothing (Pub.payload d) "",
-      "\r\n"
-      ]
-    Just hs -> let headers = headerString hs; headerLength = BS.length headers; in
-      foldr BS.append "" [
-        "HPUB",
-        " ",
-        Pub.subject d,
-        " ",
-        collapseNothing (Pub.replyTo d) " ",
-        packStr' (printf "%v" headerLength),
-        " ",
-        packStr' (printf "%v" ((lengthNothing . Pub.payload $ d) + headerLength)),
-        "\r\n",
-        headers,
-        collapseNothing (Pub.payload d) "",
-        "\r\n"
-        ]
+  transform d =
+    case Pub.headers d of
+      Nothing ->
+        let payload = payloadChunk (Pub.payload d)
+            payloadLen = BS.length payload
+            control = BS.concat
+              (["PUB ", Pub.subject d, " "] ++ replyChunks (Pub.replyTo d)
+                ++ [packInt payloadLen, "\r\n"])
+        in LBS.fromChunks [control, payload, "\r\n"]
+      Just hs ->
+        let headers = headerString hs
+            headerLength = BS.length headers
+            payload = payloadChunk (Pub.payload d)
+            totalLen = headerLength + BS.length payload
+            control = BS.concat
+              (["HPUB ", Pub.subject d, " "] ++ replyChunks (Pub.replyTo d)
+                ++ [packInt headerLength, " ", packInt totalLen, "\r\n"])
+        in LBS.fromChunks [control, headers, payload, "\r\n"]
 
 headerString :: [(BS.ByteString, BS.ByteString)] -> BS.ByteString
-headerString hs = foldl BS.append "" [
-  "NATS/1.0\r\n",
-  BS.concat . map (\(k, v) -> foldr BS.append "" [k, ":", v, "\r\n"]) $ hs,
-  "\r\n"
-  ]
+headerString hs =
+  BS.concat ("NATS/1.0\r\n" : foldr appendHeader ["\r\n"] hs)
+  where
+    appendHeader (key, value) acc = key : ":" : value : "\r\n" : acc
 
 instance Transformer Sub.Sub where
   transform d = do
     case qg of
-       Just a  -> foldr BS.append "" ["SUB ", subj, " ", a, " ", id, "\r\n"]
-       Nothing -> foldr BS.append "" ["SUB ", subj, " ", id, "\r\n"]
+       Just a  -> LBS.fromChunks ["SUB ", subj, " ", a, " ", id, "\r\n"]
+       Nothing -> LBS.fromChunks ["SUB ", subj, " ", id, "\r\n"]
     where
       subj = Sub.subject d
       qg = Sub.queueGroup d
@@ -78,21 +75,24 @@ instance Transformer Sub.Sub where
 instance Transformer Unsub.Unsub where
   transform d = do
     case mm of
-       Just a  -> foldr BS.append "" ["UNSUB ", id, " ", packInt a, "\r\n"]
-       Nothing -> foldr BS.append "" ["UNSUB ", id, "\r\n"]
+       Just a  -> LBS.fromChunks ["UNSUB ", id, " ", packInt a, "\r\n"]
+       Nothing -> LBS.fromChunks ["UNSUB ", id, "\r\n"]
     where
       id = Unsub.sid d
       mm = Unsub.maxMsg d
 
-collapseNothing :: Maybe BS.ByteString -> BS.ByteString -> BS.ByteString
-collapseNothing mbs suffix = case mbs of
-  Just a  -> BS.append a suffix
-  Nothing -> ""
+payloadChunk :: Maybe BS.ByteString -> BS.ByteString
+payloadChunk = fromMaybe BS.empty
 
-lengthNothing :: Maybe BS.ByteString -> Int
-lengthNothing = maybe 0 BS.length
+replyChunks :: Maybe BS.ByteString -> [BS.ByteString]
+replyChunks = maybe [] (\reply -> [reply, " "])
 
 packStr' :: String -> BS.ByteString
 packStr' = encodeUtf8 . Text.pack
 
 packInt = packStr' . show
+
+transformersApi :: TransformersAPI
+transformersApi = TransformersAPI
+  { transformersTransform = transform
+  }

@@ -1,60 +1,65 @@
 {-# LANGUAGE TypeApplications #-}
 
-module Network.Connection where
+module Network.Connection
+  ( module Network.Connection.Types
+  , newConn
+  , readChunkSize
+  , tcpTransport
+  , openTcpTransport
+  , tlsTransport
+  , upgradeTcp
+  , startReadWorker
+  , readWorkerLoop
+  , enqueueReadResult
+  , enableReadWorker
+  , pointTransport
+  , close
+  , open
+  , bufferRead
+  , upgradeToTLS
+  , upgradeToTLSWithConfig
+  , configureTransport
+  , buildTlsParams
+  , connectionApi
+  ) where
 
-import           Control.Concurrent        (ThreadId, myThreadId, throwTo)
+import           Control.Concurrent        (forkIO)
 import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Monad
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString           as BS
 import qualified Data.ByteString.Char8     as BC
-import qualified Data.ByteString.Lazy      as BSL
+import qualified Data.ByteString.Lazy      as LBS
 import           Data.Maybe
 import           Network.API
+import           Network.Connection.Types
+import           Network.ConnectionAPI     (ConnectionAPI (..))
 import qualified Network.Simple.TCP        as TCP
 import qualified Network.Socket            as NS
 import qualified Network.Socket.ByteString as NSB
 import qualified Network.TLS               as TLS
 
-data Transport = Transport
-                   { transportRead :: Int -> IO ByteString
-                   , transportWrite :: ByteString -> IO ()
-                   , transportFlush :: IO ()
-                   , transportClose :: IO ()
-                   , transportUpgrade :: Maybe (TLS.ClientParams -> IO (Either String Transport))
-                   }
-
-data TransportOptions = TransportOptions
-                          { transportHost :: String
-                          , transportTlsRequired :: Bool
-                          , transportTlsRequested :: Bool
-                          , transportTlsCert :: Maybe (ByteString, ByteString)
-                          , transportInitialBytes :: ByteString
-                          }
-
-data Conn = Conn
-              { transport  :: TMVar Transport
-              , readBlock  :: TMVar ()
-              , writeBlock :: TMVar ()
-              , readBuffer :: TVar ByteString
-              , readThread :: TVar (Maybe ThreadId)
-              }
-
 newConn :: IO Conn
 newConn =
-  Conn <$> newEmptyTMVarIO <*> newEmptyTMVarIO <*> newEmptyTMVarIO <*> newTVarIO mempty <*> newTVarIO Nothing
+  Conn
+    <$> newEmptyTMVarIO
+    <*> newEmptyTMVarIO
+    <*> newEmptyTMVarIO
+    <*> newTVarIO mempty
+    <*> newTBQueueIO 1000
+    <*> newTVarIO False
+    <*> newTVarIO False
 
-data ReadAbort = ReadAbort
-  deriving (Show)
-
-instance Exception ReadAbort
+readChunkSize :: Int
+readChunkSize = 4096
 
 tcpTransport :: NS.Socket -> Transport
 tcpTransport sock =
   Transport
     { transportRead = NSB.recv sock
     , transportWrite = NSB.sendAll sock
+    , transportWriteLazy = NSB.sendMany sock . LBS.toChunks
     , transportFlush = pure ()
     , transportClose = NS.close sock
     , transportUpgrade = Just (upgradeTcp sock)
@@ -66,8 +71,6 @@ openTcpTransport host port = do
     (sock, _) <- TCP.connectSock host (show port)
     NS.setSocketOption sock NS.NoDelay 1
     NS.setSocketOption sock NS.Cork 0
-    NS.setSocketOption sock NS.RecvBuffer 1
-    NS.setSocketOption sock NS.SendBuffer 1
     pure (tcpTransport sock)
   case result of
     Left err        -> return (Left (show err))
@@ -77,7 +80,8 @@ tlsTransport :: TLS.Context -> Transport
 tlsTransport ctx =
   Transport
     { transportRead = const (TLS.recvData ctx)
-    , transportWrite = TLS.sendData ctx . BSL.fromStrict
+    , transportWrite = TLS.sendData ctx . LBS.fromStrict
+    , transportWriteLazy = TLS.sendData ctx
     , transportFlush = TLS.contextFlush ctx
     , transportClose = do
         void $ try @SomeException (TLS.bye ctx)
@@ -101,6 +105,57 @@ upgradeTcp sock params = do
     Left err        -> return $ Left (show err)
     Right transport -> return $ Right transport
 
+startReadWorker :: Conn -> IO ()
+startReadWorker conn = do
+  shouldStart <- atomically $ do
+    enabled <- readTVar (readWorkerEnabled conn)
+    running <- readTVar (readWorkerRunning conn)
+    if not enabled || running
+      then return False
+      else do
+        writeTVar (readWorkerRunning conn) True
+        return True
+  when shouldStart . void $ forkIO (readWorkerLoop conn)
+
+readWorkerLoop :: Conn -> IO ()
+readWorkerLoop conn = do
+  let cleanup = atomically $ writeTVar (readWorkerRunning conn) False
+  finally loop cleanup
+  where
+    loop = do
+      (blocked, enabled) <- atomically $ do
+        blocked <- tryReadTMVar (readBlock conn)
+        enabled <- readTVar (readWorkerEnabled conn)
+        return (blocked, enabled)
+      case (blocked, enabled) of
+        (Just _, _) -> return ()
+        (_, False)  -> return ()
+        _ -> do
+          current <- atomically $ tryReadTMVar (transport conn)
+          case current of
+            Nothing -> return ()
+            Just currentTransport -> do
+              result <- try @SomeException (transportRead currentTransport readChunkSize)
+              shouldContinue <- enqueueReadResult conn result
+              case result of
+                Left _  -> return ()
+                Right _ -> when shouldContinue loop
+
+enqueueReadResult :: Conn -> Either SomeException ByteString -> IO Bool
+enqueueReadResult conn result = atomically $
+  (do
+    blocked <- tryReadTMVar (readBlock conn)
+    check (isNothing blocked)
+    writeTBQueue (readQueue conn) (either (Left . show) Right result)
+    return True)
+  `orElse`
+  (do
+    _ <- readTMVar (readBlock conn)
+    return False)
+
+enableReadWorker :: Conn -> IO ()
+enableReadWorker conn = atomically $ writeTVar (readWorkerEnabled conn) True
+
 instance ConnectionReader Conn where
   readData conn n = do
     blocked <- atomically $ tryReadTMVar (readBlock conn)
@@ -121,37 +176,42 @@ instance ConnectionReader Conn where
             mc <- atomically $ tryReadTMVar (transport conn)
             case mc of
               Nothing               -> return $ Left "Transport not initialized"
-              Just currentTransport -> readFromTransport currentTransport
-    where
-      readFromTransport currentTransport = do
-        tid <- myThreadId
-        shouldRead <- atomically $ do
-          blocked <- tryReadTMVar (readBlock conn)
-          case blocked of
-            Just _  -> return False
-            Nothing -> do
-              writeTVar (readThread conn) (Just tid)
-              return True
-        if not shouldRead
-          then return $ Left "Read operation is blocked"
-          else do
-            let clearThread = atomically $ writeTVar (readThread conn) Nothing
-            result <- try @SomeException (transportRead currentTransport n) `finally` clearThread
-            case result of
-              Left err ->
-                case fromException err of
-                  Just ReadAbort -> return $ Left "Read aborted due to block"
-                  Nothing        -> return $ Left (show err)
-              Right bytes -> do
-                let (chunk, rest) = BS.splitAt n bytes
-                unless (BS.null rest)
-                  (atomically $ modifyTVar' (readBuffer conn) (<> rest))
-                return $ Right chunk
+              Just currentTransport -> do
+                enabled <- readTVarIO (readWorkerEnabled conn)
+                if enabled
+                  then do
+                    startReadWorker conn
+                    result <- atomically $
+                      (Left "Read operation is blocked" <$ readTMVar (readBlock conn))
+                      `orElse`
+                      readTBQueue (readQueue conn)
+                    case result of
+                      Left err -> return $ Left err
+                      Right bytes -> do
+                        let (chunk, rest) = BS.splitAt n bytes
+                        unless (BS.null rest)
+                          (atomically $ modifyTVar' (readBuffer conn) (<> rest))
+                        return $ Right chunk
+                  else do
+                    resultVar <- newEmptyTMVarIO
+                    _ <- forkIO $ do
+                      result <- try @SomeException (transportRead currentTransport n)
+                      atomically . void $ tryPutTMVar resultVar result
+                    result <- atomically $
+                      (Left "Read operation is blocked" <$ readTMVar (readBlock conn))
+                      `orElse`
+                      (Right <$> readTMVar resultVar)
+                    case result of
+                      Left err -> return $ Left err
+                      Right (Left err) -> return $ Left (show err)
+                      Right (Right bytes) -> do
+                        let (chunk, rest) = BS.splitAt n bytes
+                        unless (BS.null rest)
+                          (atomically $ modifyTVar' (readBuffer conn) (<> rest))
+                        return $ Right chunk
 
   closeReader conn = do
     void . atomically $ tryPutTMVar (readBlock conn) ()
-    mtid <- readTVarIO (readThread conn)
-    maybe (return ()) (`throwTo` ReadAbort) mtid
   openReader conn = void . atomically $ tryTakeTMVar (readBlock conn)
 
 instance ConnectionWriter Conn where
@@ -166,6 +226,22 @@ instance ConnectionWriter Conn where
           Just currentTransport -> do
             result <- try @SomeException $ do
               transportWrite currentTransport bytes
+              transportFlush currentTransport
+            case result of
+              Left err -> return $ Left (show err)
+              Right _  -> return $ Right ()
+
+  writeDataLazy conn bytes = do
+    isBlocked <- atomically $ tryReadTMVar (writeBlock conn)
+    if isJust isBlocked
+      then return $ Left "Write operation is blocked"
+      else do
+        current <- atomically $ tryReadTMVar (transport conn)
+        case current of
+          Nothing -> return $ Left "Transport not initialized"
+          Just currentTransport -> do
+            result <- try @SomeException $ do
+              transportWriteLazy currentTransport bytes
               transportFlush currentTransport
             case result of
               Left err -> return $ Left (show err)
@@ -196,7 +272,10 @@ open :: Conn -> IO ()
 open conn = do
   openReader conn
   openWriter conn
-  atomically $ writeTVar (readBuffer conn) mempty
+  atomically $ do
+    writeTVar (readBuffer conn) mempty
+    void $ flushTBQueue (readQueue conn)
+    writeTVar (readWorkerEnabled conn) False
 
 bufferRead :: Conn -> ByteString -> IO ()
 bufferRead conn bytes =
@@ -226,13 +305,20 @@ upgradeToTLSWithConfig conn host tlsConfig = do
     Left err     -> return (Left err)
     Right params -> upgradeToTLS conn params
 
-configureTransport :: Conn -> TransportOptions -> IO (Either String ())
-configureTransport conn options = do
-  let useTls = transportTlsRequested options || transportTlsRequired options
+configureTransport :: Conn -> TransportOption -> IO (Either String ())
+configureTransport conn transportOption = do
+  let useTls = transportTlsRequested transportOption || transportTlsRequired transportOption
   if useTls
-    then upgradeToTLSWithConfig conn (transportHost options) (transportTlsCert options)
+    then do
+      result <- upgradeToTLSWithConfig conn (transportHost transportOption) (transportTlsCert transportOption)
+      case result of
+        Left err -> return (Left err)
+        Right () -> do
+          enableReadWorker conn
+          return (Right ())
     else do
-      bufferRead conn (transportInitialBytes options)
+      bufferRead conn (transportInitialBytes transportOption)
+      enableReadWorker conn
       return (Right ())
 
 buildTlsParams :: String -> Maybe (ByteString, ByteString) -> IO (Either String TLS.ClientParams)
@@ -250,3 +336,11 @@ buildTlsParams host tlsConfig = do
               shared' = shared { TLS.sharedCredentials = TLS.Credentials [cred] }
           in return (Right base { TLS.clientHooks = hooks', TLS.clientShared = shared' })
     Nothing -> return (Right base { TLS.clientHooks = acceptAny })
+
+connectionApi :: ConnectionAPI
+connectionApi = ConnectionAPI
+  { connectionNew = newConn
+  , connectionOpenTcpTransport = openTcpTransport
+  , connectionPointTransport = pointTransport
+  , connectionConfigure = configureTransport
+  }

@@ -40,7 +40,7 @@ transformationCases = parallel $ do
         let wantProto = BS.take 8 want
         let wantJSONString = BS.drop 8 want
 
-        let transformed = transform input
+        let transformed = LBS.toStrict (transform input)
         let gotProto = BS.take 8 transformed
         let gotJSONString = BS.drop 8 transformed
 

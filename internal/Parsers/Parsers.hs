@@ -6,6 +6,7 @@ import           Control.Applicative
 import qualified Control.Monad.Fail   as Fail
 import           Data.Aeson
 import           Data.ByteString
+import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BSL
 import           Data.Word8
 import           Lib.Parser
@@ -30,9 +31,9 @@ genericParse a = case result of
   Right (p, bs) -> Right (p, bs)
   where
     result = runParser (
-      pongParser
+      msgParser
+      <|>pongParser
       <|> pingParser
-      <|> msgParser
       <|> infoParser
       <|> errParser
       <|> okParser
@@ -109,11 +110,11 @@ permViolationParser = do
 infoParser :: Parser ParsedMessage
 infoParser = do
   string "INFO"
-  ss
-  rest <- til _cr
+  spaces1
+  rest <- takeTill1 _cr
   string "\r\n"
 
-  case eitherDecode . BSL.fromStrict $ pack rest of
+  case eitherDecode . BSL.fromStrict $ rest of
     Right a -> return (ParsedInfo a)
     Left e  -> Fail.fail $ "decode failed" ++ show e
 
@@ -121,196 +122,144 @@ msgParser =
   msgWithReplyAndPayloadparser
     <|> msgWithPayloadparser
     <|> msgWithReplyparser
-    <|> msgMinParser
     <|> hmsgWithReplyAndPayloadParser
     <|> hmsgWithPayloadParser
     <|> hmsgWithReplyParser
-    <|> hmsgMinParser
 
 msgWithReplyAndPayloadparser :: Parser ParsedMessage
 msgWithReplyAndPayloadparser = do
   string "MSG"
-  ss
-  subj <- subjectParser
-  ss
-  sid <- alphaNumerics
-  ss
-  reply <- subjectParser
-  ss
-  count <- integer
+  spaces1
+  subj <- subjectParserBS
+  sid <- alphaNumericsBS
+  spaces1
+  reply <- subjectParserBS
+  count <- integerBS
+  let countInt = toIntBS count
   string "\r\n"
-  let countInt = toInt . pack $ count
-  payload <- take' countInt ascii
+  payload <- takeBytes countInt
   string "\r\n"
   return
     (ParsedMsg $ Msg
-        (pack subj)
-        (pack sid)
-        (Just (pack reply))
-        (Just (pack payload))
+        subj
+        sid
+        (Just reply)
+        (if BS.null payload then Nothing else Just payload)
         Nothing
     )
 
 msgWithPayloadparser :: Parser ParsedMessage
 msgWithPayloadparser = do
   string "MSG"
-  ss
-  subj <- subjectParser
-  ss
-  sid <- alphaNumerics
-  ss
-  count <- integer
+  spaces1
+  subj <- subjectParserBS
+  sid <- alphaNumericsBS
+  spaces1
+  count <- integerBS
+  let countInt = toIntBS count
   string "\r\n"
-  let countInt = toInt . pack $ count
-  payload <- take' countInt ascii
+  payload <- takeBytes countInt
   string "\r\n"
   return
     (ParsedMsg $ Msg
-        (pack subj)
-        (pack sid)
+        subj
+        sid
         Nothing
-        (Just (pack payload))
+        (if BS.null payload then Nothing else Just payload)
         Nothing
     )
 
 msgWithReplyparser :: Parser ParsedMessage
 msgWithReplyparser = do
   string "MSG"
-  ss
-  subj <- subjectParser
-  ss
-  sid <- alphaNumerics
-  ss
-  reply <- subjectParser
-  ss
-  integer
+  spaces1
+  subj <- subjectParserBS
+  sid <- alphaNumericsBS
+  spaces1
+  reply <- subjectParserBS
+  _ <- integerBS
+  string "\r\n"
   string "\r\n"
   return
     (ParsedMsg $ Msg
-        (pack subj)
-        (pack sid)
-        (Just (pack reply))
-        Nothing
-        Nothing
-    )
-
-msgMinParser :: Parser ParsedMessage
-msgMinParser = do
-  string "MSG"
-  ss
-  subj <- subjectParser
-  ss
-  sid <- alphaNumerics
-  ss
-  integer
-  string "\r\n"
-  return
-    (ParsedMsg $ Msg
-        (pack subj)
-        (pack sid)
-        Nothing
+        subj
+        sid
+        (Just reply)
         Nothing
         Nothing
     )
 
 hmsgWithReplyAndPayloadParser = do
   string "HMSG"
-  ss
-  subj <- subjectParser
-  ss
-  sid <- alphaNumerics
-  ss
-  reply <- subjectParser
-  ss
-  hcount <- integer
-  ss
-  tcount <- integer
+  spaces1
+  subj <- subjectParserBS
+  sid <- alphaNumericsBS
+  spaces1
+  reply <- subjectParserBS
+  hcount <- integerBS
+  spaces1
+  tcount <- integerBS
   string "\r\n"
-  let hcountInt = toInt . pack $ hcount
-  let pcountInt = (toInt . pack $ tcount) - (toInt . pack $ hcount)
+  let hcountInt = toIntBS hcount
+  let pcountInt = toIntBS tcount - hcountInt
   headers <- headersParser (hcountInt - 2) -- ignore the last line break
   string "\r\n"
-  payload <- take' pcountInt ascii
+  payload <- takeBytes pcountInt
   string "\r\n"
   return
     (ParsedMsg $ Msg
-        (pack subj)
-        (pack sid)
-        (Just . pack $ reply)
-        (Just . pack $ payload)
+        subj
+        sid
+        (Just reply)
+        (Just payload)
         (Just headers)
     )
 
 hmsgWithPayloadParser = do
   string "HMSG"
-  ss
-  subj <- subjectParser
-  ss
-  sid <- alphaNumerics
-  ss
-  hcount <- integer
-  ss
-  tcount <- integer
+  spaces1
+  subj <- subjectParserBS
+  sid <- alphaNumericsBS
+  spaces1
+  hcount <- integerBS
+  spaces1
+  tcount <- integerBS
   string "\r\n"
-  let hcountInt = toInt . pack $ hcount
-  let pcountInt = (toInt . pack $ tcount) - (toInt . pack $ hcount)
+  let hcountInt = toIntBS hcount
+  let pcountInt = toIntBS tcount - hcountInt
   headers <- headersParser (hcountInt - 2) -- ignore the last line break
   string "\r\n"
-  payload <- take' pcountInt ascii
+  payload <- takeBytes pcountInt
   string "\r\n"
   return
     (ParsedMsg $ Msg
-        (pack subj)
-        (pack sid)
+        subj
+        sid
         Nothing
-        (Just . pack $ payload)
+        (Just payload)
         (Just headers)
     )
 
 hmsgWithReplyParser = do
   string "HMSG"
-  ss
-  subj <- subjectParser
-  ss
-  sid <- alphaNumerics
-  ss
-  reply <- subjectParser
-  ss
-  hcount <- integer
-  ss
-  integer
+  spaces1
+  subj <- subjectParserBS
+  sid <- alphaNumericsBS
+  spaces1
+  reply <- subjectParserBS
+  hcount <- integerBS
+  spaces1
+  _ <- integerBS
   string "\r\n"
-  let hcountInt = toInt . pack $ hcount
+  let hcountInt = toIntBS hcount
   headers <- headersParser (hcountInt - 2) -- ignore the last line break
+  string "\r\n"
   string "\r\n"
   return
     (ParsedMsg $ Msg
-        (pack subj)
-        (pack sid)
-        (Just . pack $ reply)
-        Nothing
-        (Just headers)
-    )
-
-hmsgMinParser = do
-  string "HMSG"
-  ss
-  subj <- subjectParser
-  ss
-  sid <- alphaNumerics
-  ss
-  hcount <- integer
-  ss
-  integer
-  string "\r\n"
-  let hcountInt = toInt . pack $ hcount
-  headers <- headersParser (hcountInt - 2) -- ignore the last line break
-  string "\r\n"
-  return
-    (ParsedMsg $ Msg
-        (pack subj)
-        (pack sid)
-        Nothing
+        subj
+        sid
+        (Just reply)
         Nothing
         (Just headers)
     )
@@ -330,4 +279,3 @@ pongParser :: Parser ParsedMessage
 pongParser = do
   string "PONG\r\n"
   return (ParsedPong Pong)
-

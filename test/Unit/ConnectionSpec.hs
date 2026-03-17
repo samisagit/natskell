@@ -9,13 +9,14 @@ import           Test.Hspec
 
 spec :: Spec
 spec = describe "Connection reader" $ do
-  it "aborts a blocking read when closeReader is called" $ do
+  it "unblocks a blocking read when closeReader is called" $ do
     conn <- newConn
     started <- newEmptyMVar
     blocker <- (newEmptyMVar :: IO (MVar BS.ByteString))
     let transport = Transport
           { transportRead = \_ -> putMVar started () >> takeMVar blocker
           , transportWrite = \_ -> pure ()
+          , transportWriteLazy = \_ -> pure ()
           , transportFlush = pure ()
           , transportClose = pure ()
           , transportUpgrade = Nothing
@@ -26,4 +27,4 @@ spec = describe "Connection reader" $ do
     _ <- takeMVar started
     closeReader conn
     result <- timeout 1000000 (takeMVar resultVar)
-    result `shouldBe` Just (Left "Read aborted due to block")
+    result `shouldBe` Just (Left "Read operation is blocked")

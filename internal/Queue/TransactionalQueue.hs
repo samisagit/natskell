@@ -1,20 +1,21 @@
 {-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
-module Queue.TransactionalQueue where
+module Queue.TransactionalQueue
+  ( module Queue.TransactionalQueue.Types
+  , newQ
+  , queueApi
+  ) where
 
 import           Control.Concurrent.STM
 import qualified Control.Monad
 import           Queue.API
-import           Transformers.Transformers
-
-data QueueItem where QueueItem :: Transformer m => m -> QueueItem
+import           Queue.TransactionalQueue.Types
+import           Queue.TransactionalQueueAPI    (TransactionalQueueAPI (..))
+import           Transformers.Types
 
 instance Transformer QueueItem where
   transform (QueueItem m) = transform m
-
-data Q t = Q (TBQueue t) (TMVar ())
 
 newQ :: IO (Q QueueItem)
 newQ = Q <$> newTBQueueIO 1000 <*> newEmptyTMVarIO
@@ -39,3 +40,8 @@ instance Transformer t => Queue (Q t) t where
     _ <- tryTakeTMVar p
     putTMVar p ()
   open (Q _ p) = Control.Monad.void (atomically (tryTakeTMVar p))
+
+queueApi :: TransactionalQueueAPI
+queueApi = TransactionalQueueAPI
+  { tqNew = newQ
+  }

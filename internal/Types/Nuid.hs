@@ -1,16 +1,17 @@
-module Nuid (Nuid, newNuid, newNuidIO, nextNuid) where
+module Nuid
+  ( module Nuid.Types
+  , newNuid
+  , newNuidIO
+  , nextNuid
+  , nuidApi
+  ) where
 
 import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as BC
 import           Data.Word             (Word64, Word8)
+import           Nuid.Types
+import           NuidAPI               (NuidAPI (..))
 import           System.Random         (StdGen, newStdGen, randomR)
-
-data Nuid = Nuid
-              { nuidPrefix :: BS.ByteString
-              , nuidSeq    :: Word64
-              , nuidInc    :: Word64
-              , nuidRng    :: StdGen
-              }
 
 newNuid :: StdGen -> Nuid
 newNuid rng0 = Nuid prefix seqVal incVal rng3
@@ -88,3 +89,9 @@ randomSeq = randomR (0, maxSeq - 1)
 
 randomInc :: StdGen -> (Word64, StdGen)
 randomInc = randomR (minInc, maxInc - 1)
+
+nuidApi :: NuidAPI
+nuidApi = NuidAPI
+  { nuidNew = newNuidIO
+  , nuidNext = nextNuid
+  }

@@ -4,6 +4,7 @@ module PubSpec (spec) where
 
 import           Control.Monad
 import qualified Data.ByteString           as BS
+import qualified Data.ByteString.Lazy      as LBS
 import           Test.Hspec
 import           Text.Printf
 import           Transformers.Transformers
@@ -32,7 +33,7 @@ transformerCases = parallel $ do
   describe "PUB transformer" $ do
     forM_ explicitTransformerCases $ \(input, want) ->
       it (printf "correctly transforms %s" (show input)) $ do
-        transform input `shouldBe` want
+        LBS.toStrict (transform input) `shouldBe` want
 
 explicitValidatorCases :: [(Pub, Either BS.ByteString ())]
 explicitValidatorCases = [
@@ -53,4 +54,3 @@ validateCases = parallel $ do
     forM_ explicitValidatorCases $ \(input, want) ->
       it (printf "correctly validates %s" (show input)) $ do
         validate input `shouldBe` want
-

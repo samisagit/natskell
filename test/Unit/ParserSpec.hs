@@ -80,7 +80,7 @@ subject = parallel $ do
   describe "subject parser" $ do
     forM_ validSubjectCases $ \input ->
       it (printf "accepts %s" (show input)) $ do
-        case Parser.runParser Parser.subjectParser input of
+        case Parser.runParser Parser.subjectParser (subjectInput input) of
           Left err -> expectationFailure (show err)
           Right (parsed, rest) -> do
             BS.pack parsed `shouldBe` input
@@ -103,6 +103,14 @@ msg = parallel $ do
               Msg.replyTo msg' `shouldBe` Just "_INBOX.a_b"
               Msg.payload msg' `shouldBe` Just "HELLO"
             other -> expectationFailure ("unexpected parse result: " ++ show other)
+    it "waits for the payload when a message spans frames" $ do
+      let input = "MSG FOO 1 5\r\nHEL"
+      case P.genericParse input of
+        Left (Parser.UnexpectedEndOfInput _ _) -> pure ()
+        Left err ->
+          expectationFailure ("expected UnexpectedEndOfInput, got " ++ show err)
+        Right result ->
+          expectationFailure ("expected parse failure, got " ++ show result)
 
 validSubjectCases :: [BS.ByteString]
 validSubjectCases =
@@ -137,9 +145,12 @@ invalidSubjectCases =
 
 subjectParsesFully :: BS.ByteString -> Bool
 subjectParsesFully input =
-  case Parser.runParser Parser.subjectParser input of
+  case Parser.runParser Parser.subjectParser (subjectInput input) of
     Left _          -> False
     Right (_, rest) -> rest == ""
+
+subjectInput :: BS.ByteString -> BS.ByteString
+subjectInput input = BS.append input " "
 
 filterSameChar :: BS.ByteString -> [(BS.ByteString, W8.Word8)] -> [(BS.ByteString, W8.Word8)]
 filterSameChar _ [] = []

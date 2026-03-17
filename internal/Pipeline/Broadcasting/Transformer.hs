@@ -1,10 +1,18 @@
 module Pipeline.Broadcasting.Transformer where
 
 import           Conduit
-import qualified Data.ByteString           as BS
-import           Lib.Logger
-import           Transformers.Transformers
+import qualified Data.ByteString.Lazy as LBS
+import           Lib.Logger.Types     (LogLevel (..), MonadLogger (..))
+import           Transformers.Types
 
 transformer :: (MonadLogger m, MonadIO m, Transformer t)
-  => ConduitT t BS.ByteString m ()
-transformer = awaitForever $ \t -> yield (transform t)
+  => Int
+  -> ConduitT t LBS.ByteString m ()
+transformer bufferLimit = awaitForever $ \t -> do
+  let bytes = transform t
+      byteCount = fromIntegral (LBS.length bytes)
+  if byteCount > bufferLimit
+    then
+      lift . logMessage Error $
+        "dropping outbound message: " ++ show byteCount ++ " bytes exceeds limit " ++ show bufferLimit
+    else yield bytes

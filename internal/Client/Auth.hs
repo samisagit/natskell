@@ -7,17 +7,17 @@ module Client.Auth
   , logTlsConfig
   ) where
 
-import qualified Auth.NKey       as NKey
-import qualified Data.ByteString as BS
-import           Lib.Logger      (AppM, LogLevel (..), logMessage)
-import           Options
+import qualified Auth.NKey         as NKey
+import           Client.RuntimeAPI
     ( Auth (..)
     , Config (..)
     , JWTTokenData
     , NKeyData
     , TLSCertData
     )
-import qualified Types.Connect   as Connect (Connect (..))
+import qualified Data.ByteString   as BS
+import           Lib.Logger        (AppM, LogLevel (..), MonadLogger (..))
+import qualified Types.Connect     as Connect (Connect (..))
 
 defaultConnect :: Connect.Connect
 defaultConnect = Connect.Connect
