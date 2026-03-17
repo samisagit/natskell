@@ -1,13 +1,10 @@
 module NatsServerConfig
   ( NatsLogVerbosity (..)
   , NatsAuthUser (..)
-  , NatsAuthCallout (..)
   , NatsJwtConfig (..)
-  , NatsJwtResolver (..)
   , NatsTlsConfig (..)
   , NatsConfigOption (..)
   , NatsConfigOptions
-  , renderConfig
   , writeNatsServerConfigFile
   ) where
 
@@ -15,7 +12,7 @@ import           Data.List        (foldl')
 import           System.Directory (getTemporaryDirectory)
 import           System.IO        (hClose, hPutStr, openTempFile)
 
-data NatsLogVerbosity = NatsLogInfo | NatsLogDebug | NatsLogTrace
+data NatsLogVerbosity = NatsLogInfo | NatsLogDebug
   deriving (Eq)
 
 data NatsAuthorization = NatsAuthorizationNone
@@ -23,27 +20,14 @@ data NatsAuthorization = NatsAuthorizationNone
                        | NatsAuthorizationUserPass String String
                        | NatsAuthorizationUsers [NatsAuthUser]
                        | NatsAuthorizationNKey String
-                       | NatsAuthorizationAuthCallout NatsAuthCallout
-                       | NatsAuthorizationCustom [String]
 
 data NatsAuthUser = NatsAuthUserPass String String
                   | NatsAuthNKeyUser String
                   | NatsAuthUserName String
 
-data NatsAuthCallout = NatsAuthCallout
-                         { natsCalloutIssuer  :: String
-                         , natsCalloutAccount :: String
-                         , natsCalloutUsers   :: [NatsAuthUser]
-                         }
-
-data NatsJwtResolver = NatsJwtResolverFull FilePath
-                     | NatsJwtResolverMemory [(String, String)]
-                     | NatsJwtResolverCustom [String]
-
 data NatsJwtConfig = NatsJwtConfig
-                       { natsOperatorJwt   :: String
-                       , natsSystemAccount :: Maybe String
-                       , natsJwtResolver   :: NatsJwtResolver
+                       { natsOperatorJwt        :: String
+                       , natsJwtResolverPreload :: [(String, String)]
                        }
 
 data NatsServerConfig = NatsServerConfig
@@ -67,8 +51,6 @@ data NatsConfigOption = WithLogVerbosity NatsLogVerbosity
                       | WithToken String
                       | WithUsers [NatsAuthUser]
                       | WithNKey String
-                      | WithAuthCallout NatsAuthCallout
-                      | WithAuthorizationCustom [String]
                       | WithJwtConfig NatsJwtConfig
                       | WithTlsConfig NatsTlsConfig
 
@@ -87,17 +69,9 @@ writeNatsServerConfigFile :: NatsConfigOptions -> IO FilePath
 writeNatsServerConfigFile options = do
   tmpDir <- getTemporaryDirectory
   (path, handle) <- openTempFile tmpDir "nats-server.conf"
-  hPutStr handle (renderConfig options)
+  hPutStr handle (renderNatsServerConfig (foldl' applyConfigOption defaultNatsServerConfig options))
   hClose handle
   pure path
-
-renderConfig :: NatsConfigOptions -> String
-renderConfig =
-  renderNatsServerConfig . applyConfigOptions
-
-applyConfigOptions :: NatsConfigOptions -> NatsServerConfig
-applyConfigOptions =
-  foldl' applyConfigOption defaultNatsServerConfig
 
 applyConfigOption :: NatsServerConfig -> NatsConfigOption -> NatsServerConfig
 applyConfigOption config option =
@@ -112,10 +86,6 @@ applyConfigOption config option =
       config { natsAuthorization = NatsAuthorizationUsers users }
     WithNKey nkey ->
       config { natsAuthorization = NatsAuthorizationNKey nkey }
-    WithAuthCallout callout ->
-      config { natsAuthorization = NatsAuthorizationAuthCallout callout }
-    WithAuthorizationCustom lines ->
-      config { natsAuthorization = NatsAuthorizationCustom lines }
     WithJwtConfig jwtConfig ->
       config { natsJwtConfig = Just jwtConfig }
     WithTlsConfig tlsConfig ->
@@ -129,8 +99,7 @@ renderNatsServerConfig config =
       ++ maybe [] renderTlsConfig (natsTlsConfig config)
   where
     logLines =
-      [ "debug: " ++ renderBool (natsLogVerbosity config /= NatsLogInfo)
-      , "trace: " ++ renderBool (natsLogVerbosity config == NatsLogTrace)
+      [ "debug: " ++ renderBool (natsLogVerbosity config == NatsLogDebug)
       , "logtime: true"
       ]
 
@@ -152,19 +121,6 @@ renderAuthorization auth =
       renderBlock "authorization" (renderUsers users)
     NatsAuthorizationNKey nkey ->
       renderBlock "authorization" (renderUsers [NatsAuthNKeyUser nkey])
-    NatsAuthorizationAuthCallout callout ->
-      renderBlock "authorization" (renderAuthCallout callout)
-    NatsAuthorizationCustom lines ->
-      renderBlock "authorization" lines
-
-renderAuthCallout :: NatsAuthCallout -> [String]
-renderAuthCallout callout =
-  renderBlock "auth_callout"
-    ( [ "issuer: " ++ renderQuoted (natsCalloutIssuer callout)
-      , "account: " ++ renderQuoted (natsCalloutAccount callout)
-      ]
-        ++ renderUsers (natsCalloutUsers callout)
-    )
 
 renderUsers :: [NatsAuthUser] -> [String]
 renderUsers users =
@@ -192,23 +148,9 @@ renderUser user =
 renderJwtConfig :: NatsJwtConfig -> [String]
 renderJwtConfig config =
   [ "operator: " ++ renderQuoted (natsOperatorJwt config)
+  , "resolver: MEMORY"
   ]
-    ++ maybe [] (\account -> ["system_account: " ++ renderQuoted account]) (natsSystemAccount config)
-    ++ renderJwtResolver (natsJwtResolver config)
-
-renderJwtResolver :: NatsJwtResolver -> [String]
-renderJwtResolver resolver =
-  case resolver of
-    NatsJwtResolverFull dir ->
-      renderBlock "resolver"
-        [ "type: full"
-        , "dir: " ++ renderQuoted dir
-        ]
-    NatsJwtResolverMemory preloads ->
-      "resolver: MEMORY"
-        : renderBlock "resolver_preload" (renderResolverPreload preloads)
-    NatsJwtResolverCustom lines ->
-      renderBlock "resolver" lines
+    ++ renderBlock "resolver_preload" (renderResolverPreload (natsJwtResolverPreload config))
 
 renderTlsConfig :: NatsTlsConfig -> [String]
 renderTlsConfig config =

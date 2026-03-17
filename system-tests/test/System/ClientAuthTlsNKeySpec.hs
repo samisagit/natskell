@@ -2,6 +2,7 @@
 
 module ClientAuthTlsNKeySpec (spec) where
 
+import           API                    (Client (..))
 import           Client
 import           Control.Concurrent     (forkIO)
 import           Control.Concurrent.STM
@@ -12,7 +13,7 @@ import           TestSupport
 spec :: Spec
 spec =
   systemTest . describe "client auth" $ do
-      logger <- runIO testLoggerConfig
+      let loggerOptions = testLoggerOptions
       nkeyPub <- runIO (readFixtureText "nkey/user.pub")
       nkeySeed <- runIO (readFixtureBytesTrim "nkey/user.seed")
       tlsHostDir <- runIO (fixturePath "tls")
@@ -32,18 +33,18 @@ spec =
             , WithTlsConfig tlsConfig
             ]
       let mounts = [(tlsHostDir, tlsContainerDir)]
-      around (withNatsContainerConfigWithMounts serverOptions mounts) $ do
+      around (withNatsContainerConfigWithMountsNamed "f65086d4-f2f3-41ea-adbe-ec47d45d4d3a" serverOptions mounts) $ do
         it "authenticates with tls and nkey" $ \(Endpoints natsHost natsPort) -> do
           exitResult <- newEmptyTMVarIO
           pinged <- newEmptyTMVarIO
-          let clientOpts =
+          let clientOptions =
                 [ withConnectName "auth-tls-nkey"
                 , withExitAction (atomically . putTMVar exitResult)
-                , withLoggerConfig logger
                 , withNKey nkeySeed
                 , withConnectionAttempts 1
                 ]
-          client <- newClient [(natsHost, natsPort)] clientOpts
+                ++ loggerOptions
+          client <- newClient [(natsHost, natsPort)] clientOptions
           forkIO $ do
             outcome <- atomically $ (Left <$> readTMVar pinged) `orElse` (Right <$> readTMVar exitResult)
             case outcome of

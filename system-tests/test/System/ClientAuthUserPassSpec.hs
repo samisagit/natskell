@@ -2,6 +2,7 @@
 
 module ClientAuthUserPassSpec (spec) where
 
+import           API                    (Client (..))
 import           Client
 import           Control.Concurrent     (forkIO)
 import           Control.Concurrent.STM
@@ -12,22 +13,22 @@ import           TestSupport
 spec :: Spec
 spec =
   systemTest . describe "client auth" $ do
-      logger <- runIO testLoggerConfig
+      let loggerOptions = testLoggerOptions
       let serverOptions =
             [ WithLogVerbosity NatsLogDebug
             , WithUserPass "test-user" "test-pass"
             ]
-      around (withNatsContainerConfig serverOptions) $ do
+      around (withNatsContainerConfigNamed "d5f07159-cabf-4f62-b4e5-d8be7ce39444" serverOptions) $ do
         it "authenticates with user/pass" $ \(Endpoints natsHost natsPort) -> do
           exitResult <- newEmptyTMVarIO
           pinged <- newEmptyTMVarIO
-          let clientOpts =
+          let clientOptions =
                 [ withConnectName "auth-user-pass"
                 , withExitAction (atomically . putTMVar exitResult)
-                , withLoggerConfig logger
                 , withUserPass ("test-user", "test-pass")
                 ]
-          client <- newClient [(natsHost, natsPort)] clientOpts
+                ++ loggerOptions
+          client <- newClient [(natsHost, natsPort)] clientOptions
           forkIO $ do
             outcome <- atomically $ (Left <$> readTMVar pinged) `orElse` (Right <$> readTMVar exitResult)
             case outcome of

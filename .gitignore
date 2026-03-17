@@ -28,4 +28,6 @@ report
 *.stack.yaml.lock
 *.log
 result
+.cache/
+.config/
 profile*

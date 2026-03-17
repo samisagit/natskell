@@ -2,6 +2,7 @@
 
 module ClientAuthTlsTokenSpec (spec) where
 
+import           API                    (Client (..))
 import           Client
 import           Control.Concurrent     (forkIO)
 import           Control.Concurrent.STM
@@ -12,7 +13,7 @@ import           TestSupport
 spec :: Spec
 spec =
   systemTest . describe "client auth" $ do
-      logger <- runIO testLoggerConfig
+      let loggerOptions = testLoggerOptions
       tlsHostDir <- runIO (fixturePath "tls")
       let tlsContainerDir = "/etc/nats/certs"
       let tlsConfig =
@@ -30,18 +31,18 @@ spec =
             , WithTlsConfig tlsConfig
             ]
       let mounts = [(tlsHostDir, tlsContainerDir)]
-      around (withNatsContainerConfigWithMounts serverOptions mounts) $ do
+      around (withNatsContainerConfigWithMountsNamed "4f3d8d3a-93a2-45d1-a6fd-77efdb4d0aec" serverOptions mounts) $ do
         it "authenticates with tls and token" $ \(Endpoints natsHost natsPort) -> do
           exitResult <- newEmptyTMVarIO
           pinged <- newEmptyTMVarIO
-          let clientOpts =
+          let clientOptions =
                 [ withConnectName "auth-tls-token"
                 , withExitAction (atomically . putTMVar exitResult)
-                , withLoggerConfig logger
                 , withAuthToken "test-token"
                 , withConnectionAttempts 1
                 ]
-          client <- newClient [(natsHost, natsPort)] clientOpts
+                ++ loggerOptions
+          client <- newClient [(natsHost, natsPort)] clientOptions
           forkIO $ do
             outcome <- atomically $ (Left <$> readTMVar pinged) `orElse` (Right <$> readTMVar exitResult)
             case outcome of

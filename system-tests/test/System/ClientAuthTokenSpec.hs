@@ -2,6 +2,7 @@
 
 module ClientAuthTokenSpec (spec) where
 
+import           API                    (Client (..))
 import           Client
 import           Control.Concurrent     (forkIO)
 import           Control.Concurrent.STM
@@ -12,22 +13,22 @@ import           TestSupport
 spec :: Spec
 spec =
   systemTest . describe "client auth" $ do
-      logger <- runIO testLoggerConfig
+      let loggerOptions = testLoggerOptions
       let serverOptions =
             [ WithLogVerbosity NatsLogDebug
             , WithToken "test-token"
             ]
-      around (withNatsContainerConfig serverOptions) $ do
+      around (withNatsContainerConfigNamed "7b4c2c96-6c9b-4d1d-8f84-9f6c2d18e3a1" serverOptions) $ do
         it "authenticates with token" $ \(Endpoints natsHost natsPort) -> do
           exitResult <- newEmptyTMVarIO
           pinged <- newEmptyTMVarIO
-          let clientOpts =
+          let clientOptions =
                 [ withConnectName "auth-token"
                 , withExitAction (atomically . putTMVar exitResult)
-                , withLoggerConfig logger
                 , withAuthToken "test-token"
                 ]
-          client <- newClient [(natsHost, natsPort)] clientOpts
+                ++ loggerOptions
+          client <- newClient [(natsHost, natsPort)] clientOptions
           forkIO $ do
             outcome <- atomically $ (Left <$> readTMVar pinged) `orElse` (Right <$> readTMVar exitResult)
             case outcome of

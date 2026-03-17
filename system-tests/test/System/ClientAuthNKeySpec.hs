@@ -2,6 +2,7 @@
 
 module ClientAuthNKeySpec (spec) where
 
+import           API                    (Client (..))
 import           Client
 import           Control.Concurrent     (forkIO)
 import           Control.Concurrent.STM
@@ -12,24 +13,24 @@ import           TestSupport
 spec :: Spec
 spec =
   systemTest . describe "client auth" $ do
-      logger <- runIO testLoggerConfig
+      let loggerOptions = testLoggerOptions
       nkeyPub <- runIO (readFixtureText "nkey/user.pub")
       nkeySeed <- runIO (readFixtureBytesTrim "nkey/user.seed")
       let serverOptions =
             [ WithLogVerbosity NatsLogDebug
             , WithNKey nkeyPub
             ]
-      around (withNatsContainerConfig serverOptions) $ do
+      around (withNatsContainerConfigNamed "5b9c5c3e-1e91-4d3c-8e8a-2c6fe2f7b4a0" serverOptions) $ do
         it "authenticates with nkey" $ \(Endpoints natsHost natsPort) -> do
           exitResult <- newEmptyTMVarIO
           pinged <- newEmptyTMVarIO
-          let clientOpts =
+          let clientOptions =
                 [ withConnectName "auth-nkey"
                 , withExitAction (atomically . putTMVar exitResult)
-                , withLoggerConfig logger
                 , withNKey nkeySeed
                 ]
-          client <- newClient [(natsHost, natsPort)] clientOpts
+                ++ loggerOptions
+          client <- newClient [(natsHost, natsPort)] clientOptions
           forkIO $ do
             outcome <- atomically $ (Left <$> readTMVar pinged) `orElse` (Right <$> readTMVar exitResult)
             case outcome of

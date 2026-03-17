@@ -2,6 +2,12 @@
 
 module ClientRepliesSpec (spec) where
 
+import           API
+    ( Client (..)
+    , MsgView (..)
+    , withPayload
+    , withReplyCallback
+    )
 import           Client
 import           Control.Concurrent.STM
 import           Data.Maybe
@@ -10,16 +16,14 @@ import           TestSupport
 
 spec :: Spec
 spec =
-  clientSystemTest "replies are routed correctly" $ \logger (Endpoints natsHost natsPort) -> do
+  clientSystemTest "79b1247b-10b6-4c1c-8d78-20a9e9f30cc0" "replies are routed correctly" $ \loggerOptions (Endpoints natsHost natsPort) -> do
     let topic = "REQ.TOPIC"
-    remoteClient <- newClient [(natsHost, natsPort)]
-      [ withConnectName "6eff2527-1ad5-4b0c-b4e5-4a52a7d17639"
-      , withLoggerConfig logger
-      ]
-    promptClient <- newClient [(natsHost, natsPort)]
-      [ withConnectName "6eff2527-1ad5-4b0c-b4e5-4a52a7d17639"
-      , withLoggerConfig logger
-      ]
+    remoteClient <- newClient [(natsHost, natsPort)] $
+      withConnectName "6eff2527-1ad5-4b0c-b4e5-4a52a7d17639"
+        : loggerOptions
+    promptClient <- newClient [(natsHost, natsPort)] $
+      withConnectName "6eff2527-1ad5-4b0c-b4e5-4a52a7d17639"
+        : loggerOptions
     subscribe remoteClient topic [] $ \msg -> do
       case msg of
         Nothing -> error "Received empty message"

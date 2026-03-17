@@ -14,12 +14,12 @@
 - `cabal test natskell:test:unit-test` runs unit tests.
 - `cabal test natskell:test:fuzz-test` runs fuzz tests.
 - `cabal test natskell:test:client-test -f impure` runs integration tests (skipped without `-f impure`).
-- `cabal --project-file=cabal.project.system-tests test natskell-system-tests` runs system tests (requires Docker/TestContainers and a reachable NATS image).
+- `cabal test system-tests` runs system tests (requires Docker/TestContainers and a reachable NATS image).
 - `nix flake check` runs Nix checks in a CI-like mode (tests, lint, formatting, packaging checks).
 
 ## Coding Style & Naming Conventions
 - Haskell2010; module names are `CamelCase` and match file names (e.g., `internal/Parsers/Parsers.hs`).
-- Format with `stylish-haskell -ri -c stylish.yaml .` and address `hlint` suggestions.
+- Format with `stylish-haskell -vri -c stylish.yaml .` and address `hlint` suggestions.
 
 ## Testing Guidelines
 - Tests use `hspec` with `hspec-discover` (`Spec.hs` files).
@@ -30,17 +30,19 @@
 - Never use git unless explicitly instructed.
 - flake interactions only work on tracked files, if you need to add a file, ask for it to be added to the flake.
 
-## Workflow Guidelines
-- Run `hlint .` before prompting for more input.
-- Run `stylish-haskell -ri -c stylish.yaml .` before prompting for more input.
-- Run `nix flake check` after changes are made, rather than suggesting the user runs tests.
-- For new features, add unit tests first, then integration tests if necessary.
-- If there are breaking changes or behaviour changes, add system tests to verify the expected behaviour of the NATS server with the new client changes.
-- Prefer TDD in general.
-
 ## Interaction with the code base
 - A focus on reducing code bloat should be forefront.
 - Run a check after making changes to ensure there is no unused code or imports across the codebase.
 - Avoid adding new dependencies unless absolutely necessary, and ensure they are well justified and do not bloat the project.
 
+## Workflow Rules
+- Read `AGENT_LESSONS.md` before starting work to learn from past issues and solutions.
+- Run `hlint .` before prompting for more input.
+- Run `stylish-haskell -ri -c stylish.yaml .` before prompting for more input.
+- Run `nix flake check` after changes are made, rather than suggesting the user runs tests.
+- Run impure (integration and system) tests immediately preceding prompting for more input from the user,
+  if something fails, fix the issue before prompting for more input.
+- For new features, add unit tests first, then integration tests if necessary.
+- If there are breaking changes or behaviour changes, add system tests to verify the expected behaviour of the NATS server with the new client changes.
+- When you run into a tooling issue, update the AGENT_LESSONS.md file with the solution to the issue, so that future agents can learn from it and avoid the same issue. If you fail to diagnose the issue, prompt for a user fix.
 

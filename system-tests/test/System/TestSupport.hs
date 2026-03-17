@@ -8,16 +8,19 @@ module TestSupport
   , readFixtureBytesTrim
   , readFixtureText
   , systemTest
-  , testLoggerConfig
+  , testLoggerOptions
   , withNatsContainer
   , withNatsContainerConfig
+  , withNatsContainerConfigNamed
   , withNatsContainerConfigWithMounts
+  , withNatsContainerConfigWithMountsNamed
   ) where
 
 import           Client
-import           Control.Concurrent.STM
-import           Control.Exception      (bracket)
+import           Control.Concurrent     (threadDelay)
+import           Control.Exception      (bracket, onException)
 import           Control.Monad          (filterM)
+import           Control.Monad.IO.Class (liftIO)
 import qualified Data.ByteString        as BS
 import qualified Data.ByteString.Char8  as BC
 import           Data.Char              (isSpace)
@@ -28,11 +31,18 @@ import           System.Directory
     ( canonicalizePath
     , doesDirectoryExist
     , getCurrentDirectory
+    , getTemporaryDirectory
     , removeFile
+    )
+import           System.IO
+    ( hClose
+    , hPutStrLn
+    , openBinaryTempFile
+    , stderr
     )
 import           System.Timeout         (timeout)
 import           Test.Hspec
-import           TestContainers
+import           TestContainers         hiding (stderr)
 import qualified TestContainers.Hspec   as TC
 
 data Endpoints = Endpoints
@@ -50,41 +60,31 @@ fileLogConsumer fp pipe line =
       BS.appendFile fp line
       BS.appendFile fp "\r\n"
 
-breakLogFile :: FilePath -> IO ()
-breakLogFile fp = do
-  BS.appendFile fp "\r\n"
-  BS.appendFile fp "\r\n"
-  BS.appendFile fp "--------------------"
-  BS.appendFile fp "\r\n"
-  BS.appendFile fp "\r\n"
-
-testLoggerConfig :: IO LoggerConfig
-testLoggerConfig = do
-  lock <- newTMVarIO ()
-  pure $ LoggerConfig Debug (putStrLn . renderLogEntry) lock
+testLoggerOptions :: [ConfigOption]
+testLoggerOptions =
+  [ withMinimumLogLevel Debug
+  , withLogAction (putStrLn . renderLogEntry)
+  ]
 
 testTimeoutMicros :: Int
-testTimeoutMicros = 10 * 1000000
+testTimeoutMicros = 20 * 1000000
 
-withTestTimeout :: IO () -> IO ()
-withTestTimeout action = do
-  result <- timeout testTimeoutMicros action
+withTestTimeoutMicros :: Int -> IO () -> IO ()
+withTestTimeoutMicros timeoutMicros action = do
+  result <- timeout timeoutMicros action
   case result of
-    Nothing -> expectationFailure "test timed out after 10s"
+    Nothing -> expectationFailure "test timed out"
     Just () -> pure ()
 
 systemTest :: Spec -> Spec
 systemTest =
-  parallel
-    . around_ withTestTimeout
-    . around_ (\action -> action >> breakLogFile "nats.log")
+  around_ (withTestTimeoutMicros testTimeoutMicros)
 
-clientSystemTest :: String -> (LoggerConfig -> Endpoints -> IO ()) -> Spec
-clientSystemTest label action =
+clientSystemTest :: String -> String -> ([ConfigOption] -> Endpoints -> IO ()) -> Spec
+clientSystemTest testId label action =
   systemTest . describe "client" $ do
-      logger <- runIO testLoggerConfig
-      around withNatsContainer $ do
-        it label $ \endpoints -> action logger endpoints
+      around (withNatsContainerConfigNamed testId defaultNatsConfigOptions) $ do
+        it label $ \endpoints -> action testLoggerOptions endpoints
 
 trimString :: String -> String
 trimString =
@@ -116,8 +116,8 @@ readFixtureBytesRaw :: FilePath -> IO BS.ByteString
 readFixtureBytesRaw rel =
   BS.readFile =<< fixturePath rel
 
-defaultNatsOptions :: NatsConfigOptions
-defaultNatsOptions =
+defaultNatsConfigOptions :: NatsConfigOptions
+defaultNatsConfigOptions =
   [WithLogVerbosity NatsLogDebug]
 
 withNatsConfig :: NatsConfigOptions -> (FilePath -> IO a) -> IO a
@@ -126,19 +126,46 @@ withNatsConfig options =
 
 withNatsContainer :: (Endpoints -> IO ()) -> IO ()
 withNatsContainer =
-  withNatsContainerConfig defaultNatsOptions
+  withNatsContainerConfig defaultNatsConfigOptions
 
 withNatsContainerConfig :: NatsConfigOptions -> (Endpoints -> IO ()) -> IO ()
 withNatsContainerConfig config =
   withNatsContainerConfigWithMounts config []
 
+withNatsContainerConfigNamed :: String -> NatsConfigOptions -> (Endpoints -> IO ()) -> IO ()
+withNatsContainerConfigNamed testId config =
+  withNatsContainerConfigWithMountsNamed testId config []
+
 withNatsContainerConfigWithMounts :: NatsConfigOptions -> [(FilePath, FilePath)] -> (Endpoints -> IO ()) -> IO ()
 withNatsContainerConfigWithMounts config mounts action =
-  withNatsConfig config $ \configFile ->
-    TC.withContainers (container configFile mounts) action
+  withTempLogFile $ \logFile ->
+    withNatsConfig config $ \configFile ->
+      TC.withContainers (container configFile mounts logFile) action
 
-container :: FilePath -> [(FilePath, FilePath)] -> TC.TestContainer Endpoints
-container configFile mounts = do
+withNatsContainerConfigWithMountsNamed :: String -> NatsConfigOptions -> [(FilePath, FilePath)] -> (Endpoints -> IO ()) -> IO ()
+withNatsContainerConfigWithMountsNamed testId config mounts action =
+  withTempLogFileNamed testId $ \logFile ->
+    withNatsConfig config $ \configFile ->
+      TC.withContainers (container configFile mounts logFile) action
+
+waitForLogLineInFile :: Int -> BS.ByteString -> FilePath -> IO ()
+waitForLogLineInFile timeoutMicros needle logFile = do
+  result <- timeout timeoutMicros poll
+  case result of
+    Just () -> pure ()
+    Nothing ->
+      expectationFailure ("timed out waiting for NATS log line: " ++ BC.unpack needle)
+  where
+    poll = do
+      contents <- BS.readFile logFile
+      if needle `BS.isInfixOf` contents
+        then pure ()
+        else do
+          threadDelay 100000
+          poll
+
+container :: FilePath -> [(FilePath, FilePath)] -> FilePath -> TC.TestContainer Endpoints
+container configFile mounts logFile = do
   let volumeMounts =
         (fromString configFile, fromString "/etc/nats/nats-server.conf")
           : [(fromString hostPath, fromString containerPath) | (hostPath, containerPath) <- mounts]
@@ -147,12 +174,39 @@ container configFile mounts = do
     TC.& TC.setVolumeMounts volumeMounts
     TC.& TC.setCmd ["-c", "/etc/nats/nats-server.conf"]
     TC.& TC.setExpose [4222]
-    TC.& TC.setWaitingFor (TC.waitUntilMappedPortReachable 4222)
-    TC.& withFollowLogs (fileLogConsumer "nats.log")
+    TC.& TC.setWaitingFor mempty
+    TC.& withFollowLogs (fileLogConsumer logFile)
     )
+
+  liftIO $
+    waitForLogLineInFile
+      testTimeoutMicros
+      "Server is ready"
+      logFile
 
   pure $ Endpoints
     { natsHost = "0.0.0.0"
     , natsPort =
         TC.containerPort natsContainer 4222
     }
+
+withTempLogFile :: (FilePath -> IO a) -> IO a
+withTempLogFile =
+  withTempLogFileNamed ""
+
+withTempLogFileNamed :: String -> (FilePath -> IO a) -> IO a
+withTempLogFileNamed testId action = do
+  tmpDir <- getTemporaryDirectory
+  (logFile, handle) <- openBinaryTempFile tmpDir (buildLogFilePrefix testId)
+  hClose handle
+  let reportFailure =
+        hPutStrLn stderr ("NATS system test log: " ++ logFile)
+  result <- action logFile `onException` reportFailure
+  removeFile logFile
+  pure result
+
+buildLogFilePrefix :: String -> String
+buildLogFilePrefix testId =
+  case testId of
+    "" -> "natskell-system-test-"
+    _  -> "natskell-system-test-" ++ testId ++ "-"

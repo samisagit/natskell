@@ -2,6 +2,7 @@
 
 module ClientAuthTlsJwtCredsSpec (spec) where
 
+import           API                    (Client (..))
 import           Client
 import           Control.Concurrent     (forkIO)
 import           Control.Concurrent.STM
@@ -12,7 +13,7 @@ import           TestSupport
 spec :: Spec
 spec =
   systemTest . describe "client auth" $ do
-      logger <- runIO testLoggerConfig
+      let loggerOptions = testLoggerOptions
       operatorJwt <- runIO (readFixtureText "jwt/operator.jwt")
       accountJwt <- runIO (readFixtureText "jwt/account.jwt")
       accountPub <- runIO (readFixtureText "jwt/account.pub")
@@ -32,24 +33,23 @@ spec =
             [ WithLogVerbosity NatsLogDebug
             , WithJwtConfig NatsJwtConfig
                 { natsOperatorJwt = operatorJwt
-                , natsSystemAccount = Nothing
-                , natsJwtResolver = NatsJwtResolverMemory [(accountPub, accountJwt)]
+                , natsJwtResolverPreload = [(accountPub, accountJwt)]
                 }
             , WithTlsConfig tlsConfig
             ]
       let mounts = [(tlsHostDir, tlsContainerDir)]
-      around (withNatsContainerConfigWithMounts serverOptions mounts) $ do
+      around (withNatsContainerConfigWithMountsNamed "1e6615d4-0aa1-43b7-a0e2-56f8d2a0ef82" serverOptions mounts) $ do
         it "authenticates with tls and jwt creds file" $ \(Endpoints natsHost natsPort) -> do
           exitResult <- newEmptyTMVarIO
           pinged <- newEmptyTMVarIO
-          let clientOpts =
+          let clientOptions =
                 [ withConnectName "auth-tls-jwt-creds"
                 , withExitAction (atomically . putTMVar exitResult)
-                , withLoggerConfig logger
                 , withJWT userCreds
                 , withConnectionAttempts 1
                 ]
-          client <- newClient [(natsHost, natsPort)] clientOpts
+                ++ loggerOptions
+          client <- newClient [(natsHost, natsPort)] clientOptions
           forkIO $ do
             outcome <- atomically $ (Left <$> readTMVar pinged) `orElse` (Right <$> readTMVar exitResult)
             case outcome of
