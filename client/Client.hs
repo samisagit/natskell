@@ -1,105 +1,107 @@
--- | High-level client API for NATS.
-module Client (
-  Client,
-  MsgView (..),
-  newClient,
-  publish,
-  subscribe,
-  unsubscribe,
-  ping,
-  flush,
-  reset,
-  Client.close,
-  withPayload,
-  withReplyCallback,
-  withHeaders,
-  withConnectName,
-  withAuthToken,
-  withUserPass,
-  withNKey,
-  withJWT,
-  withTLSCert,
-  withLoggerConfig,
-  withConnectionAttempts,
-  withExitAction,
-  withSubscriptionExpiry,
-  LoggerConfig (..),
-  LogLevel (..),
-  LogEntry (..),
-  renderLogEntry,
-  AuthTokenData,
-  UserPassData,
-  NKeyData,
-  JWTTokenData,
-  TLSPublicKey,
-  TLSPrivateKey,
-  TLSCertData,
-  SubscribeOpts,
-  ClientExitReason (..),
+-- | High-level client implementation for NATS.
+module Client
+  ( newClient
+  , ConfigOption
+  , withConnectName
+  , withEcho
+  , withAuthToken
+  , withUserPass
+  , withNKey
+  , withJWT
+  , withTLSCert
+  , withMinimumLogLevel
+  , withLogAction
+  , withConnectionAttempts
+  , withCallbackConcurrency
+  , withBufferLimit
+  , withExitAction
+  , LogLevel (..)
+  , LogEntry (..)
+  , renderLogEntry
+  , AuthTokenData
+  , UserPassData
+  , NKeyData
+  , JWTTokenData
+  , TLSPublicKey
+  , TLSPrivateKey
+  , TLSCertData
+  , ClientExitReason (..)
   ) where
 
+import           API                         (Client (..), MsgView (..))
 import           Client.Auth
-    ( buildConnectPayload
-    , defaultConnect
+    ( defaultConnect
     , logAuthMethod
     , logTlsConfig
     )
-import           Client.Lifecycle
-    ( markClosed
-    , setLifecycleClosing
-    , setServerInfo
-    , updateLogContextFromInfo
-    , waitForClosed
-    , waitForClosing
-    , waitForServerInfo
+import           Client.CallbacksAPI
+    ( CallbacksAPI (callbacksStartWorkers)
     )
-import           Client.Runtime
-    ( readConfig
-    , readConfigState
-    , runClient
-    , writeToClientQueue
+import           Client.Internal
+    ( callbacksApi
+    , closeClient
+    , connectionApi
+    , flushInternal
+    , lifecycleApi
+    , nuidApi
+    , pingInternal
+    , publishInternal
+    , queueApi
+    , resetClient
+    , retryLoop
+    , runtimeApi
+    , sidApi
+    )
+import           Client.LifecycleAPI
+    ( ClientExitReason (..)
+    , LifecycleAPI (lifecycleWaitForClosed, lifecycleWaitForServerInfo)
+    , LifecycleState (Running)
+    )
+import           Client.PublishAPI           (defaultPublishConfig)
+import           Client.RuntimeAPI
+    ( Auth (..)
+    , AuthTokenData
+    , ClientState (..)
+    , Config (..)
+    , ConfigState (..)
+    , JWTTokenData
+    , NKeyData
+    , RuntimeAPI (runtimeRunClient)
+    , TLSCertData
+    , TLSPrivateKey
+    , TLSPublicKey
+    , UserPassData
     )
 import           Client.Subscription
-    ( awaitSubscriptionGC
-    , cancelExpiredSubscriptions
-    , msgRouterM
-    , nextInbox
-    , subscribeInternal
+    ( subscribeInternal
     , unsubscribeInternal
     )
-import           Client.Types
-    ( Client (..)
-    , emptySubscriptionState
-    , initialConfigState
+import           Client.SubscriptionAPI
+    ( SubscribeConfig (..)
+    , SubscriptionState (..)
+    , emptySubscriptionGC
     )
-import           Control.Concurrent
+import           Control.Concurrent          (forkIO)
 import           Control.Concurrent.STM
-import           Control.Exception
-import           Control.Monad
-import           Control.Monad.IO.Class
-import qualified Data.ByteString           as BS
-import qualified Data.ByteString.Char8     as BC
-import           Data.Maybe
-import           Lib.CallOption
+import qualified Data.ByteString             as BS
+import qualified Data.ByteString.Char8       as BC
+import           Lib.CallOption              (CallOption, applyCallOptions)
 import           Lib.Logger
-import qualified Lib.Parser                as Parser
-import           MSGView
-import           Network.API
-import           Network.Connection
-import           Options
-import           Parsers.Parsers
-import qualified Pipeline.Broadcasting.API as B
-import qualified Pipeline.Streaming.API    as S
-import           Queue.API
-import           Queue.TransactionalQueue  (QueueItem (..))
-import           Types
-import qualified Types.Connect             as Connect (Connect (..))
-import qualified Types.Err                 as E
-import qualified Types.Info                as I
-import           Types.Ping
-import           Types.Pong
-import qualified Types.Pub                 as P
-import           WaitGroup
+    ( LogContext (..)
+    , LogEntry (..)
+    , LogLevel (..)
+    , LoggerConfig (..)
+    , defaultLogger
+    , newLogContext
+    , renderLogEntry
+    , updateLogContext
+    )
+import           Network.ConnectionAPI       (ConnectionAPI (connectionNew))
+import           NuidAPI                     (NuidAPI (nuidNew))
+import           Queue.TransactionalQueueAPI (TransactionalQueueAPI (tqNew))
+import           SidAPI                      (SidAPI (sidInitial))
+import qualified Types.Connect               as Connect
+import qualified Types.Msg                   as Msg
 
 -- | newClient creates a new client with optional overrides to default settings.
 --
@@ -108,343 +110,251 @@ import           WaitGroup
 -- @
 -- {-# LANGUAGE OverloadedStrings #-}
 --
--- servers = [(\"127.0.0.1\", 4222)]
--- opts = [withConnectName \"example-client\"]
--- client <- newClient servers opts
+-- servers = [("127.0.0.1", 4222)]
+-- configOptions = [withConnectName "example-client"]
+-- client <- newClient servers configOptions
 -- @
-newClient :: [(String, Int)] -> [ConfigOpts] -> IO Client
-newClient servers conOpts = do
+newClient :: [(String, Int)] -> [ConfigOption] -> IO Client
+newClient servers configOptions = do
   dl <- defaultLogger
   ctx <- newLogContext
-  let defaultConfig = applyCallOptions conOpts Config {
-    connectConfig = defaultConnect
-    , auth = None
-    , tlsCert = Nothing
-    , loggerConfig = dl
-    , connectionAttempts = 5
-    , exitAction = const (return ())
-    , connectOptions = servers
-  }
-  updateLogContext ctx (\c -> c { lcConnectName = fmap BC.unpack (Connect.name (connectConfig defaultConfig)) })
+  let defaultConfig = applyCallOptions configOptions Config
+        { connectConfig = defaultConnect
+        , auth = None
+        , tlsCert = Nothing
+        , loggerConfig = dl
+        , connectionAttempts = 5
+        , callbackConcurrency = 1
+        , bufferLimit = 4096
+        , exitAction = const (return ())
+        , connectOptions = servers
+        }
+      subscriptionState = SubscriptionState mempty emptySubscriptionGC mempty
+      configState = ConfigState defaultConfig Nothing
+  updateLogContext ctx (\tmp -> tmp
+    { lcConnectName = fmap BC.unpack (Connect.name (connectConfig defaultConfig))
+    })
 
-  c <- newConn
+  c <- connectionNew connectionApi
 
-  client <- liftIO $ Client'
-    <$> newQ
-    <*> newTVarIO emptySubscriptionState
+  clientState <- ClientState
+    <$> tqNew queueApi
+    <*> newTVarIO subscriptionState
     <*> newTQueueIO
-    <*> newTVarIO initialSIDCounter
-    <*> (newTVarIO =<< Nuid.newNuidIO)
-    <*> newTVarIO (initialConfigState defaultConfig)
+    <*> newTQueueIO
+    <*> newTVarIO 0
+    <*> newTVarIO False
+    <*> newTVarIO (sidInitial sidApi)
+    <*> (newTVarIO =<< nuidNew nuidApi)
+    <*> newTVarIO configState
     <*> newTVarIO (connectionAttempts defaultConfig)
     <*> newTVarIO Running
     <*> pure c
     <*> pure ctx
 
-  runClient client $ do
+  runtimeRunClient runtimeApi clientState $ do
     logAuthMethod (auth defaultConfig)
     logTlsConfig (tlsCert defaultConfig)
-  forkIO $ retryLoop client
+  callbacksStartWorkers callbacksApi clientState
+  forkIO $ retryLoop clientState
 
   -- ensure that the server info is initialized
-  atomically $ waitForServerInfo client `orElse` waitForClosed client
+  atomically $
+    lifecycleWaitForServerInfo lifecycleApi clientState
+      `orElse` lifecycleWaitForClosed lifecycleApi clientState
 
-  return client
+  let clientApi =
+        Client
+          { publish = \subject publishOptions -> do
+              let cfg = applyCallOptions publishOptions defaultPublishConfig
+              publishInternal clientState subject cfg
+          , subscribe = \subject subscribeOptions callback -> do
+              let cfg = applyCallOptions subscribeOptions defaultSubscribeConfig
+                  internalCallback = callback . fmap (\msg -> MsgView
+                    { subject = Msg.subject msg
+                    , sid = Msg.sid msg
+                    , replyTo = Msg.replyTo msg
+                    , payload = Msg.payload msg
+                    , headers = Msg.headers msg
+                    })
+              subscribeInternal runtimeApi sidApi False clientState subject cfg internalCallback
+          , request = \subject subscribeOptions callback -> do
+              let cfg = applyCallOptions subscribeOptions defaultSubscribeConfig
+                  internalCallback = callback . fmap (\msg -> MsgView
+                    { subject = Msg.subject msg
+                    , sid = Msg.sid msg
+                    , replyTo = Msg.replyTo msg
+                    , payload = Msg.payload msg
+                    , headers = Msg.headers msg
+                    })
+              subscribeInternal runtimeApi sidApi True clientState subject cfg internalCallback
+          , unsubscribe = unsubscribeInternal runtimeApi clientState
+          , ping = pingInternal clientState
+          , flush = flushInternal clientState
+          , reset = resetClient clientState
+          , close = closeClient clientState
+          }
+  pure clientApi
 
-acquireTransport :: Client -> IO (Either String (Conn, (String, Int)))
-acquireTransport client = do
-  attempts <- readTVarIO (connectionAttempts' client)
-  cfg <- readConfig client
-  case connectOptions cfg of
-    []             -> return (Left "No servers provided")
-    xs -> do
-      let (host, port) = cycle xs !! attempts
-      updateLogContext (logContext client) (\ctx -> ctx { lcServer = Just (host ++ ":" ++ show port) })
-      transportResult <- Network.Connection.openTcpTransport host port
-      case transportResult of
-        Left err -> return (Left err)
-        Right transport -> do
-          pointTransport (conn client) transport
-          return . Right $ (conn client, (host, port))
+type ConfigOption = CallOption Config
 
-decomTransport ::  Either String (Conn, (String, Int)) -> IO ()
-decomTransport (Left _)       = return ()
-decomTransport (Right (h, _)) = closeConnection h
-
-withTransport :: Client -> (Either String (Conn, (String, Int)) -> IO a) -> IO a
-withTransport client = bracket
-    (acquireTransport client)
-    decomTransport
-
-withRetry :: Client -> Int -> IO () -> IO ()
-withRetry c 0 _ = do
-  runClient c $ logMessage Info "retries exhausted; exiting"
-  cfg <- readConfig c
-  result <- atomically $ markClosed c (ExitRetriesExhausted Nothing)
-  maybe (return ()) (exitAction cfg) result
-withRetry c x action = do
-  state <- readTVarIO (lifecycle c)
-  case state of
-    Closing _ -> do
-      runClient c $ logMessage Info "client closing; skipping retries"
-      cfg <- readConfig c
-      result <- atomically $ markClosed c ExitClosedByUser
-      maybe (return ()) (exitAction cfg) result
-    Closed _ -> return ()
-    Running -> do
-      action
-      runClient c $ logMessage Info "retrying client connection"
-      atomically $ modifyTVar (connectionAttempts' c) (+1)
-      withRetry c (x-1) action
-
-withSubscriptionGC :: Client -> IO () -> IO ()
-withSubscriptionGC client action = bracket
-  (forkIO . forever . cancelExpiredSubscriptions $ client)
-  (\tid -> do
-    awaitSubscriptionGC client
-    killThread tid
-  )
-  (const action)
-
-retryLoop :: Client -> IO ()
-retryLoop client = do
-  cfg <- readConfig client
-  let attemptsLeft = connectionAttempts cfg
-  withRetry client attemptsLeft $ do
-    Queue.API.open (queue client)
-    openConnection (conn client)
-    withSubscriptionGC client $ do
-      withTransport client $ \transportResult -> do
-        case transportResult of
-          (Left e) -> runClient client . logMessage Error $ ("connection attempt failed: " ++ show e)
-          (Right (connection, (host, _port))) -> do
-            initResult <- initializeConnection client connection host
-            case initResult of
-              Left err ->
-                runClient client . logMessage Error $ ("connection initialization failed: " ++ err)
-              Right () -> do
-                runClient client $ do
-                  wgs <- liftIO $ newWaitGroup 1
-                  wgb <- liftIO $ newWaitGroup 1
-                  logMessage Debug "starting client streaming threads"
-                  liftIO . void . forkWaitGroup wgb $ do
-                    runClient client $ B.run (queue client) connection
-                    runClient client $ logMessage Debug "broadcasting thread exited"
-                  liftIO . void . forkWaitGroup wgs $ do
-                    runClient client $ S.run connection genericParse (router client)
-                    runClient client $ logMessage Debug "streaming thread exited"
-                  wg <- liftIO $ newWaitGroup 2
-                  liftIO . void . forkWaitGroup wg $ do
-                    wait wgs
-                    -- close broadcasting
-                    liftIO $ Queue.API.close (queue client)
-                  liftIO . void . forkWaitGroup wg $ do
-                    wait wgb
-                    -- close streaming
-                    closeReader connection
-                  liftIO $ wait wg
-                  logMessage Debug "streaming threads exited; closing connection"
-
-initializeConnection :: Client -> Conn -> String -> IO (Either String ())
-initializeConnection client h host = do
-  infoResult <- readInitialInfo client h
-  case infoResult of
-    Left err -> return (Left err)
-    Right (info, rest) -> do
-      cfg <- readConfig client
-      let tlsRequested = isJust (tlsCert cfg) || Connect.tls_required (connectConfig cfg)
-          tlsRequired = fromMaybe False (I.tls_required info)
-          transportOptions = TransportOptions
-            { transportHost = host
-            , transportTlsRequired = tlsRequired
-            , transportTlsRequested = tlsRequested
-            , transportTlsCert = tlsCert cfg
-            , transportInitialBytes = rest
-            }
-      transportResult <- configureTransport h transportOptions
-      case transportResult of
-        Left transportErr -> return (Left transportErr)
-        Right () -> do
-          runClient client $ routerM client (ParsedInfo info)
-          return (Right ())
-
-readInitialInfo :: Client -> Conn -> IO (Either String (I.Info, BS.ByteString))
-readInitialInfo client h =
-  go mempty
-  where
-    go acc = do
-      result <- readData h 4096
-      case result of
-        Left err -> return (Left err)
-        Right chunk ->
-          if BS.null chunk
-            then do
-              runClient client $ logMessage Debug "no data read, waiting"
-              threadDelay 100000
-              go acc
-            else do
-              let bs = acc <> chunk
-              case genericParse bs of
-                Left err ->
-                  case Parser.solveErr err (BS.length bs) of
-                    Parser.SuggestPull ->
-                      go bs
-                    Parser.SuggestDrop n _ ->
-                      go (BS.drop n bs)
-                Right (ParsedInfo info, rest) ->
-                  return (Right (info, rest))
-                Right (ParsedErr err, _) ->
-                  return (Left ("server error before INFO: " ++ show err))
-                Right (_, rest) ->
-                  go rest
-
--- | publish sends a message to the NATS server.
+-- | withConnectName sets the client name sent in CONNECT.
+-- Default: no CONNECT name is sent.
 --
 -- __Examples:__
 --
 -- @
 -- {-# LANGUAGE OverloadedStrings #-}
 --
--- publish client \"updates\" [withPayload \"hello\"]
--- publish client \"service.echo\"
---   [ withPayload \"hello\"
---   , withReplyCallback print
---   ]
+-- client <- newClient [(\"127.0.0.1\", 4222)] [withConnectName \"example-client\"]
 -- @
-publish :: Client -> Subject -> [PubOptions -> PubOptions] -> IO ()
-publish client subject opts = do
-  runClient client . logMessage Debug $ ("publishing to subject: " ++ show subject)
-  let (payload, callback, headers) = applyCallOptions opts (Nothing, Nothing, Nothing)
+withConnectName :: BS.ByteString -> ConfigOption
+withConnectName name config = config { connectConfig = (connectConfig config) { Connect.name = Just name } }
 
-  case callback of
-    Just cb -> do
-      inbox <- nextInbox client
-      request client inbox [] cb
-      let msg = P.Pub {
-        P.subject = subject,
-        P.payload = payload,
-        P.replyTo = Just inbox,
-        P.headers = headers
-      }
-      writeToClientQueue client (QueueItem msg)
-    Nothing -> do
-      let msg = P.Pub {
-        P.subject = subject,
-        P.payload = payload,
-        P.replyTo = Nothing,
-        P.headers = headers
-      }
-      writeToClientQueue client (QueueItem msg)
+-- | withEcho configures whether the server echoes messages from this connection.
+-- Default: True (messages sent by this client are echoed back).
+withEcho :: Bool -> ConfigOption
+withEcho enabled config = config { connectConfig = (connectConfig config) { Connect.echo = Just enabled } }
 
--- | subscribe is used to subscribe to a subject on the NATS server.
--- Options can be passed to tune subscription behaviour (e.g., reply expiry).
+-- | withAuthToken configures token authentication.
+-- Default: no authentication is configured.
 --
 -- __Examples:__
 --
 -- @
 -- {-# LANGUAGE OverloadedStrings #-}
 --
--- subscribe client \"events.created\" [] print
+-- client <- newClient [(\"127.0.0.1\", 4222)] [withAuthToken \"s3cr3t\"]
 -- @
-subscribe :: Client -> Subject -> [SubscribeOpts] -> (Maybe MsgView -> IO ()) -> IO SID
-subscribe = subscribeInternal False
+withAuthToken :: AuthTokenData -> ConfigOption
+withAuthToken token config = config { auth = AuthToken token }
 
--- | request is used to subscribe to a reply subject on the NATS server.
--- Options can be passed to tune subscription behaviour (e.g., reply expiry).
-request :: Client -> Subject -> [SubscribeOpts] -> (Maybe MsgView -> IO ()) -> IO SID
-request = subscribeInternal True
-
--- | unsubscribe is used to unsubscribe from a subject on the NATS server.
+-- | withUserPass configures user/password authentication.
+-- Default: no authentication is configured.
 --
 -- __Examples:__
 --
 -- @
 -- {-# LANGUAGE OverloadedStrings #-}
 --
--- sid <- subscribe client \"events.created\" [] print
--- unsubscribe client sid
+-- client <- newClient [(\"127.0.0.1\", 4222)] [withUserPass (\"alice\", \"secret\")]
 -- @
-unsubscribe :: Client -> SID -> IO ()
-unsubscribe = unsubscribeInternal
+withUserPass :: UserPassData -> ConfigOption
+withUserPass (user, pass) config = config { auth = UserPass (user, pass) }
 
--- | ping is used to send a ping message to the NATS server.
-ping :: Client -> IO () -> IO ()
-ping client action = do
-  runClient client $ logMessage Debug "sending ping to server"
-  atomically $ writeTQueue (pings client) action
-  writeToClientQueue client (QueueItem Ping)
+-- | withNKey configures NKey authentication.
+-- Default: no authentication is configured.
+--
+-- __Examples:__
+--
+-- @
+-- {-# LANGUAGE OverloadedStrings #-}
+--
+-- client <- newClient [(\"127.0.0.1\", 4222)] [withNKey \"SU...\"]
+-- @
+withNKey :: NKeyData -> ConfigOption
+withNKey nkey config = config { auth = NKey nkey }
 
-flush :: Client -> IO ()
-flush client = do
-  ponged <- newEmptyTMVarIO
-  ping client (atomically (void (tryPutTMVar ponged ())))
-  atomically $ readTMVar ponged `orElse` waitForClosing client
+-- | withJWT configures JWT authentication.
+-- Default: no authentication is configured.
+--
+-- __Examples:__
+--
+-- @
+-- {-# LANGUAGE OverloadedStrings #-}
+--
+-- import qualified Data.ByteString as BS
+--
+-- creds <- BS.readFile \"user.creds\"
+-- client <- newClient [(\"127.0.0.1\", 4222)] [withJWT creds]
+-- @
+withJWT :: JWTTokenData -> ConfigOption
+withJWT jwt config = config { auth = JWT jwt }
 
-shutdownClient :: Client -> ClientExitReason -> String -> IO ()
-shutdownClient client reason message = do
-  atomically $ setLifecycleClosing client reason
-  runClient client $ logMessage Info message
-  Queue.API.close $ queue client
-  closeReader (conn client)
-  atomically $ waitForClosed client
+-- | withTLSCert configures client TLS credentials.
+-- Default: no TLS credentials are configured.
+--
+-- __Examples:__
+--
+-- @
+-- {-# LANGUAGE OverloadedStrings #-}
+--
+-- import qualified Data.ByteString as BS
+--
+-- certPem <- BS.readFile \"client.pem\"
+-- keyPem <- BS.readFile \"client.key\"
+-- client <- newClient [(\"127.0.0.1\", 4222)] [withTLSCert (certPem, keyPem)]
+-- @
+withTLSCert :: TLSCertData -> ConfigOption
+withTLSCert (pubKey, privKey) config = config { tlsCert = Just (pubKey, privKey) }
 
--- | close is used to close the connection to the NATS server.
-close :: Client -> IO ()
-close client = shutdownClient client ExitClosedByUser "closing client connection"
+-- | withMinimumLogLevel sets the minimum level that will be emitted by the default logger.
+-- Default: 'Info'.
+--
+-- __Examples:__
+--
+-- @
+-- client <- newClient [(\"127.0.0.1\", 4222)] [withMinimumLogLevel Info]
+-- @
+withMinimumLogLevel :: LogLevel -> ConfigOption
+withMinimumLogLevel minimumLogLevel config =
+  config { loggerConfig = (loggerConfig config) { minLogLevel = minimumLogLevel } }
 
--- | reset is used to abort the current connection and trigger lifecycle closure without attempting graceful drain.
-reset :: Client -> IO ()
-reset client = shutdownClient client ExitResetRequested "resetting client connection"
+-- | withLogAction replaces the default log sink.
+-- Default: logs are rendered with 'renderLogEntry' and written with 'putStrLn'.
+--
+-- __Examples:__
+--
+-- @
+-- client <- newClient [(\"127.0.0.1\", 4222)] [withLogAction print]
+-- @
+withLogAction :: (LogEntry -> IO ()) -> ConfigOption
+withLogAction logAction config =
+  config { loggerConfig = (loggerConfig config) { logFn = logAction } }
 
--- internal handlers
+-- | withConnectionAttempts sets the number of connection retries.
+-- Default: 5.
+--
+-- __Examples:__
+--
+-- @
+-- client <- newClient [(\"127.0.0.1\", 4222)] [withConnectionAttempts 10]
+-- @
+withConnectionAttempts :: Int -> ConfigOption
+withConnectionAttempts attempts config = config { connectionAttempts = attempts }
 
-router :: Client -> ParsedMessage -> IO ()
-router client = runClient client . routerM client
+-- | withCallbackConcurrency sets the number of worker threads used for callbacks.
+-- Default: 1 (callbacks run serially). Values less than 1 are treated as 1.
+--
+-- __Examples:__
+--
+-- @
+-- client <- newClient [(\"127.0.0.1\", 4222)] [withCallbackConcurrency 4]
+-- @
+withCallbackConcurrency :: Int -> ConfigOption
+withCallbackConcurrency concurrency config = config { callbackConcurrency = concurrency }
 
-routerM :: Client -> ParsedMessage -> AppM ()
-routerM client msg = do
-  case msg of
-    ParsedMsg a  -> do
-      logMessage Debug $ "routing MSG: " ++ show a
-      msgRouterM client a
-    ParsedInfo i -> do
-      logMessage Debug $ "routing INFO: " ++ show i
-      liftIO $ do
-        atomically (setServerInfo client i)
-        updateLogContextFromInfo client i
-        connect client
-    ParsedPing _ -> do
-      logMessage Debug "routing PING"
-      liftIO $ pong client
-    ParsedPong _ -> do
-      logMessage Debug "routing PONG"
-      liftIO $ runPingAction (pings client)
-    ParsedOk   okMsg -> logMessage Debug $ "routing OK: " ++ show okMsg
-    ParsedErr err -> do
-      logMessage Debug $ "routing ERR: " ++ show err
-      case E.isFatal err of
-        True  -> do
-          logMessage Error $ "fatal server error: " ++ show err
-          liftIO $ do
-            atomically $ setLifecycleClosing client (ExitServerError err)
-            reset client
-        False -> logMessage Warn $ "server error: " ++ show err
+-- | withBufferLimit sets the maximum outbound message size and parser buffer size in bytes.
+-- Default: 4096. Values less than 1 are treated as 1.
+--
+-- __Examples:__
+--
+-- @
+-- client <- newClient [(\"127.0.0.1\", 4222)] [withBufferLimit 8192]
+-- @
+withBufferLimit :: Int -> ConfigOption
+withBufferLimit limit config = config { bufferLimit = max 1 limit }
 
-runPingAction :: TQueue (IO ()) -> IO ()
-runPingAction actionsQueue = do
-  action <- atomically $ tryReadTQueue actionsQueue
-  fromMaybe (return ()) action
+-- | withExitAction runs a callback when the client exits.
+-- Default: no-op.
+--
+-- __Examples:__
+--
+-- @
+-- client <- newClient [(\"127.0.0.1\", 4222)] [withExitAction print]
+-- @
+withExitAction :: (ClientExitReason -> IO ()) -> ConfigOption
+withExitAction action config = config { exitAction = action }
 
-connect :: Client -> IO ()
-connect client = do
-  runClient client $ logMessage Debug "connecting to NATS server"
-  cfg <- readConfig client
-  info <- cfgServerInfo <$> readConfigState client
-  let nonce = info >>= I.nonce
-  let infoTlsRequired = fromMaybe False (info >>= I.tls_required)
-      tlsActive = infoTlsRequired || isJust (tlsCert cfg) || Connect.tls_required (connectConfig cfg)
-  let dat = buildConnectPayload cfg nonce tlsActive
-  writeToClientQueue client (QueueItem dat)
-
-pong :: Client -> IO ()
-pong client = writeToClientQueue client (QueueItem Pong)
+defaultSubscribeConfig :: SubscribeConfig
+defaultSubscribeConfig = SubscribeConfig Nothing
