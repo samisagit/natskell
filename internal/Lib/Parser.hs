@@ -290,7 +290,11 @@ stripSpace xs = Prelude.takeWhile isNotSpace . Prelude.dropWhile isSpace $ xs
 
 stripSpaceBS :: BS.ByteString -> BS.ByteString
 stripSpaceBS =
-  BS.dropWhile isWhitespace . BS.dropWhileEnd isWhitespace
+  BS.dropWhile isWhitespace . dropWhileEndBS isWhitespace
+
+dropWhileEndBS :: (W8.Word8 -> Bool) -> BS.ByteString -> BS.ByteString
+dropWhileEndBS predicate =
+  BS.reverse . BS.dropWhile predicate . BS.reverse
 
 spaceChar :: W8.Word8
 spaceChar = charToWord8 ' '
