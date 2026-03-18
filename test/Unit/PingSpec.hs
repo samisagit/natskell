@@ -4,6 +4,7 @@ module PingSpec (spec) where
 
 import           Control.Monad
 import qualified Data.ByteString           as BS
+import qualified Data.ByteString.Lazy      as LBS
 import           Parsers.Parsers
 import           Test.Hspec
 import           Text.Printf
@@ -34,7 +35,7 @@ transformerCases = parallel $ do
   describe "PING transformer" $ do
     forM_ explicitTransformerCases $ \(input, want) -> do
       it (printf"correctly transforms %s" (show input)) $ do
-        transform input `shouldBe` want
+        LBS.toStrict (transform input) `shouldBe` want
 
 validateCase = parallel $ do
   describe "PING validater" $ do

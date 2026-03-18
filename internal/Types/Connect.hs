@@ -1,34 +1,28 @@
-{-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Types.Connect where
+module Types.Connect
+  ( module Types.Connect.Types
+  , validateAuthToken
+  , validateUser
+  , validatePass
+  , validateName
+  , validateLang
+  , validateVersion
+  , validateProtocol
+  , validateSig
+  , validateJwt
+  , validateNKey
+  , textToByteString
+  , byteStringToText
+  ) where
 
 import           Control.Monad
 import           Data.Aeson
 import qualified Data.ByteString       as BS
 import qualified Data.Text             as T
 import qualified Data.Text.Encoding    as E
-import           GHC.Generics
+import           Types.Connect.Types
 import           Validators.Validators
-
-data Connect = Connect
-                 { verbose       :: Bool
-                 , pedantic      :: Bool
-                 , tls_required  :: Bool
-                 , auth_token    :: Maybe BS.ByteString
-                 , user          :: Maybe BS.ByteString
-                 , pass          :: Maybe BS.ByteString
-                 , name          :: Maybe BS.ByteString
-                 , lang          :: BS.ByteString
-                 , version       :: BS.ByteString
-                 , protocol      :: Maybe Int
-                 , echo          :: Maybe Bool
-                 , sig           :: Maybe BS.ByteString
-                 , jwt           :: Maybe BS.ByteString
-                 , no_responders :: Maybe Bool
-                 , headers       :: Maybe Bool
-                 }
-  deriving (Eq, Generic, Show)
 
 instance ToJSON Connect where
   toJSON = genericToJSON defaultOptions
@@ -52,6 +46,7 @@ instance Validator Connect where
     validateProtocol c
     validateSig c
     validateJwt c
+    validateNKey c
 
 validateAuthToken :: Connect -> Either BS.ByteString ()
 validateAuthToken c
@@ -96,6 +91,11 @@ validateSig c
 validateJwt :: Connect -> Either BS.ByteString ()
 validateJwt c
   | jwt c == Just "" = Left "explicit empty jwt"
+  | otherwise = Right ()
+
+validateNKey :: Connect -> Either BS.ByteString ()
+validateNKey c
+  | nkey c == Just "" = Left "explicit empty nkey"
   | otherwise = Right ()
 
 textToByteString :: MonadPlus m =>  T.Text -> m BS.ByteString

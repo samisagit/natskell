@@ -1,19 +1,16 @@
-module Pipeline.Streaming.API where
+{-# LANGUAGE RankNTypes #-}
 
-import           Conduit
-import           Data.ByteString
-import           Lib.Logger
-import           Lib.Parser
-import           Network.API
-import           Pipeline.Streaming.Parser
-import           Pipeline.Streaming.Sink
-import           Pipeline.Streaming.Source
+module Pipeline.Streaming.API
+  ( StreamingAPI (..)
+  , Parser'
+  ) where
 
-type Parser' a = (ByteString -> Either ParserErr (a, ByteString))
+import           Control.Monad.IO.Class (MonadIO)
+import           Data.ByteString        (ByteString)
+import           Lib.Logger.Types       (MonadLogger)
+import           Lib.Parser.Types       (ParserErr)
+import           Network.API            (ConnectionReader)
 
-run :: (MonadLogger m , MonadIO m, ConnectionReader reader)
-  => reader
-  -> Parser' a
-  -> (a -> IO ())
-  -> m ()
-run reader p router = runConduit $ source reader .| parser p .| sink router
+type Parser' a = ByteString -> Either ParserErr (a, ByteString)
+
+newtype StreamingAPI = StreamingAPI { streamingRun :: forall m reader a. (MonadLogger m, MonadIO m, ConnectionReader reader) => Int -> reader -> Parser' a -> (a -> IO ()) -> m () }

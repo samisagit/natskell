@@ -20,8 +20,9 @@ import           Data.ByteString
     , pack
     , tail
     )
-import           Data.Char              (chr)
-import           Data.Word8             (isUpper)
+import qualified Data.ByteString.Lazy      as LBS
+import           Data.Char                 (chr)
+import           Data.Word8                (isUpper)
 import           GHC.IO.Handle
     ( BufferMode (NoBuffering)
     , Handle
@@ -32,9 +33,10 @@ import           GHC.IO.IOMode
 import           Lib.Logger
 import           Lib.Parser
 import           Network.API
-import           Network.Socket         hiding (Debug)
-import           Pipeline.Streaming.API
-import           Prelude                hiding
+import           Network.Socket            hiding (Debug)
+import qualified Pipeline.Broadcasting     as Broadcast
+import           Pipeline.Streaming        (run)
+import           Prelude                   hiding
     ( head
     , last
     , length
@@ -43,12 +45,29 @@ import           Prelude                hiding
     , tail
     , take
     )
+import qualified Queue.API                 as Queue
+import           Queue.TransactionalQueue  (QueueItem (..), newQ)
 import           Test.Hspec
+import           Transformers.Transformers ()
+import qualified Types.Pub                 as Pub
 
 defaultLogger' :: IO LoggerConfig
 defaultLogger' = do
   lock <- newTMVarIO ()
   pure $ LoggerConfig Debug (putStrLn . renderLogEntry) lock
+
+bufferLimit :: Int
+bufferLimit = 4096
+
+newtype CaptureWriter = CaptureWriter (TVar [ByteString])
+
+instance ConnectionWriter CaptureWriter where
+  writeData (CaptureWriter output) bytes = do
+    atomically $ modifyTVar' output (<> [bytes])
+    pure (Right ())
+  writeDataLazy writer bytes = writeData writer (LBS.toStrict bytes)
+  closeWriter _ = pure ()
+  openWriter _ = pure ()
 
 instance ConnectionReader Handle where
   readData h n = do
@@ -70,7 +89,7 @@ spec = do
         let sink curr = atomically $ modifyTVar' result (`append` curr)
         dl <- defaultLogger'
         ctx <- newLogContext
-        (forkIO . runWithLogger dl ctx) (run client parser sink :: AppM ())
+        (forkIO . runWithLogger dl ctx) (run bufferLimit client parser sink :: AppM ())
         hPut server "Hello, World"
         atomically $ assertTVarWithRetry result "Hello, World"
         hClose server
@@ -82,7 +101,7 @@ spec = do
         let sink curr = atomically $ modifyTVar' result (`append` curr)
         dl <- defaultLogger'
         ctx <- newLogContext
-        (forkIO . runWithLogger dl ctx) (run client parser sink :: AppM ())
+        (forkIO . runWithLogger dl ctx) (run bufferLimit client parser sink :: AppM ())
         hPut server "Hello, World"
         atomically $ assertTVarWithRetry result "Hello, World"
         hPut server "Hello, again"
@@ -95,7 +114,7 @@ spec = do
         let sink curr = atomically $ modifyTVar' result (`append` curr)
         dl <- defaultLogger'
         ctx <- newLogContext
-        (forkIO . runWithLogger dl ctx) (run client testParserExcludingUpper sink :: AppM ())
+        (forkIO . runWithLogger dl ctx) (run bufferLimit client testParserExcludingUpper sink :: AppM ())
         hPut server "HELLO WORLD hello, world"
         atomically $ assertTVarWithRetry result "  hello, world"
         hClose server
@@ -106,7 +125,7 @@ spec = do
         let sink curr = atomically $ modifyTVar' result (`append` curr)
         dl <- defaultLogger'
         ctx <- newLogContext
-        (forkIO . runWithLogger dl ctx) (run client testParserForExplicitWord sink :: AppM ())
+        (forkIO . runWithLogger dl ctx) (run bufferLimit client testParserForExplicitWord sink :: AppM ())
         hPut server "part1"
         threadDelay 100000
         atomically $ ensureTVarIsEmpty result
@@ -114,6 +133,17 @@ spec = do
         atomically $ assertTVarWithRetry result "part1part2"
         hClose server
         hClose client
+  describe "Broadcasting" $ do
+      it "drops messages larger than the buffer limit" $ do
+        dl <- defaultLogger'
+        ctx <- newLogContext
+        q <- newQ
+        output <- newTVarIO []
+        let pub = Pub.Pub "FOO" Nothing Nothing (Just "0123456789")
+        Queue.enqueue q (QueueItem pub) `shouldReturn` Right ()
+        Queue.close q
+        runWithLogger dl ctx (Broadcast.run 5 q (CaptureWriter output) :: AppM ())
+        readTVarIO output `shouldReturn` []
 
 ensureTVarIsEmpty :: TVar ByteString -> STM ()
 ensureTVarIsEmpty tvar = do

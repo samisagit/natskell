@@ -4,7 +4,7 @@ module ParserSpec (spec) where
 
 import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as B
-import           Data.Char
+import           Data.Char             (isAscii, ord)
 import           Data.Either
 import           Data.Maybe
 import qualified Data.Word8            as W8
@@ -138,15 +138,15 @@ propSpace :: BS.ByteString -> Bool
 propSpace i = do
   let output = Parser.runParser Parser.space i
   case output of
-    Right (struct, rest) -> BS.length rest == BS.length i -1 && struct == W8._space
-    Left _               -> BS.null i || BS.head i /= W8._space
+    Right (struct, rest) -> BS.length rest == BS.length i -1 && isWhitespace struct
+    Left _               -> BS.null i || not (isWhitespace (BS.head i))
 
 propSomeSpace :: BS.ByteString -> Bool
 propSomeSpace i = do
   let output = Parser.runParser Parser.ss i
   case output of
-    Right (struct, rest) -> all (== W8._space) struct && (BS.null rest || BS.head rest /= W8._space)
-    Left _               -> BS.null i || BS.head i /= W8._space
+    Right (struct, rest) -> all isWhitespace struct && (BS.null rest || not (isWhitespace (BS.head rest)))
+    Left _               -> BS.null i || not (isWhitespace (BS.head i))
 
 propStringWithChars :: [W8.Word8] -> BS.ByteString -> Bool
 propStringWithChars cs i = do
@@ -208,8 +208,8 @@ propTokenParser :: BS.ByteString -> Bool
 propTokenParser i = do
   let output = Parser.runParser Parser.tokenParser i
   case output of
-    Right (struct, _)    -> all W8.isAlphaNum struct || struct == [W8._asterisk]
-    Left _               -> BS.null i || BS.head i /= W8._asterisk || not (W8.isAlphaNum (BS.head i))
+    Right (struct, _)    -> struct == [W8._asterisk] || all isSubjectTokenChar struct
+    Left _               -> BS.null i || (BS.head i /= W8._asterisk && not (isSubjectTokenChar (BS.head i)))
 
 propWireTapParser :: BS.ByteString -> Bool
 propWireTapParser i = do
@@ -217,6 +217,22 @@ propWireTapParser i = do
   case output of
     Right (struct, _) -> struct == [W8._greater]
     Left _            -> BS.null i || BS.head i /= W8._greater
+
+isWhitespace :: W8.Word8 -> Bool
+isWhitespace w = w == charToWord8 ' ' || w == charToWord8 '\t'
+
+isSubjectTokenChar :: W8.Word8 -> Bool
+isSubjectTokenChar w =
+  w /= charToWord8 ' '
+    && w /= charToWord8 '\t'
+    && w /= charToWord8 '.'
+    && w /= charToWord8 '>'
+    && w /= charToWord8 '*'
+    && w /= charToWord8 '\r'
+    && w /= charToWord8 '\n'
+
+charToWord8 :: Char -> W8.Word8
+charToWord8 = fromIntegral . ord
 
 stringIsAscii :: BS.ByteString -> Bool
 stringIsAscii = all isAscii . B.unpack

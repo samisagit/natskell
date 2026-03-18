@@ -19,16 +19,16 @@ spec = do
 explicitCases :: [(BS.ByteString, Info)]
 explicitCases = [
   (
-    "INFO {\"server_id\": \"some-server\", \"version\": \"semver\", \"go\": \"1.13\", \"host\": \"127.0.0.1\", \"port\": 4222, \"max_payload\": 1024, \"proto\": 3, \"client_id\": 1, \"auth_required\": true, \"tls_required\": true, \"connect_urls\": [\"https://127.0.0.1:4222\"], \"ldm\": true, \"headers\": true}\r\n",
-    Info "some-server" "semver" "1.13" "127.0.0.1" 4222 1024 3 (Just 1) (Just True) (Just True) (Just ["https://127.0.0.1:4222"]) (Just True) (Just True)
+    "INFO {\"server_id\": \"some-server\", \"version\": \"semver\", \"go\": \"1.13\", \"host\": \"127.0.0.1\", \"port\": 4222, \"max_payload\": 1024, \"proto\": 3, \"client_id\": 1, \"nonce\": \"nonce-123\", \"auth_required\": true, \"tls_required\": true, \"connect_urls\": [\"https://127.0.0.1:4222\"], \"ldm\": true, \"headers\": true}\r\n",
+    Info "some-server" "semver" "1.13" "127.0.0.1" 4222 1024 3 (Just 1) (Just "nonce-123") (Just True) (Just True) (Just ["https://127.0.0.1:4222"]) (Just True) (Just True)
   ),
   (
     "INFO {\"server_id\": \"some-server\", \"version\": \"semver\", \"go\": \"1.13\", \"host\": \"127.0.0.1\", \"port\": 4222, \"max_payload\": 1024, \"proto\": 3}\r\n",
-    Info "some-server" "semver" "1.13" "127.0.0.1" 4222 1024 3 Nothing Nothing Nothing Nothing Nothing Nothing
+    Info "some-server" "semver" "1.13" "127.0.0.1" 4222 1024 3 Nothing Nothing Nothing Nothing Nothing Nothing Nothing
   ),
   (
     "INFO {\"server_id\": \"some-server\", \"version\": \"semver\", \"go\": \"1.13\", \"host\": \"127.0.0.1\", \"port\": 4222, \"max_payload\": 1024, \"proto\": 3, \"client_id\": 1, \"auth_required\": true, \"tls_required\": true, \"connect_urls\": [\"https://127.0.0.1:4222\", \"https://192.168.9.7:4222\"], \"ldm\": true, \"headers\": false}\r\n",
-    Info "some-server" "semver" "1.13" "127.0.0.1" 4222 1024 3 (Just 1) (Just True) (Just True) (Just ["https://127.0.0.1:4222", "https://192.168.9.7:4222"]) (Just True) (Just False)
+    Info "some-server" "semver" "1.13" "127.0.0.1" 4222 1024 3 (Just 1) Nothing (Just True) (Just True) (Just ["https://127.0.0.1:4222", "https://192.168.9.7:4222"]) (Just True) (Just False)
   )
   ]
 
@@ -44,6 +44,7 @@ generatedCases = zip (map buildProtoInput infos) infos
           <*> maxPayloadCases
           <*> protocolCases
           <*> maybeify clientIDCases
+          <*> maybeify nonceCases
           <*> maybeify boolCases
           <*> maybeify boolCases
           <*> maybeify connectStringCases
@@ -81,6 +82,8 @@ buildProtoInput m = foldr BS.append "" [
   newField "proto" (Just . packStr' . show . proto $ m),
   maybeComma (client_id m),
   newField "client_id" (fmap (packStr' . show) . client_id $ m),
+  maybeComma (nonce m),
+  newField "nonce" (fmap quote . nonce $ m),
   maybeComma (auth_required m),
   newField "auth_required" (fmap boolToJSON . auth_required $ m),
   maybeComma (tls_required m),
@@ -121,4 +124,3 @@ maybeComma :: Maybe a -> BS.ByteString
 maybeComma m = case m of
   Nothing -> ""
   Just _  -> ","
-

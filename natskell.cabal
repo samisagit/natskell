@@ -1,10 +1,8 @@
 cabal-version:          3.0
 name:                   natskell
-version:                0.0.0
+version:                0.0.0.1
 synopsis:               A NATS client library written in Haskell
 tested-with:
-  GHC ==8.4,
-  GHC ==8.6,
   GHC ==8.8,
   GHC ==8.10,
   GHC ==9.0,
@@ -40,7 +38,7 @@ source-repository head
 common shared
   default-language:     Haskell2010
   build-depends:
-    base  >= 4.11 && < 5,
+    base  >= 4.13 && < 5,
   ghc-options:
     -haddock -W -Wunused-packages
   pkgconfig-depends: zlib
@@ -49,26 +47,14 @@ library
   import:         shared
   build-depends:
     natskell-internal,
-    containers >= 0.5 && < 0.7,
-    hashable  >= 1.4 && < 1.6,
     stm  >= 2.5 && < 2.6,
-    text  (>= 1.2 && < 1.3) || (>= 2.0 && < 2.2),
-    network  >= 3.1 && < 3.3,
     bytestring  >= 0.10 && < 0.13,
-    network-simple  >= 0.4 && < 0.5,
     heap >= 0.6 && < 1.1,
-    time >= 1.9 && < 1.13,
-    random  >= 1.1 && < 1.3
+    time >= 1.9 && < 1.13
 
   exposed-modules:
+    API
     Client
-
-  other-modules:
-    Types
-    Sid
-    Options
-    MSGView
-    State
 
   hs-source-dirs:
        client
@@ -81,39 +67,84 @@ library natskell-internal
     aeson  >= 2.1 && < 2.3,
     word8  >= 0.0 && < 0.2,
     stm >= 2.5 && < 2.6,
+    containers >= 0.5 && < 0.7,
+    heap >= 0.6 && < 1.1,
+    time >= 1.9 && < 1.13,
+    network  >= 3.1 && < 3.3,
     mtl >= 2.2 && < 2.4,
-    text (>= 1.2 && < 1.3) || (>= 2.0 && < 2.2),
+    cryptonite >= 0.29 && < 0.31,
+    memory >= 0.14 && < 0.19,
+    random  >= 1.1 && < 1.3,
+    network-simple  >= 0.4 && < 0.5,
+    tls >= 1.8 && < 3.0,
+    text (>= 1.2 && < 1.3) || (>= 2.0 && < 2.2)
 
   exposed-modules:
+    Client.Auth
+    Client.Callbacks
+    Client.CallbacksAPI
+    Client.Internal
+    Client.Lifecycle
+    Client.LifecycleAPI
+    Client.PublishAPI
+    Client.Runtime
+    Client.RuntimeAPI
+    Client.Subscription
+    Client.SubscriptionAPI
+    State
     Lib.Parser
+    Lib.Parser.Types
+    Lib.ParserAPI
     Lib.Logger
+    Lib.Logger.Types
+    Lib.LoggerAPI
     Lib.CallOption
+    Lib.WorkerPool
     Parsers.Parsers
     Transformers.Transformers
+    Transformers.Types
+    Transformers.TransformersAPI
     Validators.Validators
     Types.Msg
     Types.Ping
     Types.Pong
     Types.Ok
     Types.Err
+    Types.Err.Types
     Types.Info
+    Types.Info.Types
     Types.Pub
     Types.Connect
+    Types.Connect.Types
     Types.Sub
     Types.Unsub
+    Types
+    Sid
+    Sid.Types
+    SidAPI
+    Nuid
+    Nuid.Types
+    NuidAPI
+    Auth.NKey
     WaitGroup
     Pipeline.Broadcasting.Source
     Pipeline.Broadcasting.Transformer
     Pipeline.Broadcasting.Sink
     Pipeline.Broadcasting.API
+    Pipeline.Broadcasting
     Pipeline.Streaming.API
+    Pipeline.Streaming
     Pipeline.Streaming.Source
     Pipeline.Streaming.Parser
     Pipeline.Streaming.Sink
     Network.API
     Network.Connection
+    Network.Connection.Types
+    Network.ConnectionAPI
     Queue.API
     Queue.TransactionalQueue
+    Queue.TransactionalQueue.Types
+    Queue.TransactionalQueueAPI
 
   hs-source-dirs:
     internal
@@ -150,7 +181,8 @@ test-suite unit-test
     word8,
     aeson,
     stm,
-    text
+    text,
+    random
 
   other-modules:
     ParserSpec
@@ -164,8 +196,14 @@ test-suite unit-test
     ConnectSpec
     SubSpec
     UnsubSpec
+    NKeySpec
+    ConnectionSpec
     Fixtures
     StreamingSpec
+    SidSpec
+    NuidSpec
+    WorkerPoolSpec
+    WaitGroupSpec
 
 test-suite fuzz-test
   import:         shared

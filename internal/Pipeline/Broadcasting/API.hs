@@ -1,15 +1,13 @@
-module Pipeline.Broadcasting.API where
+{-# LANGUAGE RankNTypes #-}
 
-import           Conduit
-import           Lib.Logger
-import           Network.API
-import           Pipeline.Broadcasting.Sink
-import           Pipeline.Broadcasting.Source
-import           Pipeline.Broadcasting.Transformer
-import           Queue.API
-import           Transformers.Transformers         (Transformer)
+module Pipeline.Broadcasting.API
+  ( BroadcastingAPI (..)
+  ) where
 
-run :: (MonadLogger m , MonadIO m, ConnectionWriter writer, Transformer t, Queue q t)
-  => q -> writer -> m ()
-run q w = do
-  runConduit $ source q .| transformer .| sink w
+import           Control.Monad.IO.Class (MonadIO)
+import           Lib.Logger.Types       (MonadLogger)
+import           Network.API            (ConnectionWriter)
+import           Queue.API              (Queue)
+import           Transformers.Types     (Transformer)
+
+newtype BroadcastingAPI = BroadcastingAPI { broadcastingRun :: forall m q t writer. (MonadLogger m, MonadIO m, ConnectionWriter writer, Transformer t, Queue q t) => Int -> q -> writer -> m () }

@@ -1,23 +1,69 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Lib.Parser where
+module Lib.Parser
+  ( module Lib.Parser.Types
+  , offset
+  , deepestErr
+  , solveErr
+  , char
+  , charIn
+  , w8sToString
+  , space
+  , ss
+  , spaces1
+  , string
+  , stringBS
+  , stringWithChars
+  , alphaNumeric
+  , alphaNumerics
+  , alphaNumericsBS
+  , subjectTokenChar
+  , ascii
+  , asciis
+  , anyByte
+  , not'
+  , til
+  , takeTill1
+  , digit
+  , integer
+  , integerBS
+  , take'
+  , takeBytes
+  , tokenParser
+  , wireTapParser
+  , specificSubjectParser
+  , subjectParser
+  , subjectParserBS
+  , headersParser
+  , headerPairsParser
+  , headerPairParser
+  , stripSpace
+  , stripSpaceBS
+  , spaceChar
+  , tabChar
+  , isWhitespace
+  , isSubjectTokenChar
+  , charToWord8
+  , toInt
+  , toIntW8
+  , toIntBS
+  , parserApi
+  ) where
 
 import           Control.Applicative
 import           Control.Monad.Fail    (MonadFail (..))
 import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as C
+import           Data.Char             (ord)
+import           Data.List             (foldl')
 import qualified Data.Word8            as W8
+import           Lib.Parser.Types
+import           Lib.ParserAPI         (ParserAPI (..))
 import           Prelude               hiding (fail)
-
-data ParserErr = UnexpectedEndOfInput String Int
-               | UnexpectedChar String Int
-  deriving (Eq, Show)
 
 offset :: ParserErr -> Int
 offset (UnexpectedEndOfInput _ o) = o
 offset (UnexpectedChar _ o)       = o
-
-newtype Parser a = Parser { runParser :: BS.ByteString -> Either ParserErr (a, BS.ByteString) }
 
 instance Functor Parser where
   fmap f (Parser runner) = Parser $ \bs -> do
@@ -25,7 +71,7 @@ instance Functor Parser where
     return (f struct, bs')
 
 instance Applicative Parser where
-  pure x = Parser $ \bs -> Right(x, bs)
+  pure x = Parser $ \bs -> Right (x, bs)
   (Parser runnerA) <*> (Parser runnerB) = Parser $ \bs -> do
     (f, bs1) <- runnerA bs
     (struct, bs2) <- runnerB bs1
@@ -62,9 +108,6 @@ deepestErr a b
   | offset a > offset b = b
   | otherwise = a
 
-data Suggestion = SuggestDrop Int String
-                | SuggestPull
-
 solveErr :: ParserErr -> Int -> Suggestion
 solveErr (UnexpectedEndOfInput _ _) _    = SuggestPull -- This suggests we pull more data to satisfy the parser.
 solveErr (UnexpectedChar r depth) length = SuggestDrop ((length - depth)+1) r   -- This suggests we drop the invalid prefix.
@@ -79,26 +122,46 @@ char c = Parser charP
     errString bs = w8sToString [BS.head bs] ++ " does not match " ++ w8sToString [c] ++ " in " ++ C.unpack bs
 
 charIn :: [W8.Word8] -> Parser W8.Word8
-charIn opts = Parser charP
+charIn allowedBytes = Parser charP
   where
     charP bs
       | BS.empty == bs = Left (UnexpectedEndOfInput "nothing to read" 0)
-      | BS.head bs `elem` opts = Right (BS.head bs, BS.tail bs)
+      | BS.head bs `elem` allowedBytes = Right (BS.head bs, BS.tail bs)
       | otherwise = Left (UnexpectedChar (errString bs) (BS.length bs))
-    errString bs = w8sToString [BS.head bs] ++ " not in " ++ w8sToString opts ++ " in " ++ C.unpack bs
+    errString bs = w8sToString [BS.head bs] ++ " not in " ++ w8sToString allowedBytes ++ " in " ++ C.unpack bs
 
 w8sToString :: [W8.Word8] -> String
 w8sToString = C.unpack . BS.pack
 
 space :: Parser W8.Word8
-space = char W8._space
+space = charIn [spaceChar, tabChar]
 
 ss = some space
+
+spaces1 :: Parser ()
+spaces1 = Parser $ \bs ->
+  case BS.span isWhitespace bs of
+    (spaces, rest)
+      | BS.null spaces ->
+        if BS.null bs
+          then Left (UnexpectedEndOfInput "nothing to read" 0)
+          else Left (UnexpectedChar (errString bs) (BS.length bs))
+      | otherwise -> Right ((), rest)
+  where
+    errString bs =
+      w8sToString [BS.head bs]
+        ++ " not in "
+        ++ w8sToString [spaceChar, tabChar]
+        ++ " in "
+        ++ C.unpack bs
 
 string :: BS.ByteString -> Parser [W8.Word8]
 string bs = mapM char w8s
   where
     w8s = BS.unpack bs
+
+stringBS :: BS.ByteString -> Parser BS.ByteString
+stringBS target = BS.pack <$> string target
 
 stringWithChars :: [W8.Word8] -> Parser [W8.Word8]
 stringWithChars s = some (charIn s)
@@ -113,6 +176,17 @@ alphaNumeric = Parser charP
 alphaNumerics :: Parser [W8.Word8]
 alphaNumerics = some alphaNumeric
 
+alphaNumericsBS :: Parser BS.ByteString
+alphaNumericsBS = BS.pack <$> alphaNumerics
+
+subjectTokenChar :: Parser W8.Word8
+subjectTokenChar = Parser charP
+  where
+    charP bs
+      | BS.empty == bs = Left (UnexpectedEndOfInput "nothing to read" (BS.length bs))
+      | isSubjectTokenChar (BS.head bs) = Right (BS.head bs, BS.tail bs)
+      | otherwise = Left (UnexpectedChar (w8sToString [BS.head bs] ++ " is not a valid subject token char in " ++ C.unpack bs) (BS.length bs))
+
 ascii = Parser charP
   where
     charP bs
@@ -122,6 +196,12 @@ ascii = Parser charP
 
 asciis :: Parser [W8.Word8]
 asciis = some ascii
+
+anyByte :: Parser W8.Word8
+anyByte = Parser $ \bs ->
+  case BS.uncons bs of
+    Nothing -> Left (UnexpectedEndOfInput "nothing to read" (BS.length bs))
+    Just (byte, rest) -> Right (byte, rest)
 
 not' :: W8.Word8 -> Parser W8.Word8
 not' c = Parser charP
@@ -134,7 +214,10 @@ not' c = Parser charP
 til :: W8.Word8 -> Parser [W8.Word8]
 til d = Parser $ \x -> do
   if BS.elem d x then runParser (some (not' d)) x
-    else Left( UnexpectedEndOfInput "unexpected end of input" (BS.length x))
+    else Left ( UnexpectedEndOfInput "unexpected end of input" (BS.length x))
+
+takeTill1 :: W8.Word8 -> Parser BS.ByteString
+takeTill1 d = BS.pack <$> til d
 
 digit :: Parser W8.Word8
 digit = charIn [W8._0 .. W8._9]
@@ -142,12 +225,18 @@ digit = charIn [W8._0 .. W8._9]
 integer :: Parser [W8.Word8]
 integer = stringWithChars [W8._0 .. W8._9]
 
+integerBS :: Parser BS.ByteString
+integerBS = BS.pack <$> integer
+
 take' :: Int -> Parser W8.Word8 -> Parser [W8.Word8]
 take' 0 _ = string ""
 take' n p = (:) <$> p <*> take' (n -1) p
 
+takeBytes :: Int -> Parser BS.ByteString
+takeBytes n = BS.pack <$> take' n anyByte
+
 tokenParser :: Parser [W8.Word8]
-tokenParser = alphaNumerics <|> string "*"
+tokenParser = string "*" <|> some subjectTokenChar
 
 wireTapParser :: Parser [W8.Word8]
 wireTapParser = do
@@ -156,21 +245,23 @@ wireTapParser = do
 specificSubjectParser :: Parser [W8.Word8]
 specificSubjectParser = do
   head <- tokenParser
-  rest <- ((++) <$> string "." <*> subjectParser) <|> (string ".>" <|> string "")
+  rest <- ((++) <$> string "." <*> subjectParser) <|> (ss >> return [])
   return (head ++ rest)
 
 subjectParser :: Parser [W8.Word8]
-subjectParser = do
-  wireTapParser <|> specificSubjectParser
+subjectParser = (wireTapParser <* ss) <|> specificSubjectParser
+
+subjectParserBS :: Parser BS.ByteString
+subjectParserBS = BS.pack <$> subjectParser
 
 headersParser :: Int -> Parser [(BS.ByteString, BS.ByteString)]
 headersParser 0 = do
   return []
 headersParser n = do
-  pre <- string "NATS/"
-  version <- til W8._cr
-  suf <- string "\r\n"
-  headerPairsParser (n - sum (map (BS.length . BS.pack) [pre, version, suf]))
+  _ <- stringBS "NATS/"
+  version <- takeTill1 W8._cr
+  _ <- stringBS "\r\n"
+  headerPairsParser (n - (BS.length "NATS/" + BS.length version + 2))
 
 headerPairsParser :: Int -> Parser [(BS.ByteString, BS.ByteString)]
 headerPairsParser 0 = do
@@ -182,23 +273,67 @@ headerPairsParser n = do
 
 headerPairParser :: Parser (BS.ByteString, BS.ByteString, Int)
 headerPairParser = do
-  key <- til W8._colon
+  key <- takeTill1 W8._colon
   char W8._colon
-  value <- til W8._cr
-  string "\r\n"
-  return (toUnspacedBS key, toUnspacedBS value, bslength key + 1 + bslength value + 2)
+  value <- takeTill1 W8._cr
+  _ <- stringBS "\r\n"
+  return (toUnspacedBS key, toUnspacedBS value, BS.length key + 1 + BS.length value + 2)
     where
-      toUnspacedBS = BS.pack . stripSpace
-      bslength = fromIntegral . BS.length . BS.pack
+      toUnspacedBS = stripSpaceBS
 
 stripSpace :: [W8.Word8] -> [W8.Word8]
 stripSpace [] = []
 stripSpace xs = Prelude.takeWhile isNotSpace . Prelude.dropWhile isSpace $ xs
   where
-    isSpace = (==) W8._space
-    isNotSpace = (/=) W8._space
+    isSpace = isWhitespace
+    isNotSpace = not . isWhitespace
+
+stripSpaceBS :: BS.ByteString -> BS.ByteString
+stripSpaceBS =
+  BS.dropWhile isWhitespace . dropWhileEndBS isWhitespace
+
+dropWhileEndBS :: (W8.Word8 -> Bool) -> BS.ByteString -> BS.ByteString
+dropWhileEndBS predicate =
+  BS.reverse . BS.dropWhile predicate . BS.reverse
+
+spaceChar :: W8.Word8
+spaceChar = charToWord8 ' '
+
+tabChar :: W8.Word8
+tabChar = charToWord8 '\t'
+
+isWhitespace :: W8.Word8 -> Bool
+isWhitespace w = w == spaceChar || w == tabChar
+
+isSubjectTokenChar :: W8.Word8 -> Bool
+isSubjectTokenChar w =
+  w /= spaceChar
+    && w /= tabChar
+    && w /= charToWord8 '.'
+    && w /= charToWord8 '>'
+    && w /= charToWord8 '*'
+    && w /= charToWord8 '\r'
+    && w /= charToWord8 '\n'
+
+charToWord8 :: Char -> W8.Word8
+charToWord8 = fromIntegral . ord
 
 
 toInt :: BS.ByteString -> Int
 toInt bs = read (C.unpack bs) :: Int
 
+toIntW8 :: [W8.Word8] -> Int
+toIntW8 = foldl' step 0
+  where
+    step acc w = acc * 10 + (fromIntegral w - fromIntegral W8._0)
+
+toIntBS :: BS.ByteString -> Int
+toIntBS = BS.foldl' step 0
+  where
+    step acc w = acc * 10 + (fromIntegral w - fromIntegral W8._0)
+
+parserApi :: ParserAPI
+parserApi = ParserAPI
+  { parserRun = runParser
+  , parserSolveErr = solveErr
+  }

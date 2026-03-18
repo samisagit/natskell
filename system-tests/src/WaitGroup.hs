@@ -12,9 +12,6 @@ newWaitGroup n = do
   c <- newTVarIO n
   WaitGroup c <$> newEmptyTMVarIO
 
-add :: WaitGroup -> Int -> IO ()
-add wg n = atomically $ modifyTVar' (count wg) (+n)
-
 done :: WaitGroup -> IO ()
 done wg = atomically $ do
   -- decrement the count

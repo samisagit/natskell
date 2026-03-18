@@ -49,6 +49,7 @@ connectRules c
   | protocol c `notElem` [Nothing, Just 0, Just 1] = False
   | sig c == Just "" = False
   | jwt c == Just "" = False
+  | nkey c == Just "" = False
   | otherwise = True
 
 
@@ -110,6 +111,7 @@ instance Arbitrary Connect where
                        <*> arbitrary
                        <*> arbitrary
                        <*> arbitrary
+                       <*> arbitrary
 
 instance Arbitrary Pub where
    arbitrary = Pub <$> arbitrary
@@ -127,4 +129,3 @@ instance Arbitrary Unsub where
                      <*> arbitrary
 
 instance Arbitrary BS.ByteString where arbitrary = BS.pack <$> arbitrary
-

@@ -1,13 +1,13 @@
 module Pipeline.Broadcasting.Sink where
 
 import           Conduit
-import qualified Data.ByteString as BS
-import           Lib.Logger
+import qualified Data.ByteString.Lazy as LBS
+import           Lib.Logger.Types     (LogLevel (..), MonadLogger (..))
 import           Network.API
 
 sink :: (MonadLogger m , MonadIO m, ConnectionWriter writer)
   => writer
-  -> ConduitT BS.ByteString Void m ()
+  -> ConduitT LBS.ByteString Void m ()
 sink w = do
   bs <- await
   case bs of
@@ -15,7 +15,7 @@ sink w = do
       lift . logMessage Debug $ "no more data to write; stopping sink"
       return ()
     Just bs -> do
-      res <- liftIO $ writeData w bs
+      res <- liftIO $ writeDataLazy w bs
       case res of
         Left err -> do
           lift . logMessage Error $ ("write failed: " ++ err)

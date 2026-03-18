@@ -1,6 +1,8 @@
 module WaitGroup where
 
+import           Control.Concurrent     (ThreadId, forkIO)
 import           Control.Concurrent.STM
+import           Control.Exception      (finally)
 
 data WaitGroup = WaitGroup
                    { count :: TVar Int
@@ -29,3 +31,6 @@ wait wg = atomically $ do
   -- wait for the lock to be released, then replace it
   l <- takeTMVar (lock wg)
   putTMVar (lock wg) l
+
+forkWaitGroup :: WaitGroup -> IO () -> IO ThreadId
+forkWaitGroup wg action = forkIO (action `finally` done wg)

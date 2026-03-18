@@ -4,6 +4,7 @@ module SubSpec (spec) where
 
 import           Control.Monad
 import           Data.ByteString
+import qualified Data.ByteString.Lazy      as LBS
 import           Test.Hspec
 import           Text.Printf
 import           Transformers.Transformers
@@ -25,7 +26,7 @@ transformerCases = parallel $ do
   describe "SUB transformer" $ do
     forM_ explicitTransformerCases $ \(input, want) ->
       it (printf "correctly transforms %s" (show input)) $ do
-        transform input `shouldBe` want
+        LBS.toStrict (transform input) `shouldBe` want
 
 explicitValidaterCases :: [(Sub, Either ByteString ())]
 explicitValidaterCases = [
@@ -41,4 +42,3 @@ validateCases = parallel $ do
     forM_ explicitValidaterCases $ \(input, want) ->
       it (printf "correctly validates %s" (show input)) $ do
         validate input `shouldBe` want
-

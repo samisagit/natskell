@@ -4,6 +4,7 @@ module PongSpec (spec) where
 
 import           Control.Monad
 import qualified Data.ByteString           as BS
+import qualified Data.ByteString.Lazy      as LBS
 import           Parsers.Parsers
 import           Test.Hspec
 import           Text.Printf
@@ -31,10 +32,9 @@ cases = parallel $ do
   describe "PONG transformer" $ do
     forM_ explicitTransformerCases $ \(input, want) -> do
       it (printf "correctly transforms %s" (show input)) $ do
-        transform input `shouldBe` want
+        LBS.toStrict (transform input) `shouldBe` want
 
 validateCase = parallel $ do
   describe "PONG validater" $ do
     it "correctly validates PONG" $ do
       validate Pong `shouldBe` Right ()
-

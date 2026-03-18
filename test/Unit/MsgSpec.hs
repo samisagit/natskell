@@ -20,17 +20,17 @@ spec = do
 explicitCases :: [(BS.ByteString, Msg)]
 explicitCases = [
   ("MSG FOO 13 BAR 17\r\nsome payload bits\r\n", Msg "FOO" "13" (Just "BAR") (Just "some payload bits") Nothing),
-  ("MSG FOO 13 BAR 0\r\n", Msg "FOO" "13" (Just "BAR") Nothing Nothing),
+  ("MSG FOO 13 BAR 0\r\n\r\n", Msg "FOO" "13" (Just "BAR") Nothing Nothing),
   ("MSG FOO 13 17\r\nsome payload bits\r\n", Msg "FOO" "13" Nothing (Just"some payload bits") Nothing),
-  ("MSG FOO 13 0\r\n", Msg "FOO" "13" Nothing Nothing Nothing),
+  ("MSG FOO 13 0\r\n\r\n", Msg "FOO" "13" Nothing Nothing Nothing),
   ("MSG FOO 13 20\r\nmulti\r\nline\r\npayload\r\n", Msg "FOO" "13" Nothing (Just "multi\r\nline\r\npayload") Nothing),
-  ("MSG FOO.BAR.BAZ 13 IN.*.BOX.> 0\r\n", Msg "FOO.BAR.BAZ" "13" (Just "IN.*.BOX.>") Nothing Nothing),
+  ("MSG FOO.BAR.BAZ 13 IN.*.BOX.> 0\r\n\r\n", Msg "FOO.BAR.BAZ" "13" (Just "IN.*.BOX.>") Nothing Nothing),
   ("HMSG FOO 13 BAR 24 41\r\nNATS/1.0\r\nKEY: VALUE\r\n\r\nsome payload bits\r\n", Msg "FOO" "13" (Just "BAR") (Just "some payload bits") (Just [("KEY", "VALUE")])),
   ("HMSG FOO 13 24 44\r\nNATS/1.0\r\nKEY: VALUE\r\n\r\nmulti\r\nline\r\npayload\r\n", Msg "FOO" "13" Nothing (Just "multi\r\nline\r\npayload") (Just [("KEY", "VALUE")]))
   ]
 
 generatedCases :: [(BS.ByteString, Msg)]
-generatedCases = zip (map buildProtoInput msgs) msgs
+generatedCases = zip (map buildProtoInput msgs) (map expectedMsg msgs)
   where
     msgs = (Msg
             <$> subjectCases
@@ -38,6 +38,11 @@ generatedCases = zip (map buildProtoInput msgs) msgs
             <*> maybeify subjectCases)
             <*> payloadCases
             <*> maybeify headerCases
+
+expectedMsg :: Msg -> Msg
+expectedMsg msg
+  | isJust (headers msg) && isNothing (payload msg) = msg { payload = Just "" }
+  | otherwise = msg
 
 cases = parallel $ do
   describe "generic parser" $ do
@@ -68,7 +73,7 @@ buildProtoInput m = do
     if isNothing . headers $ m then "" else "\r\n",
     headerProto,
     if isJust . headers $ m then "" else "\r\n",
-    collapseNothing (payload m) "\r\n"
+    payloadProto (payload m)
     ]
 
 buildHeaderInput :: Maybe [(BS.ByteString, BS.ByteString)] -> BS.ByteString
@@ -84,10 +89,14 @@ collapseNothing mbs suffix = case mbs of
   Just a  -> BS.append a suffix
   Nothing -> ""
 
+payloadProto :: Maybe BS.ByteString -> BS.ByteString
+payloadProto mbs = case mbs of
+  Just payloadValue -> BS.append payloadValue "\r\n"
+  Nothing           -> "\r\n"
+
 payloadLength :: Maybe BS.ByteString -> Int
 payloadLength Nothing   = 0
 payloadLength (Just xs) = BS.length xs
 
 packStr' :: String -> BS.ByteString
 packStr' = encodeUtf8 . T.pack
-

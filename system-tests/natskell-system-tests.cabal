@@ -20,16 +20,39 @@ common shared
 test-suite test
   import: shared
   type: exitcode-stdio-1.0
+  ghc-options:
+    -threaded
+    -rtsopts
+    -with-rtsopts=-N
   hs-source-dirs:
     test/System
     src
   build-depends:
     natskell,
     bytestring,
+    directory,
     stm,
     hspec,
     testcontainers
   other-modules:
-    ClientSpec
+    ClientAuthJwtCredsSpec
+    ClientAuthNKeySpec
+    ClientAuthTokenSpec
+    ClientAuthTlsCertSpec
+    ClientAuthTlsJwtCredsSpec
+    ClientAuthTlsNKeySpec
+    ClientAuthTlsTokenSpec
+    ClientAuthTlsUserPassSpec
+    ClientAuthUserPassSpec
+    ClientAuthUsersSpec
+    ClientCloseSpec
+    ClientCycleSpec
+    ClientFatalErrorSpec
+    ClientMessagesSpec
+    ClientNoServersSpec
+    ClientPingSpec
+    ClientRepliesSpec
+    NatsServerConfig
+    TestSupport
     WaitGroup
-  main-is: Main.hs
+  main-is: Spec.hs
