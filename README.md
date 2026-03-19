@@ -85,6 +85,6 @@ There is a public cachix store at samisagit-natskell for this flake.
 
 You can run the pure tests with `nix flake check`.
 
-Integration tests need access to a socket, so you will need to run `nix develop --command bash -c "cabal test -fimpure client-test"` to run them.
+Integration tests need access to a socket, so you will need to run `nix develop "cabal test -fimpure integration-tests"` to run them.
 
-System tests need access to a NATS server, so you will need to run `nix develop --command bash -c "cabal test system-tests"` to run them.
+System tests need access to a NATS server, so you will need to run `nix develop "cabal test ./system-tests"` to run them.

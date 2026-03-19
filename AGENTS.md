@@ -13,7 +13,7 @@
 - `cabal build all` builds libraries and test suites.
 - `cabal test natskell:test:unit-test` runs unit tests.
 - `cabal test natskell:test:fuzz-test` runs fuzz tests.
-- `cabal test natskell:test:client-test -f impure` runs integration tests (skipped without `-f impure`).
+- `cabal test natskell:test:integration-tests -f impure` runs integration tests (skipped without `-f impure`).
 - `cabal test system-tests` runs system tests (requires Docker/TestContainers and a reachable NATS image).
 - `nix flake check` runs Nix checks in a CI-like mode (tests, lint, formatting, packaging checks).
 
@@ -45,4 +45,3 @@
 - For new features, add unit tests first, then integration tests if necessary.
 - If there are breaking changes or behaviour changes, add system tests to verify the expected behaviour of the NATS server with the new client changes.
 - When you run into a tooling issue, update the AGENT_LESSONS.md file with the solution to the issue, so that future agents can learn from it and avoid the same issue. If you fail to diagnose the issue, prompt for a user fix.
-

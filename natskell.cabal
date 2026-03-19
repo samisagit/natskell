@@ -224,7 +224,7 @@ flag impure
   default: False
   manual: True
 
-test-suite client-test
+test-suite integration-tests
   import:         shared
   hs-source-dirs: test/Integration
   build-depends:

@@ -16,6 +16,15 @@ jobs:
       with:
         github_access_token: ${{ secrets.GITHUB_TOKEN }}
     - run: nix flake check
+  integration-test:
+    name: integration-test
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: cachix/install-nix-action@v31
+      with:
+        github_access_token: ${{ secrets.GITHUB_TOKEN }}
+    - run: nix develop --command bash -c "cabal test natskell:test:integration-tests -f impure --test-show-details=direct"
   system-test:
     name: system-test
     runs-on: ubuntu-latest
@@ -27,7 +36,7 @@ jobs:
     - run: nix develop --command bash -c "cabal test --project-file=cabal.project.system-tests natskell-system-tests:test"
   build:
     name: build
-    needs: [check, system-test]
+    needs: [check, integration-test, system-test]
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
