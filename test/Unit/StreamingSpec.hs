@@ -32,7 +32,7 @@ import           GHC.IO.Handle
 import           GHC.IO.IOMode
 import           Lib.Logger
 import           Lib.Parser
-import           Network.API
+import           Network.ConnectionAPI     (ReaderAPI (..), WriterAPI (..))
 import           Network.Socket            hiding (Debug)
 import qualified Pipeline.Broadcasting     as Broadcast
 import           Pipeline.Streaming        (run)
@@ -61,23 +61,29 @@ bufferLimit = 4096
 
 newtype CaptureWriter = CaptureWriter (TVar [ByteString])
 
-instance ConnectionWriter CaptureWriter where
-  writeData (CaptureWriter output) bytes = do
-    atomically $ modifyTVar' output (<> [bytes])
-    pure (Right ())
-  writeDataLazy writer bytes = writeData writer (LBS.toStrict bytes)
-  closeWriter _ = pure ()
-  openWriter _ = pure ()
+captureWriterApi :: WriterAPI CaptureWriter
+captureWriterApi =
+  WriterAPI
+    { writerWriteData = \(CaptureWriter output) bytes -> do
+        atomically $ modifyTVar' output (<> [bytes])
+        pure (Right ())
+    , writerWriteDataLazy = \writer bytes ->
+        writerWriteData captureWriterApi writer (LBS.toStrict bytes)
+    , writerClose = \_ -> pure ()
+    , writerOpen = \_ -> pure ()
+    }
 
-instance ConnectionReader Handle where
-  readData h n = do
-    result <- try (hGetSome h n) :: IO (Either SomeException ByteString)
-    case result of
-      Left err    -> return $ Left (show err)
-      Right bytes -> return $ Right bytes
-
-  closeReader = hClose
-  openReader _ = pure ()
+handleReaderApi :: ReaderAPI Handle
+handleReaderApi =
+  ReaderAPI
+    { readerReadData = \h n -> do
+        result <- try (hGetSome h n) :: IO (Either SomeException ByteString)
+        case result of
+          Left err    -> return $ Left (show err)
+          Right bytes -> return $ Right bytes
+    , readerClose = hClose
+    , readerOpen = \_ -> pure ()
+    }
 
 spec :: Spec
 spec = do
@@ -89,7 +95,7 @@ spec = do
         let sink curr = atomically $ modifyTVar' result (`append` curr)
         dl <- defaultLogger'
         ctx <- newLogContext
-        (forkIO . runWithLogger dl ctx) (run bufferLimit client parser sink :: AppM ())
+        (forkIO . runWithLogger dl ctx) (run bufferLimit handleReaderApi client parser sink :: AppM ())
         hPut server "Hello, World"
         atomically $ assertTVarWithRetry result "Hello, World"
         hClose server
@@ -101,7 +107,7 @@ spec = do
         let sink curr = atomically $ modifyTVar' result (`append` curr)
         dl <- defaultLogger'
         ctx <- newLogContext
-        (forkIO . runWithLogger dl ctx) (run bufferLimit client parser sink :: AppM ())
+        (forkIO . runWithLogger dl ctx) (run bufferLimit handleReaderApi client parser sink :: AppM ())
         hPut server "Hello, World"
         atomically $ assertTVarWithRetry result "Hello, World"
         hPut server "Hello, again"
@@ -114,7 +120,7 @@ spec = do
         let sink curr = atomically $ modifyTVar' result (`append` curr)
         dl <- defaultLogger'
         ctx <- newLogContext
-        (forkIO . runWithLogger dl ctx) (run bufferLimit client testParserExcludingUpper sink :: AppM ())
+        (forkIO . runWithLogger dl ctx) (run bufferLimit handleReaderApi client testParserExcludingUpper sink :: AppM ())
         hPut server "HELLO WORLD hello, world"
         atomically $ assertTVarWithRetry result "  hello, world"
         hClose server
@@ -125,7 +131,7 @@ spec = do
         let sink curr = atomically $ modifyTVar' result (`append` curr)
         dl <- defaultLogger'
         ctx <- newLogContext
-        (forkIO . runWithLogger dl ctx) (run bufferLimit client testParserForExplicitWord sink :: AppM ())
+        (forkIO . runWithLogger dl ctx) (run bufferLimit handleReaderApi client testParserForExplicitWord sink :: AppM ())
         hPut server "part1"
         threadDelay 100000
         atomically $ ensureTVarIsEmpty result
@@ -142,7 +148,7 @@ spec = do
         let pub = Pub.Pub "FOO" Nothing Nothing (Just "0123456789")
         Queue.enqueue q (QueueItem pub) `shouldReturn` Right ()
         Queue.close q
-        runWithLogger dl ctx (Broadcast.run 5 q (CaptureWriter output) :: AppM ())
+        runWithLogger dl ctx (Broadcast.run 5 q captureWriterApi (CaptureWriter output) :: AppM ())
         readTVarIO output `shouldReturn` []
 
 ensureTVarIsEmpty :: TVar ByteString -> STM ()

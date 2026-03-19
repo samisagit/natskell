@@ -1,10 +1,12 @@
 module Client.PublishAPI
-  ( PublishConfig
+  ( Payload
+  , Headers
+  , PublishConfig
   , defaultPublishConfig
   ) where
 
-import           Types     (Headers, Payload)
 import qualified Types.Msg as M
+import           Types.Msg (Headers, Payload)
 
 type PublishConfig = (Maybe Payload, Maybe (Maybe M.Msg -> IO ()), Maybe Headers)
 

@@ -25,7 +25,7 @@ import           Client.SubscriptionAPI         (SubscriptionState)
 import           Control.Concurrent.STM         (TQueue, TVar)
 import qualified Data.ByteString                as BS
 import           Lib.Logger.Types               (AppM, LogContext, LoggerConfig)
-import           Network.Connection.Types       (Conn)
+import           Network.ConnectionAPI          (Conn)
 import           Nuid.Types                     (Nuid)
 import           Queue.TransactionalQueue.Types (Q, QueueItem)
 import           Sid.Types                      (SIDCounter)

@@ -117,14 +117,12 @@ library natskell-internal
     Types.Connect.Types
     Types.Sub
     Types.Unsub
-    Types
     Sid
     Sid.Types
     SidAPI
     Nuid
     Nuid.Types
     NuidAPI
-    Auth.NKey
     WaitGroup
     Pipeline.Broadcasting.Source
     Pipeline.Broadcasting.Transformer
@@ -136,10 +134,10 @@ library natskell-internal
     Pipeline.Streaming.Source
     Pipeline.Streaming.Parser
     Pipeline.Streaming.Sink
-    Network.API
-    Network.Connection
-    Network.Connection.Types
     Network.ConnectionAPI
+    Network.Connection.Core
+    Network.Connection.Tcp
+    Network.Connection.Tls
     Queue.API
     Queue.TransactionalQueue
     Queue.TransactionalQueue.Types

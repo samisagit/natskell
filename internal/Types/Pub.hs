@@ -5,13 +5,14 @@ module Types.Pub where
 import           Data.ByteString       hiding (foldr, map)
 import           Data.Maybe
 import           Prelude               hiding (concat, length, null)
+import           Types.Msg             (Headers, Payload, Subject)
 import           Validators.Validators
 
 data Pub = Pub
-             { subject :: ByteString
-             , replyTo :: Maybe ByteString
-             , headers :: Maybe [(ByteString, ByteString)]
-             , payload :: Maybe ByteString
+             { subject :: Subject
+             , replyTo :: Maybe Subject
+             , headers :: Maybe Headers
+             , payload :: Maybe Payload
              }
   deriving (Eq, Show)
 
@@ -44,4 +45,3 @@ validateHeaders p
   | Prelude.any (\(k, _) -> k == "") (fromJust (headers p)) = Left "explicit empty header key"
   | Prelude.any (\(_, v) -> v == "") (fromJust (headers p)) = Left "explicit empty header value"
   | otherwise = Right ()
-

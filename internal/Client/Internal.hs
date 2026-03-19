@@ -66,12 +66,12 @@ import qualified Data.ByteString             as BS
 import           Data.Maybe
 import           Lib.Logger
 import qualified Lib.Parser                  as Parser
-import           Network.API
-import           Network.Connection          (connectionApi)
 import           Network.ConnectionAPI
     ( Conn
     , ConnectionAPI (..)
+    , ReaderAPI (..)
     , TransportOption (..)
+    , connectionApi
     )
 import           Nuid                        (nuidApi)
 import           Parsers.Parsers
@@ -83,10 +83,10 @@ import qualified Queue.API                   as Queue
 import           Queue.TransactionalQueue    (queueApi)
 import           Queue.TransactionalQueueAPI (QueueItem (..))
 import           Sid                         (sidApi)
-import           Types
 import qualified Types.Connect               as Connect (Connect (..))
 import qualified Types.Err                   as E
 import qualified Types.Info                  as I
+import           Types.Msg                   (Subject)
 import           Types.Ping
 import           Types.Pong
 import qualified Types.Pub                   as P
@@ -161,7 +161,7 @@ shutdownClient client reason message = do
   atomically $ lifecycleSetClosing lifecycleApi client reason
   runtimeRunClient runtimeApi client $ logMessage Info message
   Queue.close $ queue client
-  closeReader (conn client)
+  readerClose (connectionReaderApi connectionApi) (conn client)
   atomically $ lifecycleWaitForClosed lifecycleApi client
   callbacksAwaitDrain callbacksApi client
 
@@ -180,16 +180,14 @@ acquireTransport client = do
     xs -> do
       let (host, port) = cycle xs !! attempts
       updateLogContext (logContext client) (\ctx -> ctx { lcServer = Just (host ++ ":" ++ show port) })
-      transportResult <- connectionOpenTcpTransport connectionApi host port
-      case transportResult of
+      connectResult <- connectionConnectTcp connectionApi (conn client) host port
+      case connectResult of
         Left err -> return (Left err)
-        Right transport -> do
-          connectionPointTransport connectionApi (conn client) transport
-          return . Right $ (conn client, (host, port))
+        Right () -> return . Right $ (conn client, (host, port))
 
 decomTransport ::  Either String (Conn, (String, Int)) -> IO ()
 decomTransport (Left _)       = return ()
-decomTransport (Right (h, _)) = closeConnection h
+decomTransport (Right (h, _)) = connectionClose connectionApi h
 
 withTransport :: ClientState -> (Either String (Conn, (String, Int)) -> IO a) -> IO a
 withTransport client = bracket
@@ -234,7 +232,7 @@ retryLoop client = do
       maxBuffer = bufferLimit cfg
   withRetry client attemptsLeft $ do
     Queue.open (queue client)
-    openConnection (conn client)
+    connectionOpen connectionApi (conn client)
     withSubscriptionGC client $ do
       withTransport client $ \transportResult -> do
         case transportResult of
@@ -254,11 +252,11 @@ retryLoop client = do
                   logMessage Debug "starting client streaming threads"
                   liftIO . void . forkWaitGroup wgb $ do
                     runtimeRunClient runtimeApi client $
-                      broadcastingRun broadcastingApi maxBuffer (queue client) connection
+                      broadcastingRun broadcastingApi maxBuffer (queue client) (connectionWriterApi connectionApi) connection
                     runtimeRunClient runtimeApi client $ logMessage Debug "broadcasting thread exited"
                   liftIO . void . forkWaitGroup wgs $ do
                     runtimeRunClient runtimeApi client $
-                      streamingRun streamingApi maxBuffer connection genericParse (router client)
+                      streamingRun streamingApi maxBuffer (connectionReaderApi connectionApi) connection genericParse (router client)
                     runtimeRunClient runtimeApi client $ logMessage Debug "streaming thread exited"
                   wg <- liftIO $ newWaitGroup 2
                   liftIO . void . forkWaitGroup wg $ do
@@ -268,7 +266,7 @@ retryLoop client = do
                   liftIO . void . forkWaitGroup wg $ do
                     wait wgb
                     -- close streaming
-                    closeReader connection
+                    readerClose (connectionReaderApi connectionApi) connection
                   liftIO $ wait wg
                   logMessage Debug "streaming threads exited; closing connection"
 
@@ -308,7 +306,7 @@ readInitialInfo _client h =
   go mempty
   where
     go acc = do
-      result <- readData h 4096
+      result <- readerReadData (connectionReaderApi connectionApi) h 4096
       case result of
         Left err -> return (Left err)
         Right chunk ->

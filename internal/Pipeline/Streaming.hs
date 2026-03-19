@@ -5,20 +5,21 @@ module Pipeline.Streaming
 
 import           Conduit
 import           Lib.Logger.Types          (MonadLogger)
-import           Network.API               (ConnectionReader)
+import           Network.ConnectionAPI     (ReaderAPI)
 import           Pipeline.Streaming.API    (Parser', StreamingAPI (..))
 import           Pipeline.Streaming.Parser
 import           Pipeline.Streaming.Sink
 import           Pipeline.Streaming.Source
 
-run :: (MonadLogger m , MonadIO m, ConnectionReader reader)
+run :: (MonadLogger m , MonadIO m)
   => Int
+  -> ReaderAPI reader
   -> reader
   -> Parser' a
   -> (a -> IO ())
   -> m ()
-run bufferLimit reader p router =
-  runConduit $ source reader .| parser bufferLimit p .| sink router
+run bufferLimit readerApi reader p router =
+  runConduit $ source readerApi reader .| parser bufferLimit p .| sink router
 
 streamingApi :: StreamingAPI
 streamingApi = StreamingAPI

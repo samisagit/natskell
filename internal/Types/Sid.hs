@@ -8,7 +8,7 @@ module Sid
 import qualified Data.ByteString.Char8 as BC
 import           Sid.Types
 import           SidAPI                (SidAPI (..))
-import           Types
+import           Types.Msg             (SID)
 
 initialSIDCounter :: SIDCounter
 initialSIDCounter = 0

@@ -16,8 +16,8 @@ import           Client.SubscriptionAPI (SubscribeConfig (..))
 import qualified Data.ByteString        as BS
 import           Data.Time.Clock        (NominalDiffTime)
 import           Lib.CallOption         (CallOption)
-import           Types                  (Headers, Payload, SID, Subject)
 import qualified Types.Msg              as Msg
+import           Types.Msg              (Headers, Payload, SID, Subject)
 
 -- | Client capabilities for publishing, subscribing, and lifecycle control.
 data Client = Client

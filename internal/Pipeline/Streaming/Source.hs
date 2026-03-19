@@ -1,16 +1,17 @@
 module Pipeline.Streaming.Source where
 import           Conduit
 import           Data.ByteString
-import           Lib.Logger.Types (LogLevel (..), MonadLogger (..))
-import           Network.API
-import           Prelude          hiding (length, null)
+import           Lib.Logger.Types      (LogLevel (..), MonadLogger (..))
+import           Network.ConnectionAPI (ReaderAPI (..))
+import           Prelude               hiding (length, null)
 
-source :: (MonadLogger m , MonadIO m, ConnectionReader reader)
-  => reader
+source :: (MonadLogger m , MonadIO m)
+  => ReaderAPI reader
+  -> reader
   -> ConduitT () ByteString m ()
-source reader = do
+source readerApi reader = do
   lift . logMessage Debug $ "reading from connection"
-  result <- liftIO $ readData reader 4096
+  result <- liftIO $ readerReadData readerApi reader 4096
   case result of
     Left err -> do
       lift . logMessage Info $ ("read failed: " ++ err)
@@ -22,4 +23,4 @@ source reader = do
         _ -> do
           lift . logMessage Debug $ ("read " ++ show (length chunk) ++ " bytes")
           yield chunk
-          source reader
+          source readerApi reader

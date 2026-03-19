@@ -1,10 +1,18 @@
 module ConnectionSpec (spec) where
 
 import           Control.Concurrent
-import qualified Data.ByteString    as BS
-import           Network.API
-import           Network.Connection
-import           System.Timeout     (timeout)
+import qualified Data.ByteString         as BS
+import           Network.Connection.Core
+    ( Transport (..)
+    , newConn
+    , pointTransport
+    )
+import           Network.ConnectionAPI
+    ( ReaderAPI (..)
+    , connectionApi
+    , connectionReaderApi
+    )
+import           System.Timeout          (timeout)
 import           Test.Hspec
 
 spec :: Spec
@@ -23,8 +31,8 @@ spec = describe "Connection reader" $ do
           }
     pointTransport conn transport
     resultVar <- newEmptyMVar
-    _ <- forkIO $ readData conn 1 >>= putMVar resultVar
+    _ <- forkIO $ readerReadData (connectionReaderApi connectionApi) conn 1 >>= putMVar resultVar
     _ <- takeMVar started
-    closeReader conn
+    readerClose (connectionReaderApi connectionApi) conn
     result <- timeout 1000000 (takeMVar resultVar)
     result `shouldBe` Just (Left "Read operation is blocked")

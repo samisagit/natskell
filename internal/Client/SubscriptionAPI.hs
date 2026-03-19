@@ -15,8 +15,8 @@ import qualified Data.Heap       as Heap
 import           Data.Map        (Map)
 import qualified Data.Map        as Map
 import           Data.Time.Clock (NominalDiffTime, UTCTime)
-import           Types           (SID, Subject)
 import qualified Types.Msg       as M
+import           Types.Msg       (SID, Subject)
 
 newtype SubscribeConfig = SubscribeConfig { subscriptionExpiry :: Maybe NominalDiffTime }
 

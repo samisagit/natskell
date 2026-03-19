@@ -1,12 +1,23 @@
-module Types.Msg where
+module Types.Msg
+  ( Subject
+  , SID
+  , Payload
+  , Headers
+  , Msg (..)
+  ) where
 
-import           Data.ByteString
+import           Data.ByteString (ByteString)
+
+type Subject = ByteString
+type SID = ByteString
+type Payload = ByteString
+type Headers = [(ByteString, ByteString)]
 
 data Msg = Msg
-             { subject :: ByteString
-             , sid     :: ByteString
-             , replyTo :: Maybe ByteString
-             , payload :: Maybe ByteString
-             , headers :: Maybe [(ByteString, ByteString)]
+             { subject :: Subject
+             , sid     :: SID
+             , replyTo :: Maybe Subject
+             , payload :: Maybe Payload
+             , headers :: Maybe Headers
              }
   deriving (Eq, Show)

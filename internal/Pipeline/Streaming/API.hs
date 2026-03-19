@@ -9,8 +9,8 @@ import           Control.Monad.IO.Class (MonadIO)
 import           Data.ByteString        (ByteString)
 import           Lib.Logger.Types       (MonadLogger)
 import           Lib.Parser.Types       (ParserErr)
-import           Network.API            (ConnectionReader)
+import           Network.ConnectionAPI  (ReaderAPI)
 
 type Parser' a = ByteString -> Either ParserErr (a, ByteString)
 
-newtype StreamingAPI = StreamingAPI { streamingRun :: forall m reader a. (MonadLogger m, MonadIO m, ConnectionReader reader) => Int -> reader -> Parser' a -> (a -> IO ()) -> m () }
+newtype StreamingAPI = StreamingAPI { streamingRun :: forall m reader a. (MonadLogger m, MonadIO m) => Int -> ReaderAPI reader -> reader -> Parser' a -> (a -> IO ()) -> m () }
