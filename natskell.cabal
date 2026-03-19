@@ -91,7 +91,6 @@ library natskell-internal
     Client.RuntimeAPI
     Client.Subscription
     Client.SubscriptionAPI
-    State
     Lib.Parser
     Lib.Parser.Types
     Lib.ParserAPI
