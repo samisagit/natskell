@@ -12,10 +12,7 @@ import qualified Control.Monad
 import           Queue.API
 import           Queue.TransactionalQueue.Types
 import           Queue.TransactionalQueueAPI    (TransactionalQueueAPI (..))
-import           Transformers.Types
-
-instance Transformer QueueItem where
-  transform (QueueItem m) = transform m
+import           Transformers.Transformers      (Transformer)
 
 newQ :: IO (Q QueueItem)
 newQ = Q <$> newTBQueueIO 1000 <*> newEmptyTMVarIO

@@ -1,9 +1,28 @@
 module Types.Err
-  ( module Types.Err.Types
+  ( Reason
+  , Err (..)
   , isFatal
   ) where
 
-import           Types.Err.Types
+import           Data.ByteString (ByteString)
+
+type Reason = ByteString
+
+data Err = ErrUnknownOp Reason
+         | ErrRoutePortConn Reason
+         | ErrAuthViolation Reason
+         | ErrAuthTimeout Reason
+         | ErrInvalidProtocol Reason
+         | ErrMaxControlLineEx Reason
+         | ErrErr Reason
+         | ErrTlsRequired Reason
+         | ErrStaleConn Reason
+         | ErrMaxConnsEx Reason
+         | ErrSlowConsumer Reason
+         | ErrMaxPayload Reason
+         | ErrInvalidSubject Reason
+         | ErrPermViolation Reason
+  deriving (Eq, Show)
 
 isFatal :: Err -> Bool
 isFatal (ErrInvalidSubject _) = False

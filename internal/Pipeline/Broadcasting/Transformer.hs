@@ -1,9 +1,9 @@
 module Pipeline.Broadcasting.Transformer where
 
 import           Conduit
-import qualified Data.ByteString.Lazy as LBS
-import           Lib.Logger.Types     (LogLevel (..), MonadLogger (..))
-import           Transformers.Types
+import qualified Data.ByteString.Lazy      as LBS
+import           Lib.Logger.Types          (LogLevel (..), MonadLogger (..))
+import           Transformers.Transformers
 
 transformer :: (MonadLogger m, MonadIO m, Transformer t)
   => Int

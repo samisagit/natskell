@@ -41,7 +41,6 @@ import           Lib.Logger
 import           NuidAPI                     (NuidAPI (nuidNext))
 import           Queue.TransactionalQueueAPI (QueueItem (..))
 import           SidAPI                      (SidAPI (sidNext))
-import           Transformers.Transformers   ()
 import qualified Types.Msg                   as M
 import           Types.Msg                   (SID, Subject)
 import qualified Types.Sub                   as Sub

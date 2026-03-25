@@ -73,7 +73,7 @@ import           Network.ConnectionAPI
     , TransportOption (..)
     , connectionApi
     )
-import           Nuid                        (nuidApi)
+import           NuidAPI                     (nuidApi)
 import           Parsers.Parsers
 import           Pipeline.Broadcasting       (broadcastingApi)
 import           Pipeline.Broadcasting.API   (BroadcastingAPI (..))
@@ -82,7 +82,7 @@ import           Pipeline.Streaming.API      (StreamingAPI (..))
 import qualified Queue.API                   as Queue
 import           Queue.TransactionalQueue    (queueApi)
 import           Queue.TransactionalQueueAPI (QueueItem (..))
-import           Sid                         (sidApi)
+import           SidAPI                      (sidApi)
 import qualified Types.Connect               as Connect (Connect (..))
 import qualified Types.Err                   as E
 import qualified Types.Info                  as I

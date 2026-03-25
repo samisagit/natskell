@@ -20,9 +20,9 @@ import           Data.ByteString
     , pack
     , tail
     )
-import qualified Data.ByteString.Lazy      as LBS
-import           Data.Char                 (chr)
-import           Data.Word8                (isUpper)
+import qualified Data.ByteString.Lazy     as LBS
+import           Data.Char                (chr)
+import           Data.Word8               (isUpper)
 import           GHC.IO.Handle
     ( BufferMode (NoBuffering)
     , Handle
@@ -32,11 +32,11 @@ import           GHC.IO.Handle
 import           GHC.IO.IOMode
 import           Lib.Logger
 import           Lib.Parser
-import           Network.ConnectionAPI     (ReaderAPI (..), WriterAPI (..))
-import           Network.Socket            hiding (Debug)
-import qualified Pipeline.Broadcasting     as Broadcast
-import           Pipeline.Streaming        (run)
-import           Prelude                   hiding
+import           Network.ConnectionAPI    (ReaderAPI (..), WriterAPI (..))
+import           Network.Socket           hiding (Debug)
+import qualified Pipeline.Broadcasting    as Broadcast
+import           Pipeline.Streaming       (run)
+import           Prelude                  hiding
     ( head
     , last
     , length
@@ -45,11 +45,10 @@ import           Prelude                   hiding
     , tail
     , take
     )
-import qualified Queue.API                 as Queue
-import           Queue.TransactionalQueue  (QueueItem (..), newQ)
+import qualified Queue.API                as Queue
+import           Queue.TransactionalQueue (QueueItem (..), newQ)
 import           Test.Hspec
-import           Transformers.Transformers ()
-import qualified Types.Pub                 as Pub
+import qualified Types.Pub                as Pub
 
 defaultLogger' :: IO LoggerConfig
 defaultLogger' = do

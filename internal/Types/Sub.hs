@@ -2,8 +2,10 @@
 
 module Types.Sub where
 
-import           Data.ByteString       (ByteString)
-import           Types.Msg             (SID, Subject)
+import           Data.ByteString           (ByteString)
+import qualified Data.ByteString.Lazy      as LBS
+import           Transformers.Transformers (Transformer (..))
+import           Types.Msg                 (SID, Subject)
 import           Validators.Validators
 
 data Sub = Sub
@@ -12,6 +14,12 @@ data Sub = Sub
              , sid        :: SID
              }
   deriving (Eq, Show)
+
+instance Transformer Sub where
+  transform subMsg =
+    case queueGroup subMsg of
+      Just queue -> LBS.fromChunks ["SUB ", subject subMsg, " ", queue, " ", sid subMsg, "\r\n"]
+      Nothing -> LBS.fromChunks ["SUB ", subject subMsg, " ", sid subMsg, "\r\n"]
 
 instance Validator Sub where
   validate s = do

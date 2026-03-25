@@ -26,11 +26,11 @@ import           Control.Concurrent.STM         (TQueue, TVar)
 import qualified Data.ByteString                as BS
 import           Lib.Logger.Types               (AppM, LogContext, LoggerConfig)
 import           Network.ConnectionAPI          (Conn)
-import           Nuid.Types                     (Nuid)
+import           Nuid                           (Nuid)
 import           Queue.TransactionalQueue.Types (Q, QueueItem)
-import           Sid.Types                      (SIDCounter)
-import           Types.Connect.Types            (Connect)
-import qualified Types.Info.Types               as I
+import           Sid                            (SIDCounter)
+import           Types.Connect                  (Connect)
+import qualified Types.Info                     as I
 
 type User = BS.ByteString
 type Pass = BS.ByteString

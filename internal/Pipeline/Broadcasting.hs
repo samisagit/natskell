@@ -11,7 +11,7 @@ import           Pipeline.Broadcasting.Sink
 import           Pipeline.Broadcasting.Source
 import           Pipeline.Broadcasting.Transformer
 import           Queue.API                         (Queue)
-import           Transformers.Types                (Transformer)
+import           Transformers.Transformers         (Transformer)
 
 run :: (MonadLogger m , MonadIO m, Transformer t, Queue q t)
   => Int -> q -> WriterAPI writer -> writer -> m ()

@@ -101,27 +101,20 @@ library natskell-internal
     Lib.WorkerPool
     Parsers.Parsers
     Transformers.Transformers
-    Transformers.Types
-    Transformers.TransformersAPI
     Validators.Validators
     Types.Msg
     Types.Ping
     Types.Pong
     Types.Ok
     Types.Err
-    Types.Err.Types
     Types.Info
-    Types.Info.Types
     Types.Pub
     Types.Connect
-    Types.Connect.Types
     Types.Sub
     Types.Unsub
     Sid
-    Sid.Types
     SidAPI
     Nuid
-    Nuid.Types
     NuidAPI
     WaitGroup
     Pipeline.Broadcasting.Source
@@ -142,7 +135,6 @@ library natskell-internal
     Queue.TransactionalQueue
     Queue.TransactionalQueue.Types
     Queue.TransactionalQueueAPI
-
   hs-source-dirs:
     internal
     internal/Types

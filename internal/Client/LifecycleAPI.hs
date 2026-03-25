@@ -5,8 +5,8 @@ module Client.LifecycleAPI
   ) where
 
 import           Control.Concurrent.STM (STM)
-import qualified Types.Err.Types        as Err
-import qualified Types.Info.Types       as I
+import qualified Types.Err              as Err
+import qualified Types.Info             as I
 
 data ClientExitReason = ExitClosedByUser
                       | ExitRetriesExhausted (Maybe String)

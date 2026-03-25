@@ -8,4 +8,5 @@ Workarounds in this environment:
 - GHC 8.8 / older `bytestring` does not expose `Data.ByteString.dropWhileEnd`; use a local compatibility helper built from `BS.reverse . BS.dropWhile predicate . BS.reverse`.
 - nix commands only sees tracked files; new modules must live under tracked paths or be added by the user.
 - system tests can intermittently time out; rerunning `cabal test system-tests` usually succeeds (failure logs are left under `/tmp/nix-shell.*` by `TestSupport`).
+- running multiple `cabal test` commands in parallel against the same worktree can race in `dist-newstyle` and fail with missing registration/cache files; run Cabal test suites serially.
 - `testcontainers` `waitForLogLine` can miss very early readiness lines from fast-starting containers like NATS in this suite; using `withFollowLogs` plus an explicit poll of the captured log file is more reliable than relying on the built-in log wait.
