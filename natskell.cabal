@@ -133,8 +133,6 @@ library natskell-internal
     Network.Connection.Tls
     Queue.API
     Queue.TransactionalQueue
-    Queue.TransactionalQueue.Types
-    Queue.TransactionalQueueAPI
   hs-source-dirs:
     internal
     internal/Types

@@ -1,6 +1,4 @@
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module StreamingSpec where
 
@@ -46,7 +44,8 @@ import           Prelude                  hiding
     , take
     )
 import qualified Queue.API                as Queue
-import           Queue.TransactionalQueue (QueueItem (..), newQ)
+import           Queue.API                (QueueItem (..))
+import           Queue.TransactionalQueue (newQueue)
 import           Test.Hspec
 import qualified Types.Pub                as Pub
 
@@ -142,11 +141,11 @@ spec = do
       it "drops messages larger than the buffer limit" $ do
         dl <- defaultLogger'
         ctx <- newLogContext
-        q <- newQ
+        q <- newQueue
         output <- newTVarIO []
         let pub = Pub.Pub "FOO" Nothing Nothing (Just "0123456789")
-        Queue.enqueue q (QueueItem pub) `shouldReturn` Right ()
-        Queue.close q
+        Queue.queueEnqueue q (QueueItem pub) `shouldReturn` Right ()
+        Queue.queueClose q
         runWithLogger dl ctx (Broadcast.run 5 q captureWriterApi (CaptureWriter output) :: AppM ())
         readTVarIO output `shouldReturn` []
 

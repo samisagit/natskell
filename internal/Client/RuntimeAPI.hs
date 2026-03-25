@@ -17,20 +17,17 @@ module Client.RuntimeAPI
   , RuntimeAPI (..)
   ) where
 
-import           Client.LifecycleAPI
-    ( ClientExitReason
-    , LifecycleState
-    )
-import           Client.SubscriptionAPI         (SubscriptionState)
-import           Control.Concurrent.STM         (TQueue, TVar)
-import qualified Data.ByteString                as BS
-import           Lib.Logger.Types               (AppM, LogContext, LoggerConfig)
-import           Network.ConnectionAPI          (Conn)
-import           Nuid                           (Nuid)
-import           Queue.TransactionalQueue.Types (Q, QueueItem)
-import           Sid                            (SIDCounter)
-import           Types.Connect                  (Connect)
-import qualified Types.Info                     as I
+import           Client.LifecycleAPI    (ClientExitReason, LifecycleState)
+import           Client.SubscriptionAPI (SubscriptionState)
+import           Control.Concurrent.STM (TQueue, TVar)
+import qualified Data.ByteString        as BS
+import           Lib.Logger.Types       (AppM, LogContext, LoggerConfig)
+import           Network.ConnectionAPI  (Conn)
+import           Nuid                   (Nuid)
+import           Queue.API              (Queue, QueueItem)
+import           Sid                    (SIDCounter)
+import           Types.Connect          (Connect)
+import qualified Types.Info             as I
 
 type User = BS.ByteString
 type Pass = BS.ByteString
@@ -72,7 +69,7 @@ data ConfigState = ConfigState
 
 -- | Internal client state used to interact with the NATS server.
 data ClientState = ClientState
-                     { queue               :: Q QueueItem
+                     { queue               :: Queue
                      , subscriptions       :: TVar SubscriptionState
                      , pings               :: TQueue (IO ())
                      , callbackQueue       :: TQueue (IO ())

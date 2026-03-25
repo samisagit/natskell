@@ -1,11 +1,20 @@
-{-# LANGUAGE FlexibleInstances      #-}
-{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE GADTs #-}
 
-module Queue.API where
+module Queue.API
+  ( Queue (..)
+  , QueueItem (..)
+  ) where
 
-class Queue q t | q -> t where
-  enqueue :: q -> t -> IO (Either String ())
-  dequeue :: q -> IO (Either String t)
-  close :: q -> IO ()
-  open :: q -> IO ()
+import           Transformers.Transformers (Transformer (..))
 
+data QueueItem where QueueItem :: Transformer m => m -> QueueItem
+
+instance Transformer QueueItem where
+  transform (QueueItem item) = transform item
+
+data Queue = Queue
+               { queueEnqueue :: QueueItem -> IO (Either String ())
+               , queueDequeue :: IO (Either String QueueItem)
+               , queueClose   :: IO ()
+               , queueOpen    :: IO ()
+               }

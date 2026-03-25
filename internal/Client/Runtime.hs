@@ -10,16 +10,10 @@ import           Client.RuntimeAPI
     , Config (..)
     , ConfigState (..)
     )
-import           Control.Concurrent.STM      (readTVarIO)
-import           Lib.Logger
-    ( AppM
-    , LogLevel (..)
-    , MonadLogger (..)
-    )
-import           Lib.LoggerAPI               (LoggerAPI (..))
-import           Queue.API                   (enqueue)
-import           Queue.TransactionalQueue    ()
-import           Queue.TransactionalQueueAPI (QueueItem)
+import           Control.Concurrent.STM (readTVarIO)
+import           Lib.Logger             (AppM, LogLevel (..), MonadLogger (..))
+import           Lib.LoggerAPI          (LoggerAPI (..))
+import           Queue.API              (QueueItem, queueEnqueue)
 
 readConfigState :: ClientState -> IO ConfigState
 readConfigState client = readTVarIO (configState client)
@@ -35,7 +29,7 @@ runClient loggerApi client action = do
 writeToClientQueue :: LoggerAPI -> ClientState -> QueueItem -> IO ()
 writeToClientQueue loggerApi client item = do
   res <- case client of
-    ClientState {queue = q} -> enqueue q item
+    ClientState {queue = q} -> queueEnqueue q item
   case res of
     Left err -> runClient loggerApi client . logMessage Error $ ("enqueueing item failed: " ++ err)
     Right () -> return ()

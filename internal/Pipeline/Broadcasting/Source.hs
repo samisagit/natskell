@@ -1,14 +1,13 @@
 module Pipeline.Broadcasting.Source where
 import           Conduit
-import           Lib.Logger.Types          (LogLevel (..), MonadLogger (..))
-import           Queue.API
-import           Transformers.Transformers (Transformer)
+import           Lib.Logger.Types (LogLevel (..), MonadLogger (..))
+import           Queue.API        (Queue, QueueItem, queueDequeue)
 
-source :: (MonadLogger m , MonadIO m, Transformer t, Queue q t)
-  => q
-  -> ConduitT () t m ()
+source :: (MonadLogger m , MonadIO m)
+  => Queue
+  -> ConduitT () QueueItem m ()
 source q  = do
-  x <- liftIO . dequeue $ q
+  x <- liftIO (queueDequeue q)
   case x of
     Left err -> do
       lift . logMessage Info $ ("dequeue failed: " ++ err)

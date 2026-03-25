@@ -28,15 +28,13 @@ module Client
   , ClientExitReason (..)
   ) where
 
-import           API                         (Client (..), MsgView (..))
+import           API                      (Client (..), MsgView (..))
 import           Client.Auth
     ( defaultConnect
     , logAuthMethod
     , logTlsConfig
     )
-import           Client.CallbacksAPI
-    ( CallbacksAPI (callbacksStartWorkers)
-    )
+import           Client.CallbacksAPI      (CallbacksAPI (callbacksStartWorkers))
 import           Client.Internal
     ( callbacksApi
     , closeClient
@@ -46,7 +44,6 @@ import           Client.Internal
     , nuidApi
     , pingInternal
     , publishInternal
-    , queueApi
     , resetClient
     , retryLoop
     , runtimeApi
@@ -57,7 +54,7 @@ import           Client.LifecycleAPI
     , LifecycleAPI (lifecycleWaitForClosed, lifecycleWaitForServerInfo)
     , LifecycleState (Running)
     )
-import           Client.PublishAPI           (defaultPublishConfig)
+import           Client.PublishAPI        (defaultPublishConfig)
 import           Client.RuntimeAPI
     ( Auth (..)
     , AuthTokenData
@@ -81,11 +78,11 @@ import           Client.SubscriptionAPI
     , SubscriptionState (..)
     , emptySubscriptionGC
     )
-import           Control.Concurrent          (forkIO)
+import           Control.Concurrent       (forkIO)
 import           Control.Concurrent.STM
-import qualified Data.ByteString             as BS
-import qualified Data.ByteString.Char8       as BC
-import           Lib.CallOption              (CallOption, applyCallOptions)
+import qualified Data.ByteString          as BS
+import qualified Data.ByteString.Char8    as BC
+import           Lib.CallOption           (CallOption, applyCallOptions)
 import           Lib.Logger
     ( LogContext (..)
     , LogEntry (..)
@@ -96,12 +93,12 @@ import           Lib.Logger
     , renderLogEntry
     , updateLogContext
     )
-import           Network.ConnectionAPI       (ConnectionAPI (connectionNew))
-import           NuidAPI                     (NuidAPI (nuidNew))
-import           Queue.TransactionalQueueAPI (TransactionalQueueAPI (tqNew))
-import           SidAPI                      (SidAPI (sidInitial))
-import qualified Types.Connect               as Connect
-import qualified Types.Msg                   as Msg
+import           Network.ConnectionAPI    (ConnectionAPI (connectionNew))
+import           NuidAPI                  (NuidAPI (nuidNew))
+import           Queue.TransactionalQueue (newQueue)
+import           SidAPI                   (SidAPI (sidInitial))
+import qualified Types.Connect            as Connect
+import qualified Types.Msg                as Msg
 
 -- | newClient creates a new client with optional overrides to default settings.
 --
@@ -138,7 +135,7 @@ newClient servers configOptions = do
   c <- connectionNew connectionApi
 
   clientState <- ClientState
-    <$> tqNew queueApi
+    <$> newQueue
     <*> newTVarIO subscriptionState
     <*> newTQueueIO
     <*> newTQueueIO

@@ -4,7 +4,6 @@ module Client.Internal
   , lifecycleApi
   , nuidApi
   , publishInternal
-  , queueApi
   , pingInternal
   , flushInternal
   , resetClient
@@ -14,13 +13,13 @@ module Client.Internal
   , sidApi
   ) where
 
-import           Client.Auth                 (buildConnectPayload)
+import           Client.Auth               (buildConnectPayload)
 import           Client.Callbacks
     ( awaitCallbackDrain
     , enqueueCallback
     , startCallbackWorkers
     )
-import           Client.CallbacksAPI         (CallbacksAPI (..))
+import           Client.CallbacksAPI       (CallbacksAPI (..))
 import           Client.Lifecycle
     ( markClosed
     , setLifecycleClosing
@@ -35,7 +34,7 @@ import           Client.LifecycleAPI
     , LifecycleAPI (..)
     , LifecycleState (..)
     )
-import           Client.PublishAPI           (PublishConfig)
+import           Client.PublishAPI         (PublishConfig)
 import           Client.Runtime
     ( readConfig
     , readConfigState
@@ -56,16 +55,16 @@ import           Client.Subscription
     , resubscribeAll
     , subscribeInternal
     )
-import           Client.SubscriptionAPI      (SubscribeConfig (..))
+import           Client.SubscriptionAPI    (SubscribeConfig (..))
 import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Monad
 import           Control.Monad.IO.Class
-import qualified Data.ByteString             as BS
+import qualified Data.ByteString           as BS
 import           Data.Maybe
 import           Lib.Logger
-import qualified Lib.Parser                  as Parser
+import qualified Lib.Parser                as Parser
 import           Network.ConnectionAPI
     ( Conn
     , ConnectionAPI (..)
@@ -73,23 +72,22 @@ import           Network.ConnectionAPI
     , TransportOption (..)
     , connectionApi
     )
-import           NuidAPI                     (nuidApi)
+import           NuidAPI                   (nuidApi)
 import           Parsers.Parsers
-import           Pipeline.Broadcasting       (broadcastingApi)
-import           Pipeline.Broadcasting.API   (BroadcastingAPI (..))
-import           Pipeline.Streaming          (streamingApi)
-import           Pipeline.Streaming.API      (StreamingAPI (..))
-import qualified Queue.API                   as Queue
-import           Queue.TransactionalQueue    (queueApi)
-import           Queue.TransactionalQueueAPI (QueueItem (..))
-import           SidAPI                      (sidApi)
-import qualified Types.Connect               as Connect (Connect (..))
-import qualified Types.Err                   as E
-import qualified Types.Info                  as I
-import           Types.Msg                   (Subject)
+import           Pipeline.Broadcasting     (broadcastingApi)
+import           Pipeline.Broadcasting.API (BroadcastingAPI (..))
+import           Pipeline.Streaming        (streamingApi)
+import           Pipeline.Streaming.API    (StreamingAPI (..))
+import qualified Queue.API                 as Queue
+import           Queue.API                 (QueueItem (..))
+import           SidAPI                    (sidApi)
+import qualified Types.Connect             as Connect (Connect (..))
+import qualified Types.Err                 as E
+import qualified Types.Info                as I
+import           Types.Msg                 (Subject)
 import           Types.Ping
 import           Types.Pong
-import qualified Types.Pub                   as P
+import qualified Types.Pub                 as P
 import           WaitGroup
 
 runtimeApi :: RuntimeAPI
@@ -160,7 +158,7 @@ shutdownClient :: ClientState -> ClientExitReason -> String -> IO ()
 shutdownClient client reason message = do
   atomically $ lifecycleSetClosing lifecycleApi client reason
   runtimeRunClient runtimeApi client $ logMessage Info message
-  Queue.close $ queue client
+  Queue.queueClose (queue client)
   readerClose (connectionReaderApi connectionApi) (conn client)
   atomically $ lifecycleWaitForClosed lifecycleApi client
   callbacksAwaitDrain callbacksApi client
@@ -231,7 +229,7 @@ retryLoop client = do
   let attemptsLeft = connectionAttempts cfg
       maxBuffer = bufferLimit cfg
   withRetry client attemptsLeft $ do
-    Queue.open (queue client)
+    Queue.queueOpen (queue client)
     connectionOpen connectionApi (conn client)
     withSubscriptionGC client $ do
       withTransport client $ \transportResult -> do
@@ -262,7 +260,7 @@ retryLoop client = do
                   liftIO . void . forkWaitGroup wg $ do
                     wait wgs
                     -- close broadcasting
-                    liftIO $ Queue.close (queue client)
+                    liftIO $ Queue.queueClose (queue client)
                   liftIO . void . forkWaitGroup wg $ do
                     wait wgb
                     -- close streaming
