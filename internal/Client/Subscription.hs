@@ -1,50 +1,56 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Client.Subscription
-  ( awaitSubscriptionGC
-  , cancelExpiredSubscriptions
-  , msgRouterM
-  , nextInbox
-  , nextSid
-  , resubscribeAll
-  , subscribeInternal
-  , unsubscribeInternal
+  ( emptySubscriptionState
+  , subscriptionApi
   ) where
 
-import           Client.CallbacksAPI         (CallbacksAPI (callbacksEnqueue))
+import           Client.CallbacksAPI    (CallbacksAPI (callbacksEnqueue))
 import           Client.RuntimeAPI
     ( ClientState (..)
     , RuntimeAPI (runtimeRunClient, runtimeWriteToClientQueue)
     )
 import           Client.SubscriptionAPI
     ( SubscribeConfig (..)
-    , SubscriptionGCAction (..)
+    , SubscriptionAPI (..)
     , SubscriptionMeta (..)
     , SubscriptionState (..)
-    , cancelSubscriptionExpiry
-    , collectExpiredSubscription
-    , hasTrackedSubscriptionExpiries
-    , trackSubscriptionExpiry
     )
-import           Control.Concurrent          (threadDelay)
+import           Control.Concurrent     (threadDelay)
 import           Control.Concurrent.STM
 import           Control.Monad
 import           Control.Monad.IO.Class
-import qualified Data.ByteString             as BS
-import qualified Data.Map                    as Map
+import qualified Data.ByteString        as BS
+import qualified Data.Heap              as Heap
+import qualified Data.Map               as Map
 import           Data.Time.Clock
-import           Lib.Logger
-    ( AppM
-    , LogLevel (..)
-    , MonadLogger (..)
-    )
-import           NuidAPI                     (NuidAPI (nuidNext))
-import           Queue.TransactionalQueueAPI (QueueItem (..))
-import           SidAPI                      (SidAPI (sidNext))
-import qualified Types.Msg                   as M
-import           Types.Msg                   (SID, Subject)
-import qualified Types.Sub                   as Sub
-import qualified Types.Unsub                 as Unsub
+import           Lib.Logger             (AppM, LogLevel (..), MonadLogger (..))
+import           NuidAPI                (NuidAPI (nuidNext))
+import           Queue.API              (QueueItem (..))
+import           SidAPI                 (SidAPI (sidNext))
+import qualified Types.Msg              as M
+import           Types.Msg              (SID, Subject)
+import qualified Types.Sub              as Sub
+import qualified Types.Unsub            as Unsub
+
+subscriptionApi :: SubscriptionAPI RuntimeAPI CallbacksAPI SidAPI NuidAPI ClientState
+subscriptionApi = SubscriptionAPI
+  { subscriptionAwaitGC = awaitSubscriptionGC
+  , subscriptionCancelExpired = cancelExpiredSubscriptions
+  , subscriptionMsgRouterM = msgRouterM
+  , subscriptionNextInbox = nextInbox
+  , subscriptionNextSid = nextSid
+  , subscriptionResubscribeAll = resubscribeAll
+  , subscriptionSubscribe = subscribeInternal
+  , subscriptionUnsubscribe = unsubscribeInternal
+  }
+
+emptySubscriptionState :: SubscriptionState
+emptySubscriptionState = SubscriptionState Map.empty Heap.empty Map.empty Map.empty
+
+data SubscriptionGCAction = NoTrackedSubscriptionExpiries SubscriptionState
+                          | AwaitingSubscriptionExpiry UTCTime SubscriptionState
+                          | ExpireSubscription SID SubscriptionState
 
 subscribeInternal :: RuntimeAPI -> SidAPI -> Bool -> ClientState -> Subject -> SubscribeConfig -> (Maybe M.Msg -> IO ()) -> IO SID
 subscribeInternal runtimeApi sidApi isReply client subject subConfig callback = do
@@ -67,12 +73,15 @@ subscribeInternal runtimeApi sidApi isReply client subject subConfig callback = 
             , subscriptionIsReply = isReply
             }
           meta' = Map.insert sid meta (subscriptionMeta subs)
-          gc' = if isReply
+          subs' = if isReply
             then case expiry of
-              Just expiryValue -> trackSubscriptionExpiry sid expiryValue (subscriptionGC subs)
-              Nothing -> subscriptionGC subs
-            else subscriptionGC subs
-      in subs { subscriptionCallbacks = callbacks', subscriptionGC = gc', subscriptionMeta = meta' }
+              Just expiryValue -> trackSubscriptionExpiry sid expiryValue subs
+              Nothing          -> subs
+            else subs
+      in subs'
+        { subscriptionCallbacks = callbacks'
+        , subscriptionMeta = meta'
+        }
   let sub = Sub.Sub
         { Sub.subject = subject
         , Sub.queueGroup = Nothing
@@ -101,7 +110,7 @@ removeSubscriptionLocal :: ClientState -> SID -> IO ()
 removeSubscriptionLocal client sid =
   atomically $ modifyTVar' (subscriptions client) (\s -> s
     { subscriptionCallbacks = Map.delete sid (subscriptionCallbacks s)
-    , subscriptionGC = cancelSubscriptionExpiry sid (subscriptionGC s)
+    , subscriptionTrackedExpiries = Map.delete sid (subscriptionTrackedExpiries s)
     , subscriptionMeta = Map.delete sid (subscriptionMeta s)
     })
 
@@ -111,21 +120,18 @@ cancelExpiredSubscriptions runtimeApi callbacksApi client = do
   now <- getCurrentTime
   action <- atomically $ do
     state <- readTVar (subscriptions client)
-    case collectExpiredSubscription now (subscriptionGC state) of
-      NoTrackedSubscriptionExpiries gc -> do
-        writeTVar (subscriptions client) (state { subscriptionGC = gc })
+    case collectExpiredSubscription now state of
+      NoTrackedSubscriptionExpiries state' -> do
+        writeTVar (subscriptions client) state'
         retry
-      AwaitingSubscriptionExpiry _ gc -> do
-        writeTVar (subscriptions client) (state { subscriptionGC = gc })
+      AwaitingSubscriptionExpiry _ state' -> do
+        writeTVar (subscriptions client) state'
         return Nothing
-      ExpireSubscription sidValue gc -> do
+      ExpireSubscription sidValue state' -> do
         let callback = Map.lookup sidValue (subscriptionCallbacks state)
-            newCallbacks = Map.delete sidValue (subscriptionCallbacks state)
-            newMeta = Map.delete sidValue (subscriptionMeta state)
-            newState = state
-              { subscriptionCallbacks = newCallbacks
-              , subscriptionGC = gc
-              , subscriptionMeta = newMeta
+            newState = state'
+              { subscriptionCallbacks = Map.delete sidValue (subscriptionCallbacks state')
+              , subscriptionMeta = Map.delete sidValue (subscriptionMeta state')
               }
         writeTVar (subscriptions client) newState
         return callback
@@ -139,7 +145,7 @@ awaitSubscriptionGC :: ClientState -> IO ()
 awaitSubscriptionGC client = do
   atomically $ do
     subs <- readTVar (subscriptions client)
-    when (hasTrackedSubscriptionExpiries (subscriptionGC subs)) retry
+    when (hasTrackedSubscriptionExpiries subs) retry
 
 msgRouterM :: CallbacksAPI -> ClientState -> M.Msg -> AppM ()
 msgRouterM callbacksApi client msg = do
@@ -183,3 +189,40 @@ nextInbox nuidApi client = atomically $ do
 
 inboxPrefix :: Subject
 inboxPrefix = "_INBOX."
+
+trackSubscriptionExpiry :: SID -> UTCTime -> SubscriptionState -> SubscriptionState
+trackSubscriptionExpiry sid expiry state =
+  state
+    { subscriptionExpiryHeap = Heap.insert (expiry, sid) (subscriptionExpiryHeap state)
+    , subscriptionTrackedExpiries = Map.insert sid expiry (subscriptionTrackedExpiries state)
+    }
+
+collectExpiredSubscription :: UTCTime -> SubscriptionState -> SubscriptionGCAction
+collectExpiredSubscription now = go
+  where
+    go state =
+      case Heap.viewHead (subscriptionExpiryHeap state) of
+        Nothing -> NoTrackedSubscriptionExpiries state
+        Just (expiry, sid) ->
+          case Map.lookup sid (subscriptionTrackedExpiries state) of
+            Nothing ->
+              go (dropHead state)
+            Just trackedExpiry
+              | trackedExpiry /= expiry ->
+                  go (dropHead state)
+              | now < trackedExpiry ->
+                  AwaitingSubscriptionExpiry trackedExpiry state
+              | otherwise ->
+                  ExpireSubscription sid (cancelSubscriptionExpiry sid (dropHead state))
+
+    dropHead state =
+      case Heap.view (subscriptionExpiryHeap state) of
+        Nothing            -> state
+        Just (_, heapTail) -> state { subscriptionExpiryHeap = heapTail }
+
+cancelSubscriptionExpiry :: SID -> SubscriptionState -> SubscriptionState
+cancelSubscriptionExpiry sid state =
+  state { subscriptionTrackedExpiries = Map.delete sid (subscriptionTrackedExpiries state) }
+
+hasTrackedSubscriptionExpiries :: SubscriptionState -> Bool
+hasTrackedSubscriptionExpiries = not . Map.null . subscriptionTrackedExpiries

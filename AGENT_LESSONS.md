@@ -1,6 +1,6 @@
 Workarounds in this environment:
 
-- `cabal --project-file=cabal.project.system-tests test natskell-system-tests` can fail writing `~/.cache/cabal/logs/build.log`. Add `--build-log=.cache/cabal/logs/build.log` (and ensure `.cache/cabal/logs` exists) to avoid the permission error.
+- `cabal` commands can fail writing `~/.cache/cabal/logs/build.log`. Add `--build-log=.cache/cabal/logs/build.log` (and ensure `.cache/cabal/logs` exists) to avoid the permission error.
 - Integration tests can fail with `Network.Socket.socket: permission denied (Operation not permitted)` in the sandbox; rerun with escalated permissions to allow socket access.
 - System tests require Docker/network access; rerun with escalated permissions if sandboxed.
 - `stylish-haskell -ri -c stylish.yaml .` sometimes exits 1 with no output here; rerun with `-v` (`stylish-haskell -rvi -c stylish.yaml .`) to get diagnostics.

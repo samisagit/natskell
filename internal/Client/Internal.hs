@@ -47,15 +47,11 @@ import           Client.RuntimeAPI
     , ConfigState (..)
     , RuntimeAPI (..)
     )
-import           Client.Subscription
-    ( awaitSubscriptionGC
-    , cancelExpiredSubscriptions
-    , msgRouterM
-    , nextInbox
-    , resubscribeAll
-    , subscribeInternal
+import           Client.Subscription       (subscriptionApi)
+import           Client.SubscriptionAPI
+    ( SubscribeConfig (..)
+    , SubscriptionAPI (..)
     )
-import           Client.SubscriptionAPI    (SubscribeConfig (..))
 import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Exception
@@ -123,8 +119,8 @@ publishInternal client subject (payload, callback, headers) = do
 
   case callback of
     Just cb -> do
-      inbox <- nextInbox nuidApi client
-      subscribeInternal runtimeApi sidApi True client inbox (SubscribeConfig Nothing) cb
+      inbox <- subscriptionNextInbox subscriptionApi nuidApi client
+      subscriptionSubscribe subscriptionApi runtimeApi sidApi True client inbox (SubscribeConfig Nothing) cb
       let msg = P.Pub
             { P.subject = subject
             , P.payload = payload
@@ -216,9 +212,9 @@ withRetry c x action = do
 
 withSubscriptionGC :: ClientState -> IO () -> IO ()
 withSubscriptionGC client action = bracket
-  (forkIO . forever . cancelExpiredSubscriptions runtimeApi callbacksApi $ client)
+  (forkIO . forever . subscriptionCancelExpired subscriptionApi runtimeApi callbacksApi $ client)
   (\tid -> do
-    awaitSubscriptionGC client
+    subscriptionAwaitGC subscriptionApi client
     killThread tid
   )
   (const action)
@@ -274,7 +270,7 @@ resubscribeIfNeeded client = do
     alreadyConnected <- readTVar (connectedOnce client)
     writeTVar (connectedOnce client) True
     return alreadyConnected
-  when shouldResubscribe (resubscribeAll runtimeApi client)
+  when shouldResubscribe (subscriptionResubscribeAll subscriptionApi runtimeApi client)
 
 initializeConnection :: ClientState -> Conn -> String -> IO (Either String ())
 initializeConnection client h host = do
@@ -334,7 +330,7 @@ routerM client msg = do
   case msg of
     ParsedMsg a  -> do
       logMessage Debug $ "routing MSG: " ++ show a
-      msgRouterM callbacksApi client a
+      subscriptionMsgRouterM subscriptionApi callbacksApi client a
     ParsedInfo i -> do
       logMessage Debug $ "routing INFO: " ++ show i
       liftIO $ do

@@ -1,90 +1,34 @@
 module Client.SubscriptionAPI
   ( SubscribeConfig (..)
-  , SubscriptionGC
-  , SubscriptionGCAction (..)
-  , emptySubscriptionGC
-  , trackSubscriptionExpiry
-  , cancelSubscriptionExpiry
-  , collectExpiredSubscription
-  , hasTrackedSubscriptionExpiries
+  , SubscriptionAPI (..)
   , SubscriptionState (..)
   , SubscriptionMeta (..)
   ) where
 
-import qualified Data.Heap       as Heap
-import           Data.Map        (Map)
-import qualified Data.Map        as Map
-import           Data.Time.Clock (NominalDiffTime, UTCTime)
-import qualified Types.Msg       as M
-import           Types.Msg       (SID, Subject)
+import qualified Data.Heap        as Heap
+import           Data.Map         (Map)
+import           Data.Time.Clock  (NominalDiffTime, UTCTime)
+import           Lib.Logger.Types (AppM)
+import qualified Types.Msg        as M
+import           Types.Msg        (SID, Subject)
 
 newtype SubscribeConfig = SubscribeConfig { subscriptionExpiry :: Maybe NominalDiffTime }
 
-data SubscriptionExpiry = SubscriptionExpiry
-                            { expirySid :: SID
-                            , expiryAt  :: UTCTime
-                            }
-
-instance Eq SubscriptionExpiry where
-  a == b = expirySid a == expirySid b && expiryAt a == expiryAt b
-
-instance Ord SubscriptionExpiry where
-  a `compare` b = expiryAt a `compare` expiryAt b
-
-data SubscriptionGC = SubscriptionGC
-                        { gcHeap    :: Heap.MinHeap SubscriptionExpiry
-                        , gcTracked :: Map SID UTCTime
-                        }
-
-data SubscriptionGCAction = NoTrackedSubscriptionExpiries SubscriptionGC
-                          | AwaitingSubscriptionExpiry UTCTime SubscriptionGC
-                          | ExpireSubscription SID SubscriptionGC
-
-emptySubscriptionGC :: SubscriptionGC
-emptySubscriptionGC = SubscriptionGC Heap.empty Map.empty
-
-trackSubscriptionExpiry :: SID -> UTCTime -> SubscriptionGC -> SubscriptionGC
-trackSubscriptionExpiry sid expiry gc =
-  gc
-    { gcHeap = Heap.insert (SubscriptionExpiry sid expiry) (gcHeap gc)
-    , gcTracked = Map.insert sid expiry (gcTracked gc)
-    }
-
-cancelSubscriptionExpiry :: SID -> SubscriptionGC -> SubscriptionGC
-cancelSubscriptionExpiry sid gc =
-  gc { gcTracked = Map.delete sid (gcTracked gc) }
-
-collectExpiredSubscription :: UTCTime -> SubscriptionGC -> SubscriptionGCAction
-collectExpiredSubscription now = go
-  where
-    go gc =
-      case Heap.viewHead (gcHeap gc) of
-        Nothing -> NoTrackedSubscriptionExpiries gc
-        Just headExpiry ->
-          case Map.lookup (expirySid headExpiry) (gcTracked gc) of
-            Nothing ->
-              go (dropHead gc)
-            Just trackedExpiry
-              | trackedExpiry /= expiryAt headExpiry ->
-                  go (dropHead gc)
-              | now < trackedExpiry ->
-                  AwaitingSubscriptionExpiry trackedExpiry gc
-              | otherwise ->
-                  let sid = expirySid headExpiry
-                      gc' = cancelSubscriptionExpiry sid (dropHead gc)
-                  in ExpireSubscription sid gc'
-
-    dropHead gc =
-      case Heap.view (gcHeap gc) of
-        Nothing            -> gc
-        Just (_, heapTail) -> gc { gcHeap = heapTail }
-
-hasTrackedSubscriptionExpiries :: SubscriptionGC -> Bool
-hasTrackedSubscriptionExpiries = not . Map.null . gcTracked
+data SubscriptionAPI runtime callbacks sid nuid client = SubscriptionAPI
+                                                           { subscriptionAwaitGC :: client -> IO ()
+                                                           , subscriptionCancelExpired :: runtime -> callbacks -> client -> IO ()
+                                                           , subscriptionMsgRouterM :: callbacks -> client -> M.Msg -> AppM ()
+                                                           , subscriptionNextInbox :: nuid -> client -> IO Subject
+                                                           , subscriptionNextSid :: sid -> client -> IO SID
+                                                           , subscriptionResubscribeAll :: runtime -> client -> IO ()
+                                                           , subscriptionSubscribe :: runtime -> sid -> Bool -> client -> Subject -> SubscribeConfig -> (Maybe M.Msg -> IO ()) -> IO SID
+                                                           , subscriptionUnsubscribe :: runtime -> client -> SID -> IO ()
+                                                           }
 
 data SubscriptionState = SubscriptionState
                            { subscriptionCallbacks :: Map SID (Maybe M.Msg -> IO ())
-                           , subscriptionGC :: SubscriptionGC
+                           , subscriptionExpiryHeap :: Heap.MinHeap (UTCTime, SID)
+                           , subscriptionTrackedExpiries :: Map SID UTCTime
                            , subscriptionMeta :: Map SID SubscriptionMeta
                            }
 

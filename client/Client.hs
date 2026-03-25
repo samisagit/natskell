@@ -70,13 +70,12 @@ import           Client.RuntimeAPI
     , UserPassData
     )
 import           Client.Subscription
-    ( subscribeInternal
-    , unsubscribeInternal
+    ( emptySubscriptionState
+    , subscriptionApi
     )
 import           Client.SubscriptionAPI
     ( SubscribeConfig (..)
-    , SubscriptionState (..)
-    , emptySubscriptionGC
+    , SubscriptionAPI (..)
     )
 import           Control.Concurrent       (forkIO)
 import           Control.Concurrent.STM
@@ -126,7 +125,7 @@ newClient servers configOptions = do
         , exitAction = const (return ())
         , connectOptions = servers
         }
-      subscriptionState = SubscriptionState mempty emptySubscriptionGC mempty
+      subscriptionState = emptySubscriptionState
       configState = ConfigState defaultConfig Nothing
   updateLogContext ctx (\tmp -> tmp
     { lcConnectName = fmap BC.unpack (Connect.name (connectConfig defaultConfig))
@@ -174,7 +173,7 @@ newClient servers configOptions = do
                     , payload = Msg.payload msg
                     , headers = Msg.headers msg
                     })
-              subscribeInternal runtimeApi sidApi False clientState subject cfg internalCallback
+              subscriptionSubscribe subscriptionApi runtimeApi sidApi False clientState subject cfg internalCallback
           , request = \subject subscribeOptions callback -> do
               let cfg = applyCallOptions subscribeOptions defaultSubscribeConfig
                   internalCallback = callback . fmap (\msg -> MsgView
@@ -184,8 +183,8 @@ newClient servers configOptions = do
                     , payload = Msg.payload msg
                     , headers = Msg.headers msg
                     })
-              subscribeInternal runtimeApi sidApi True clientState subject cfg internalCallback
-          , unsubscribe = unsubscribeInternal runtimeApi clientState
+              subscriptionSubscribe subscriptionApi runtimeApi sidApi True clientState subject cfg internalCallback
+          , unsubscribe = subscriptionUnsubscribe subscriptionApi runtimeApi clientState
           , ping = pingInternal clientState
           , flush = flushInternal clientState
           , reset = resetClient clientState
