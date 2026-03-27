@@ -8,8 +8,8 @@ module Pipeline.Streaming.API
 import           Control.Monad.IO.Class (MonadIO)
 import           Data.ByteString        (ByteString)
 import           Lib.Logger.Types       (MonadLogger)
-import           Lib.Parser.Types       (ParserErr)
 import           Network.ConnectionAPI  (ReaderAPI)
+import           Parser.Types           (ParserErr)
 
 type Parser' a = ByteString -> Either ParserErr (a, ByteString)
 

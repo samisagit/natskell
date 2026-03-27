@@ -8,7 +8,7 @@ import           Data.Maybe
 import qualified Data.Text          as T
 import           Data.Text.Encoding (encodeUtf8)
 import           Fixtures
-import           Parsers.Parsers
+import           Parser.Nats
 import           Test.Hspec
 import           Text.Printf
 import           Types.Msg

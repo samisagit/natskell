@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Lib.Parser
-  ( module Lib.Parser.Types
+module Parser
+  ( module Parser.Types
   , offset
   , deepestErr
   , solveErr
@@ -47,7 +47,6 @@ module Lib.Parser
   , toInt
   , toIntW8
   , toIntBS
-  , parserApi
   ) where
 
 import           Control.Applicative
@@ -57,8 +56,7 @@ import qualified Data.ByteString.Char8 as C
 import           Data.Char             (ord)
 import           Data.List             (foldl')
 import qualified Data.Word8            as W8
-import           Lib.Parser.Types
-import           Lib.ParserAPI         (ParserAPI (..))
+import           Parser.Types
 import           Prelude               hiding (fail)
 
 offset :: ParserErr -> Int
@@ -331,9 +329,3 @@ toIntBS :: BS.ByteString -> Int
 toIntBS = BS.foldl' step 0
   where
     step acc w = acc * 10 + (fromIntegral w - fromIntegral W8._0)
-
-parserApi :: ParserAPI
-parserApi = ParserAPI
-  { parserRun = runParser
-  , parserSolveErr = solveErr
-  }

@@ -60,7 +60,6 @@ import           Control.Monad.IO.Class
 import qualified Data.ByteString           as BS
 import           Data.Maybe
 import           Lib.Logger
-import qualified Lib.Parser                as Parser
 import           Network.ConnectionAPI
     ( Conn
     , ConnectionAPI (..)
@@ -69,7 +68,9 @@ import           Network.ConnectionAPI
     , connectionApi
     )
 import           NuidAPI                   (nuidApi)
-import           Parsers.Parsers
+import           Parser.API                (ParserAPI (..))
+import           Parser.Nats
+import           Parser.Types              (Suggestion (..))
 import           Pipeline.Broadcasting     (broadcastingApi)
 import           Pipeline.Broadcasting.API (BroadcastingAPI (..))
 import           Pipeline.Streaming        (streamingApi)
@@ -111,6 +112,9 @@ callbacksApi = CallbacksAPI
   , callbacksStartWorkers = startCallbackWorkers runtimeApi lifecycleApi
   , callbacksAwaitDrain = awaitCallbackDrain lifecycleApi
   }
+
+messageParserApi :: ParserAPI ParsedMessage
+messageParserApi = parserApi
 
 publishInternal :: ClientState -> Subject -> PublishConfig -> IO ()
 publishInternal client subject (payload, callback, headers) = do
@@ -250,7 +254,7 @@ retryLoop client = do
                     runtimeRunClient runtimeApi client $ logMessage Debug "broadcasting thread exited"
                   liftIO . void . forkWaitGroup wgs $ do
                     runtimeRunClient runtimeApi client $
-                      streamingRun streamingApi maxBuffer (connectionReaderApi connectionApi) connection genericParse (router client)
+                      streamingRun streamingApi maxBuffer (connectionReaderApi connectionApi) connection (parserParse messageParserApi) (router client)
                     runtimeRunClient runtimeApi client $ logMessage Debug "streaming thread exited"
                   wg <- liftIO $ newWaitGroup 2
                   liftIO . void . forkWaitGroup wg $ do
@@ -308,12 +312,12 @@ readInitialInfo _client h =
             then return (Left "read returned empty chunk before INFO")
             else do
               let bs = acc <> chunk
-              case genericParse bs of
+              case parserParse messageParserApi bs of
                 Left err ->
-                  case Parser.solveErr err (BS.length bs) of
-                    Parser.SuggestPull ->
+                  case parserSolveErr messageParserApi err (BS.length bs) of
+                    SuggestPull ->
                       go bs
-                    Parser.SuggestDrop n _ ->
+                    SuggestDrop n _ ->
                       go (BS.drop n bs)
                 Right (ParsedInfo info, rest) ->
                   return (Right (info, rest))

@@ -7,8 +7,9 @@ import           Control.Monad
 import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Word8            as W8
-import qualified Lib.Parser            as Parser
-import qualified Parsers.Parsers       as P
+import qualified Parser
+import           Parser.API            (ParserAPI (..))
+import qualified Parser.Nats           as P
 import           Test.Hspec
 import           Text.Printf
 import qualified Types.Msg             as Msg
@@ -19,6 +20,7 @@ spec = do
   headers
   depth
   subject
+  api
   msg
 
 charCases :: [(BS.ByteString, W8.Word8)]
@@ -88,6 +90,14 @@ subject = parallel $ do
     forM_ invalidSubjectCases $ \input ->
       it (printf "rejects %s" (show input)) $ do
         subjectParsesFully input `shouldBe` False
+
+api = parallel $ do
+  describe "parser api" $ do
+    it "delegates parsing to the NATS parser implementation" $ do
+      parserParse P.parserApi "PING\r\n" `shouldBe` P.genericParse "PING\r\n"
+    it "delegates parser error recovery suggestions" $ do
+      let err = Parser.UnexpectedEndOfInput "nothing to read" 0
+      parserSolveErr P.parserApi err 4 `shouldBe` Parser.solveErr err 4
 
 msg = parallel $ do
   describe "MSG parsing" $ do

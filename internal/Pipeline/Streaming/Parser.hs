@@ -3,7 +3,7 @@ import           Conduit
 import           Data.ByteString
 import qualified Data.ByteString  as BS
 import           Lib.Logger.Types (LogLevel (..), MonadLogger (..))
-import           Lib.Parser
+import           Parser
 import           Prelude          hiding (drop, length, take)
 
 parser :: (MonadLogger m , MonadIO m)

@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Parsers.Parsers where
+module Parser.Nats where
 
 import           Control.Applicative
 import qualified Control.Monad.Fail   as Fail
@@ -9,7 +9,8 @@ import           Data.ByteString
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BSL
 import           Data.Word8
-import           Lib.Parser
+import           Parser
+import           Parser.API
 import           Types.Err
 import           Types.Info
 import           Types.Msg
@@ -24,6 +25,12 @@ data ParsedMessage = ParsedPing Ping
                    | ParsedInfo Info
                    | ParsedMsg Msg
   deriving (Eq, Show)
+
+parserApi :: ParserAPI ParsedMessage
+parserApi = ParserAPI
+  { parserParse = genericParse
+  , parserSolveErr = solveErr
+  }
 
 genericParse :: ByteString -> Either ParserErr (ParsedMessage, ByteString)
 genericParse a = case result of

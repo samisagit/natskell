@@ -1,4 +1,4 @@
-module Lib.Parser.Types
+module Parser.Types
   ( ParserErr (..)
   , Parser (..)
   , Suggestion (..)
@@ -14,3 +14,4 @@ newtype Parser a = Parser { runParser :: BS.ByteString -> Either ParserErr (a, B
 
 data Suggestion = SuggestDrop Int String
                 | SuggestPull
+  deriving (Eq, Show)

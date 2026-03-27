@@ -4,7 +4,7 @@ module OkSpec (spec) where
 
 import           Control.Monad
 import qualified Data.ByteString as BS
-import           Parsers.Parsers
+import           Parser.Nats
 import           Test.Hspec
 import           Text.Printf
 import           Types.Ok

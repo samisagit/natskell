@@ -18,6 +18,10 @@
 - `nix flake check` runs Nix checks in a CI-like mode (tests, lint, formatting, packaging checks).
 
 ## Coding Style & Naming Conventions
+- Capabilities should be *modular*, consisting of an API and an implementation.
+- API modules should consist of a capability record, along with any types needed to interact with said record.
+- The implementation modules are only meant to be imported by the client implementation (client/Client.hs), they should implement the capability record.
+- All other modules should only know about the relevant API module.
 - Haskell2010; module names are `CamelCase` and match file names (e.g., `internal/Parsers/Parsers.hs`).
 - Format with `stylish-haskell -vri -c stylish.yaml .` and address `hlint` suggestions.
 

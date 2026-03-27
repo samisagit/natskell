@@ -29,9 +29,9 @@ import           GHC.IO.Handle
     )
 import           GHC.IO.IOMode
 import           Lib.Logger
-import           Lib.Parser
 import           Network.ConnectionAPI    (ReaderAPI (..), WriterAPI (..))
 import           Network.Socket           hiding (Debug)
+import           Parser
 import qualified Pipeline.Broadcasting    as Broadcast
 import           Pipeline.Streaming       (run)
 import           Prelude                  hiding

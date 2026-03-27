@@ -5,7 +5,7 @@ module ErrSpec (spec) where
 import           Control.Monad
 import qualified Data.ByteString as BS
 import           Fixtures
-import           Parsers.Parsers
+import           Parser.Nats
 import           Test.Hspec
 import           Text.Printf
 import           Types.Err
@@ -47,4 +47,3 @@ cases = parallel $ do
       it (printf "correctly parses generated case %s" (show input)) $ do
         let output = genericParse input
         output `shouldBe` Right (ParsedErr want, "")
-

@@ -8,7 +8,7 @@ import           Data.Char             (isAscii, ord)
 import           Data.Either
 import           Data.Maybe
 import qualified Data.Word8            as W8
-import qualified Lib.Parser            as Parser
+import qualified Parser
 import           Test.Hspec
 import           Test.Hspec.QuickCheck (modifyMaxSuccess)
 import           Test.QuickCheck

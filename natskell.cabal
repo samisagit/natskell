@@ -91,15 +91,15 @@ library natskell-internal
     Client.RuntimeAPI
     Client.Subscription
     Client.SubscriptionAPI
-    Lib.Parser
-    Lib.Parser.Types
-    Lib.ParserAPI
+    Parser
+    Parser.Types
+    Parser.API
     Lib.Logger
     Lib.Logger.Types
     Lib.LoggerAPI
     Lib.CallOption
     Lib.WorkerPool
-    Parsers.Parsers
+    Parser.Nats
     Transformers.Transformers
     Validators.Validators
     Types.Msg
@@ -136,7 +136,6 @@ library natskell-internal
   hs-source-dirs:
     internal
     internal/Types
-    internal/Parsers
     internal/Transformers
     internal/Validators
     internal/Lib

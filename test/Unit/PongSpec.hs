@@ -5,7 +5,7 @@ module PongSpec (spec) where
 import           Control.Monad
 import qualified Data.ByteString           as BS
 import qualified Data.ByteString.Lazy      as LBS
-import           Parsers.Parsers
+import           Parser.Nats
 import           Test.Hspec
 import           Text.Printf
 import           Transformers.Transformers
