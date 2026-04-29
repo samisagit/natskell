@@ -22,8 +22,7 @@ import           Network.ConnectionAPI
     , reader
     , writer
     )
-import           Parser.API                (ParserAPI, parse)
-import           Parser.Nats               (ParsedMessage)
+import           Parser.API                (ParsedMessage, ParserAPI)
 import           Pipeline.Broadcasting.API (BroadcastingAPI (BroadcastingAPI))
 import           Pipeline.Streaming.API    (StreamingAPI (StreamingAPI))
 import           Queue.API                 (QueueItem (QueueItem))
@@ -206,7 +205,7 @@ runEngine connectionApi streamingApi broadcastingApi parserApi state store auth 
             (bufferLimit (config state))
             (reader connectionApi)
             conn
-            (parse parserApi)
+            parserApi
             (\message -> do
               directive <- routeMessage state store message
               case directive of

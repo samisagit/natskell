@@ -5,7 +5,9 @@ module Router.Nats
 
 import           Control.Monad.IO.Class (liftIO)
 import           Lib.Logger             (LogLevel (..), MonadLogger (..))
-import           Parser.Nats            (ParsedMessage (..))
+import           Parser.API
+    ( ParsedMessage (ParsedErr, ParsedInfo, ParsedMsg, ParsedOk, ParsedPing, ParsedPong)
+    )
 import           Queue.API              (QueueItem (QueueItem))
 import           State.Store
     ( ClientState

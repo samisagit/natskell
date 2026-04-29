@@ -58,12 +58,17 @@ import qualified Data.ByteString.Char8 as C
 import           Data.Char             (ord)
 import           Data.List             (foldl')
 import qualified Data.Word8            as W8
-import           Parser.API
-    ( Parser (..)
-    , ParserErr (..)
-    , Suggestion (..)
-    )
 import           Prelude               hiding (fail)
+
+data ParserErr = UnexpectedEndOfInput String Int
+               | UnexpectedChar String Int
+  deriving (Eq, Show)
+
+newtype Parser a = Parser { runParser :: BS.ByteString -> Either ParserErr (a, BS.ByteString) }
+
+data Suggestion = SuggestDrop Int String
+                | SuggestPull
+  deriving (Eq, Show)
 
 offset :: ParserErr -> Int
 offset (UnexpectedEndOfInput _ o) = o

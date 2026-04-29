@@ -1,16 +1,20 @@
 module Pipeline.Streaming.Parser where
 import           Conduit
 import           Data.ByteString
-import qualified Data.ByteString    as BS
-import           Lib.Logger.Types   (LogLevel (..), MonadLogger (..))
-import           Parser.Combinators
-import           Prelude            hiding (drop, length, take)
+import qualified Data.ByteString  as BS
+import           Lib.Logger.Types (LogLevel (..), MonadLogger (..))
+import           Parser.API
+    ( ParseStep (DropPrefix, Emit, NeedMore, Reject)
+    , ParserAPI
+    , parse
+    )
+import           Prelude          hiding (drop, length, take)
 
 parser :: (MonadLogger m , MonadIO m)
   => Int
-  -> (ByteString -> Either ParserErr (result, ByteString))
+  -> ParserAPI result
   -> ConduitT ByteString result m ()
-parser bufferLimit p = loop empty
+parser bufferLimit parserApi = loop empty
   where
     loop acc = do
       bs <- await
@@ -18,32 +22,32 @@ parser bufferLimit p = loop empty
         Nothing    -> return ()
         Just chunk -> handleChunk $ append acc chunk
     handleChunk bs
-      | BS.null bs = parser bufferLimit p
+      | BS.null bs = parser bufferLimit parserApi
       | otherwise = do
           lift . logMessage Debug $ "parsing chunk"
-          case p bs of
-            Left err -> do
+          case parse parserApi bs of
+            NeedMore -> do
               let bsLen = length bs
-              case solveErr err bsLen of
-                SuggestPull ->
-                  if bsLen > bufferLimit
-                    then do
-                      lift . logMessage Error $
-                        "overloaded buffer: "
-                          ++ show bsLen
-                          ++ " bytes exceeds limit "
-                          ++ show bufferLimit
-                      lift . logMessage Debug $ ("invalid prefix: " ++ show (take bufferLimit bs))
-                      handleChunk (drop bufferLimit bs)
-                    else do
-                      lift . logMessage Debug $ "message spans frame, waiting for more data"
-                      loop bs
-                SuggestDrop n r -> do
-                  lift . logMessage Error $ ("dropping invalid prefix: " ++ r)
-                  lift . logMessage Debug $ ("invalid prefix: " ++ show bs)
-                  lift . logMessage Error $ ("dropping " ++ show n ++ " bytes")
-                  handleChunk (drop n bs)
-            Right (message, rest) -> do
+              if bsLen > bufferLimit
+                then do
+                  lift . logMessage Error $
+                    "overloaded buffer: "
+                      ++ show bsLen
+                      ++ " bytes exceeds limit "
+                      ++ show bufferLimit
+                  lift . logMessage Debug $ ("invalid prefix: " ++ show (take bufferLimit bs))
+                  handleChunk (drop bufferLimit bs)
+                else do
+                  lift . logMessage Debug $ "message spans frame, waiting for more data"
+                  loop bs
+            DropPrefix n reason -> do
+              lift . logMessage Error $ ("dropping invalid prefix: " ++ reason)
+              lift . logMessage Debug $ ("invalid prefix: " ++ show bs)
+              lift . logMessage Error $ ("dropping " ++ show n ++ " bytes")
+              handleChunk (drop n bs)
+            Reject reason ->
+              lift . logMessage Error $ ("parser rejected inbound data: " ++ reason)
+            Emit message rest -> do
               lift . logMessage Debug $ "parsed message"
               let consumedBytes = length bs - length rest
               if consumedBytes > bufferLimit

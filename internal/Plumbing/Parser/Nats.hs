@@ -9,25 +9,32 @@ import           Data.ByteString
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BSL
 import           Data.Word8
-import           Parser.API           (ParserAPI (ParserAPI))
+import           Parser.API
+    ( ParseStep (DropPrefix, Emit, NeedMore)
+    , ParsedMessage (..)
+    , ParserAPI (ParserAPI)
+    )
 import           Parser.Combinators
 import           Types.Err
-import           Types.Info
 import           Types.Msg
 import           Types.Ok
 import           Types.Ping
 import           Types.Pong
 
-data ParsedMessage = ParsedPing Ping
-                   | ParsedPong Pong
-                   | ParsedOk Ok
-                   | ParsedErr Err
-                   | ParsedInfo Info
-                   | ParsedMsg Msg
-  deriving (Eq, Show)
-
 parserApi :: ParserAPI ParsedMessage
-parserApi = ParserAPI genericParse solveErr
+parserApi = ParserAPI parseStep
+
+parseStep :: ByteString -> ParseStep ParsedMessage
+parseStep bytes =
+  case genericParse bytes of
+    Right (message, rest) ->
+      Emit message rest
+    Left err ->
+      case solveErr err (BS.length bytes) of
+        SuggestPull ->
+          NeedMore
+        SuggestDrop n reason ->
+          DropPrefix n reason
 
 genericParse :: ByteString -> Either ParserErr (ParsedMessage, ByteString)
 genericParse a = case result of

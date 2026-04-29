@@ -18,12 +18,11 @@ import           Network.ConnectionAPI
     , writer
     )
 import           Parser.API
-    ( ParserAPI
-    , Suggestion (..)
+    ( ParseStep (DropPrefix, Emit, NeedMore, Reject)
+    , ParsedMessage (..)
+    , ParserAPI
     , parse
-    , solveErr
     )
-import           Parser.Nats               (ParsedMessage (..))
 import           State.Store
     ( ClientState
     , config
@@ -102,16 +101,16 @@ performHandshake connectionApi parserApi state auth conn host = do
                 else do
                   let bytes = acc <> chunk
                   case parse parserApi bytes of
-                    Left err ->
-                      case solveErr parserApi err (BS.length bytes) of
-                        SuggestPull ->
-                          go bytes
-                        SuggestDrop n _ ->
-                          go (BS.drop n bytes)
-                    Right (ParsedInfo info, rest) ->
+                    NeedMore ->
+                      go bytes
+                    DropPrefix n _ ->
+                      go (BS.drop n bytes)
+                    Reject reason ->
+                      pure (Left reason)
+                    Emit (ParsedInfo info) rest ->
                       pure (Right (info, rest))
-                    Right (ParsedErr err, _) ->
+                    Emit (ParsedErr err) _ ->
                       pure (Left ("server error before INFO: " ++ show err))
-                    Right (_, rest) -> do
+                    Emit _ rest -> do
                       unless (BS.null rest) (pure ())
                       go rest
