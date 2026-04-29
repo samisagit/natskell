@@ -7,12 +7,13 @@ import           Control.Monad
 import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Word8            as W8
-import qualified Parser
-import           Parser.API            (ParserAPI (..))
+import           Parser.API            (Suggestion (..), parse, solveErr)
+import qualified Parser.Combinators    as Parser
 import qualified Parser.Nats           as P
 import           Test.Hspec
 import           Text.Printf
 import qualified Types.Msg             as Msg
+import           Types.Ping            (Ping (Ping))
 
 spec :: Spec
 spec = do
@@ -93,17 +94,20 @@ subject = parallel $ do
 
 api = parallel $ do
   describe "parser api" $ do
-    it "delegates parsing to the NATS parser implementation" $ do
-      parserParse P.parserApi "PING\r\n" `shouldBe` P.genericParse "PING\r\n"
-    it "delegates parser error recovery suggestions" $ do
+    it "parses a valid frame through the API" $ do
+      parse P.parserApi "PING\r\n" `shouldBe` Right (P.ParsedPing Ping, "")
+    it "suggests pulling more data for truncated input" $ do
       let err = Parser.UnexpectedEndOfInput "nothing to read" 0
-      parserSolveErr P.parserApi err 4 `shouldBe` Parser.solveErr err 4
+      solveErr P.parserApi err 4 `shouldBe` SuggestPull
+    it "suggests dropping invalid prefix bytes" $ do
+      let err = Parser.UnexpectedChar "bad input" 2
+      solveErr P.parserApi err 4 `shouldBe` SuggestDrop 3 "bad input"
 
 msg = parallel $ do
   describe "MSG parsing" $ do
     it "accepts tab-delimited fields and non-alphanumeric subjects" $ do
       let input = "MSG foo-bar\t1\t_INBOX.a_b\t5\r\nHELLO\r\n"
-      case P.genericParse input of
+      case parse P.parserApi input of
         Left err -> expectationFailure (show err)
         Right (parsed, rest) -> do
           rest `shouldBe` ""
@@ -115,7 +119,7 @@ msg = parallel $ do
             other -> expectationFailure ("unexpected parse result: " ++ show other)
     it "waits for the payload when a message spans frames" $ do
       let input = "MSG FOO 1 5\r\nHEL"
-      case P.genericParse input of
+      case parse P.parserApi input of
         Left (Parser.UnexpectedEndOfInput _ _) -> pure ()
         Left err ->
           expectationFailure ("expected UnexpectedEndOfInput, got " ++ show err)

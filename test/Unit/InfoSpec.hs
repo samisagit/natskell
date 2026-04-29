@@ -7,7 +7,8 @@ import qualified Data.ByteString    as BS
 import qualified Data.Text          as T
 import           Data.Text.Encoding (encodeUtf8)
 import           Fixtures
-import           Parser.Nats
+import           Parser.API         (parse)
+import           Parser.Nats        (ParsedMessage (ParsedInfo), parserApi)
 import           Test.Hspec
 import           Text.Printf
 import           Types.Info
@@ -55,11 +56,11 @@ cases = parallel $ do
   describe "generic parser" $ do
     forM_ explicitCases $ \(input, want) ->
       it (printf "correctly parses explicit case %s" (show input)) $ do
-        let output = genericParse input
+        let output = parse parserApi input
         output `shouldBe` Right (ParsedInfo want, "")
     forM_ generatedCases $ \(input, want) ->
       it (printf "correctly parses generated case %s" (show input)) $ do
-        let output = genericParse input
+        let output = parse parserApi input
         output `shouldBe` Right (ParsedInfo want, "")
 
 buildProtoInput :: Info -> BS.ByteString

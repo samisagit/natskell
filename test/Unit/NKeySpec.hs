@@ -2,7 +2,8 @@
 
 module NKeySpec (spec) where
 
-import qualified Client.Auth     as Auth
+import qualified Auth.Jwt        as Jwt
+import qualified Auth.NKey       as NKey
 import qualified Data.ByteString as BS
 import           Test.Hspec
 
@@ -17,16 +18,16 @@ spec = do
             \-----BEGIN USER NKEY SEED-----\n\
             \seed-token\n\
             \------END USER NKEY SEED------"
-      Auth.parseJwtBundle creds `shouldBe` Just (Auth.JwtBundle "jwt-token" "seed-token")
+      Jwt.parseJwtBundle creds `shouldBe` Just (Jwt.JwtBundle "jwt-token" "seed-token")
 
     it "returns Nothing when blocks are missing" $ do
-      Auth.parseJwtBundle "missing blocks" `shouldBe` Nothing
+      Jwt.parseJwtBundle "missing blocks" `shouldBe` Nothing
 
   describe "signNonceWithSeed" $ do
     it "derives the expected public key from a seed" $ do
       let seed = "SUAHR6JNS2HKJQEAQFHYPOXFXWE4JXBPKUWFX3IMYU72UHOGXT3ZMVFHXI"
           expectedPub = "UAB7EFDOTOBBMPOCK4SXFA62FVZOADQDZOU2W4IUDCGFKJXYVOK3LV7X"
-      case Auth.signNonceWithSeed seed "nonce-123" of
+      case NKey.signNonceWithSeed seed "nonce-123" of
         Left err -> expectationFailure err
         Right (pub, sig) -> do
           pub `shouldBe` expectedPub

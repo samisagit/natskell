@@ -18,9 +18,9 @@ import           Data.ByteString
     , pack
     , tail
     )
-import qualified Data.ByteString.Lazy     as LBS
-import           Data.Char                (chr)
-import           Data.Word8               (isUpper)
+import qualified Data.ByteString.Lazy      as LBS
+import           Data.Char                 (chr)
+import           Data.Word8                (isUpper)
 import           GHC.IO.Handle
     ( BufferMode (NoBuffering)
     , Handle
@@ -29,12 +29,14 @@ import           GHC.IO.Handle
     )
 import           GHC.IO.IOMode
 import           Lib.Logger
-import           Network.ConnectionAPI    (ReaderAPI (..), WriterAPI (..))
-import           Network.Socket           hiding (Debug)
-import           Parser
-import qualified Pipeline.Broadcasting    as Broadcast
-import           Pipeline.Streaming       (run)
-import           Prelude                  hiding
+import           Network.ConnectionAPI     (ReaderAPI (..), WriterAPI (..))
+import           Network.Socket            hiding (Debug, close)
+import           Parser.Combinators
+import           Pipeline.Broadcasting     (broadcastingApi)
+import           Pipeline.Broadcasting.API (BroadcastingAPI (BroadcastingAPI))
+import           Pipeline.Streaming        (streamingApi)
+import           Pipeline.Streaming.API    (StreamingAPI (StreamingAPI))
+import           Prelude                   hiding
     ( head
     , last
     , length
@@ -43,11 +45,10 @@ import           Prelude                  hiding
     , tail
     , take
     )
-import qualified Queue.API                as Queue
-import           Queue.API                (QueueItem (..))
-import           Queue.TransactionalQueue (newQueue)
+import           Queue.API                 (QueueItem (..), close, enqueue)
+import           Queue.TransactionalQueue  (newQueue)
 import           Test.Hspec
-import qualified Types.Pub                as Pub
+import qualified Types.Pub                 as Pub
 
 defaultLogger' :: IO LoggerConfig
 defaultLogger' = do
@@ -62,25 +63,25 @@ newtype CaptureWriter = CaptureWriter (TVar [ByteString])
 captureWriterApi :: WriterAPI CaptureWriter
 captureWriterApi =
   WriterAPI
-    { writerWriteData = \(CaptureWriter output) bytes -> do
+    { writeData = \(CaptureWriter output) bytes -> do
         atomically $ modifyTVar' output (<> [bytes])
         pure (Right ())
-    , writerWriteDataLazy = \writer bytes ->
-        writerWriteData captureWriterApi writer (LBS.toStrict bytes)
-    , writerClose = \_ -> pure ()
-    , writerOpen = \_ -> pure ()
+    , writeDataLazy = \writer bytes ->
+        writeData captureWriterApi writer (LBS.toStrict bytes)
+    , closeWriter = \_ -> pure ()
+    , openWriter = \_ -> pure ()
     }
 
 handleReaderApi :: ReaderAPI Handle
 handleReaderApi =
   ReaderAPI
-    { readerReadData = \h n -> do
+    { readData = \h n -> do
         result <- try (hGetSome h n) :: IO (Either SomeException ByteString)
         case result of
           Left err    -> return $ Left (show err)
           Right bytes -> return $ Right bytes
-    , readerClose = hClose
-    , readerOpen = \_ -> pure ()
+    , closeReader = hClose
+    , openReader = \_ -> pure ()
     }
 
 spec :: Spec
@@ -93,7 +94,8 @@ spec = do
         let sink curr = atomically $ modifyTVar' result (`append` curr)
         dl <- defaultLogger'
         ctx <- newLogContext
-        (forkIO . runWithLogger dl ctx) (run bufferLimit handleReaderApi client parser sink :: AppM ())
+        let StreamingAPI runStreaming = streamingApi
+        (forkIO . runWithLogger dl ctx) (runStreaming bufferLimit handleReaderApi client parser sink :: AppM ())
         hPut server "Hello, World"
         atomically $ assertTVarWithRetry result "Hello, World"
         hClose server
@@ -105,7 +107,8 @@ spec = do
         let sink curr = atomically $ modifyTVar' result (`append` curr)
         dl <- defaultLogger'
         ctx <- newLogContext
-        (forkIO . runWithLogger dl ctx) (run bufferLimit handleReaderApi client parser sink :: AppM ())
+        let StreamingAPI runStreaming = streamingApi
+        (forkIO . runWithLogger dl ctx) (runStreaming bufferLimit handleReaderApi client parser sink :: AppM ())
         hPut server "Hello, World"
         atomically $ assertTVarWithRetry result "Hello, World"
         hPut server "Hello, again"
@@ -118,7 +121,8 @@ spec = do
         let sink curr = atomically $ modifyTVar' result (`append` curr)
         dl <- defaultLogger'
         ctx <- newLogContext
-        (forkIO . runWithLogger dl ctx) (run bufferLimit handleReaderApi client testParserExcludingUpper sink :: AppM ())
+        let StreamingAPI runStreaming = streamingApi
+        (forkIO . runWithLogger dl ctx) (runStreaming bufferLimit handleReaderApi client testParserExcludingUpper sink :: AppM ())
         hPut server "HELLO WORLD hello, world"
         atomically $ assertTVarWithRetry result "  hello, world"
         hClose server
@@ -129,7 +133,8 @@ spec = do
         let sink curr = atomically $ modifyTVar' result (`append` curr)
         dl <- defaultLogger'
         ctx <- newLogContext
-        (forkIO . runWithLogger dl ctx) (run bufferLimit handleReaderApi client testParserForExplicitWord sink :: AppM ())
+        let StreamingAPI runStreaming = streamingApi
+        (forkIO . runWithLogger dl ctx) (runStreaming bufferLimit handleReaderApi client testParserForExplicitWord sink :: AppM ())
         hPut server "part1"
         threadDelay 100000
         atomically $ ensureTVarIsEmpty result
@@ -144,9 +149,10 @@ spec = do
         q <- newQueue
         output <- newTVarIO []
         let pub = Pub.Pub "FOO" Nothing Nothing (Just "0123456789")
-        Queue.queueEnqueue q (QueueItem pub) `shouldReturn` Right ()
-        Queue.queueClose q
-        runWithLogger dl ctx (Broadcast.run 5 q captureWriterApi (CaptureWriter output) :: AppM ())
+        let BroadcastingAPI runBroadcasting = broadcastingApi
+        enqueue q (QueueItem pub) `shouldReturn` Right ()
+        close q
+        runWithLogger dl ctx (runBroadcasting 5 q captureWriterApi (CaptureWriter output) :: AppM ())
         readTVarIO output `shouldReturn` []
 
 ensureTVarIsEmpty :: TVar ByteString -> STM ()

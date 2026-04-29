@@ -2,15 +2,13 @@ module ConnectionSpec (spec) where
 
 import           Control.Concurrent
 import qualified Data.ByteString         as BS
-import           Network.Connection.Core
-    ( Transport (..)
-    , newConn
-    , pointTransport
-    )
+import           Network.Connection      (connectionApi)
+import           Network.Connection.Core (Transport (..), pointTransport)
 import           Network.ConnectionAPI
-    ( ReaderAPI (..)
-    , connectionApi
-    , connectionReaderApi
+    ( closeReader
+    , newConn
+    , readData
+    , reader
     )
 import           System.Timeout          (timeout)
 import           Test.Hspec
@@ -18,7 +16,7 @@ import           Test.Hspec
 spec :: Spec
 spec = describe "Connection reader" $ do
   it "unblocks a blocking read when closeReader is called" $ do
-    conn <- newConn
+    conn <- newConn connectionApi
     started <- newEmptyMVar
     blocker <- (newEmptyMVar :: IO (MVar BS.ByteString))
     let transport = Transport
@@ -31,8 +29,8 @@ spec = describe "Connection reader" $ do
           }
     pointTransport conn transport
     resultVar <- newEmptyMVar
-    _ <- forkIO $ readerReadData (connectionReaderApi connectionApi) conn 1 >>= putMVar resultVar
+    _ <- forkIO $ readData (reader connectionApi) conn 1 >>= putMVar resultVar
     _ <- takeMVar started
-    readerClose (connectionReaderApi connectionApi) conn
+    closeReader (reader connectionApi) conn
     result <- timeout 1000000 (takeMVar resultVar)
     result `shouldBe` Just (Left "Read operation is blocked")
