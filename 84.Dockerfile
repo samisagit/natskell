@@ -13,7 +13,7 @@ RUN set -eux; \
   install -m 0755 "$CABAL_BIN" /out/cabal; \
   /out/cabal --version
 
-FROM haskell:8.4
+FROM haskell:8.8
 
 COPY --from=cabal-downloader /out/cabal /opt/cabal/bin/cabal
 ENV PATH="/opt/cabal/bin:${PATH}"
