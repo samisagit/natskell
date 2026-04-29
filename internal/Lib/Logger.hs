@@ -15,7 +15,7 @@ import           Control.Monad
 import           Control.Monad.Reader
 import           Data.Maybe             (catMaybes, fromMaybe)
 import           Lib.Logger.Types
-import           Lib.LoggerAPI          (LoggerAPI (..))
+import           Lib.LoggerAPI          (LoggerAPI (LoggerAPI))
 
 defaultLogContext :: LogContext
 defaultLogContext = LogContext Nothing Nothing Nothing
@@ -75,8 +75,4 @@ withLogLock lock =
   bracket_ (atomically $ takeTMVar lock) (atomically $ putTMVar lock ())
 
 loggerApi :: LoggerAPI
-loggerApi = LoggerAPI
-  { loggerRunWithLogger = runWithLogger
-  , loggerUpdateLogContext = updateLogContext
-  , loggerLogMessage = logMessage
-  }
+loggerApi = LoggerAPI runWithLogger updateLogContext logMessage

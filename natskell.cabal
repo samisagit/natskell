@@ -80,20 +80,23 @@ library natskell-internal
     text (>= 1.2 && < 1.3) || (>= 2.0 && < 2.2)
 
   exposed-modules:
-    Client.Auth
-    Client.Callbacks
-    Client.CallbacksAPI
-    Client.Internal
-    Client.Lifecycle
-    Client.LifecycleAPI
-    Client.PublishAPI
-    Client.Runtime
-    Client.RuntimeAPI
-    Client.Subscription
-    Client.SubscriptionAPI
-    Parser
-    Parser.Types
+    Auth.Types
+    Auth.None
+    Auth.Token
+    Auth.UserPass
+    Auth.NKey
+    Auth.Jwt
+    Handshake.Nats
+    Router.Nats
+    Subscription.Types
+    Subscription.Store
+    Engine
+    Publish.Config
+    Publish
+    State.Types
+    State.Store
     Parser.API
+    Parser.Combinators
     Lib.Logger
     Lib.Logger.Types
     Lib.LoggerAPI
@@ -113,9 +116,7 @@ library natskell-internal
     Types.Sub
     Types.Unsub
     Sid
-    SidAPI
     Nuid
-    NuidAPI
     WaitGroup
     Pipeline.Broadcasting.Source
     Pipeline.Broadcasting.Transformer
@@ -127,7 +128,9 @@ library natskell-internal
     Pipeline.Streaming.Source
     Pipeline.Streaming.Parser
     Pipeline.Streaming.Sink
+    Network.Connection
     Network.ConnectionAPI
+    Network.Connection.Types
     Network.Connection.Core
     Network.Connection.Tcp
     Network.Connection.Tls
@@ -136,14 +139,9 @@ library natskell-internal
   hs-source-dirs:
     internal
     internal/Types
-    internal/Transformers
-    internal/Validators
     internal/Lib
-    internal/Pipeline
-    internal/Pipeline/Broadcasting
-    internal/Pipeline/Streaming
-    internal/Network
-    internal/Queue
+    internal/Plumbing
+    internal/Policy
 
 library test-common
     import:         shared
