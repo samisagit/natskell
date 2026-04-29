@@ -5,11 +5,12 @@ module PingSpec (spec) where
 import           Control.Monad
 import qualified Data.ByteString           as BS
 import qualified Data.ByteString.Lazy      as LBS
-import           Parser.API                (parse)
-import           Parser.Nats
-    ( ParsedMessage (ParsedPing)
-    , parserApi
+import           Parser.API
+    ( ParseStep (Emit)
+    , ParsedMessage (ParsedPing)
+    , parse
     )
+import           Parser.Nats               (parserApi)
 import           Test.Hspec
 import           Text.Printf
 import           Transformers.Transformers
@@ -33,7 +34,7 @@ parserCases = parallel $ do
     forM_ explicitParserCases $ \(input, want) -> do
       it (printf "correctly parses explicit case %s" (show input)) $ do
         let output = parse parserApi input
-        output `shouldBe` Right (ParsedPing want, "")
+        output `shouldBe` Emit (ParsedPing want) ""
 
 transformerCases = parallel $ do
   describe "PING transformer" $ do

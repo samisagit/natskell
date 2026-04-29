@@ -14,7 +14,6 @@ import           Data.ByteString
     , hPut
     , head
     , isPrefixOf
-    , length
     , pack
     , tail
     )
@@ -31,7 +30,10 @@ import           GHC.IO.IOMode
 import           Lib.Logger
 import           Network.ConnectionAPI     (ReaderAPI (..), WriterAPI (..))
 import           Network.Socket            hiding (Debug, close)
-import           Parser.Combinators
+import           Parser.API
+    ( ParseStep (DropPrefix, Emit, NeedMore)
+    , ParserAPI (ParserAPI)
+    )
 import           Pipeline.Broadcasting     (broadcastingApi)
 import           Pipeline.Broadcasting.API (BroadcastingAPI (BroadcastingAPI))
 import           Pipeline.Streaming        (streamingApi)
@@ -90,12 +92,11 @@ spec = do
       it "reads from source and writes to sink" $ do
         (server, client) <- makeSocketPair
         result <- newTVarIO "" :: IO (TVar ByteString)
-        let parser bs = Right (pack [head bs], tail bs) :: Either ParserErr (ByteString, ByteString)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
         dl <- defaultLogger'
         ctx <- newLogContext
         let StreamingAPI runStreaming = streamingApi
-        (forkIO . runWithLogger dl ctx) (runStreaming bufferLimit handleReaderApi client parser sink :: AppM ())
+        (forkIO . runWithLogger dl ctx) (runStreaming bufferLimit handleReaderApi client singleByteParser sink :: AppM ())
         hPut server "Hello, World"
         atomically $ assertTVarWithRetry result "Hello, World"
         hClose server
@@ -103,12 +104,11 @@ spec = do
       it "continues reading from the handle after reaching end" $ do
         (server, client) <- makeSocketPair
         result <- newTVarIO "" :: IO (TVar ByteString)
-        let parser bs = Right (pack [head bs], tail bs) :: Either ParserErr (ByteString, ByteString)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
         dl <- defaultLogger'
         ctx <- newLogContext
         let StreamingAPI runStreaming = streamingApi
-        (forkIO . runWithLogger dl ctx) (runStreaming bufferLimit handleReaderApi client parser sink :: AppM ())
+        (forkIO . runWithLogger dl ctx) (runStreaming bufferLimit handleReaderApi client singleByteParser sink :: AppM ())
         hPut server "Hello, World"
         atomically $ assertTVarWithRetry result "Hello, World"
         hPut server "Hello, again"
@@ -122,7 +122,7 @@ spec = do
         dl <- defaultLogger'
         ctx <- newLogContext
         let StreamingAPI runStreaming = streamingApi
-        (forkIO . runWithLogger dl ctx) (runStreaming bufferLimit handleReaderApi client testParserExcludingUpper sink :: AppM ())
+        (forkIO . runWithLogger dl ctx) (runStreaming bufferLimit handleReaderApi client excludingUpperParser sink :: AppM ())
         hPut server "HELLO WORLD hello, world"
         atomically $ assertTVarWithRetry result "  hello, world"
         hClose server
@@ -134,7 +134,7 @@ spec = do
         dl <- defaultLogger'
         ctx <- newLogContext
         let StreamingAPI runStreaming = streamingApi
-        (forkIO . runWithLogger dl ctx) (runStreaming bufferLimit handleReaderApi client testParserForExplicitWord sink :: AppM ())
+        (forkIO . runWithLogger dl ctx) (runStreaming bufferLimit handleReaderApi client explicitWordParser sink :: AppM ())
         hPut server "part1"
         threadDelay 100000
         atomically $ ensureTVarIsEmpty result
@@ -165,16 +165,28 @@ assertTVarWithRetry tvar expected = do
   actual <- readTVar tvar
   Control.Monad.unless (actual == expected) retry
 
-testParserExcludingUpper :: ByteString -> Either ParserErr (ByteString, ByteString)
-testParserExcludingUpper bs = case isUpper . head $ bs of
-                                False -> Right (pack [head bs], tail bs) ;
-                                True -> Left (UnexpectedChar [chr .fromIntegral . head $ bs] (length bs))
+singleByteParser :: ParserAPI ByteString
+singleByteParser = ParserAPI (\bs -> Emit (pack [head bs]) (tail bs))
 
-testParserForExplicitWord :: ByteString -> Either ParserErr (ByteString, ByteString)
-testParserForExplicitWord bs
-  | bs == "part1part2" = Right (bs, empty)
-  | bs `isPrefixOf` "part1part2" = Left (UnexpectedEndOfInput "test" (length bs))
-  | otherwise          = Left (UnexpectedChar [chr .fromIntegral . head $ bs] 1)
+excludingUpperParser :: ParserAPI ByteString
+excludingUpperParser =
+  ParserAPI $ \bs ->
+    case isUpper (head bs) of
+      False ->
+        Emit (pack [head bs]) (tail bs)
+      True ->
+        DropPrefix 1 [chr . fromIntegral . head $ bs]
+
+explicitWordParser :: ParserAPI ByteString
+explicitWordParser = ParserAPI parseWord
+  where
+    parseWord bs
+      | bs == "part1part2" =
+          Emit bs empty
+      | bs `isPrefixOf` "part1part2" =
+          NeedMore
+      | otherwise =
+          DropPrefix 1 [chr . fromIntegral . head $ bs]
 
 makeSocketPair :: IO (Handle, Handle)
 makeSocketPair = do

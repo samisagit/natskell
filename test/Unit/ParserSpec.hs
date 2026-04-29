@@ -7,7 +7,11 @@ import           Control.Monad
 import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Word8            as W8
-import           Parser.API            (Suggestion (..), parse, solveErr)
+import           Parser.API
+    ( ParseStep (DropPrefix, Emit, NeedMore)
+    , ParsedMessage (ParsedMsg, ParsedPing)
+    , parse
+    )
 import qualified Parser.Combinators    as Parser
 import qualified Parser.Nats           as P
 import           Test.Hspec
@@ -95,36 +99,38 @@ subject = parallel $ do
 api = parallel $ do
   describe "parser api" $ do
     it "parses a valid frame through the API" $ do
-      parse P.parserApi "PING\r\n" `shouldBe` Right (P.ParsedPing Ping, "")
+      parse P.parserApi "PING\r\n" `shouldBe` Emit (ParsedPing Ping) ""
     it "suggests pulling more data for truncated input" $ do
-      let err = Parser.UnexpectedEndOfInput "nothing to read" 0
-      solveErr P.parserApi err 4 `shouldBe` SuggestPull
+      parse P.parserApi "MSG FOO 1 5\r\nHEL" `shouldBe` NeedMore
     it "suggests dropping invalid prefix bytes" $ do
-      let err = Parser.UnexpectedChar "bad input" 2
-      solveErr P.parserApi err 4 `shouldBe` SuggestDrop 3 "bad input"
+      case parse P.parserApi "LOL" of
+        DropPrefix n _ ->
+          n `shouldSatisfy` (> 0)
+        other ->
+          expectationFailure ("expected DropPrefix, got " ++ show other)
 
 msg = parallel $ do
   describe "MSG parsing" $ do
     it "accepts tab-delimited fields and non-alphanumeric subjects" $ do
       let input = "MSG foo-bar\t1\t_INBOX.a_b\t5\r\nHELLO\r\n"
       case parse P.parserApi input of
-        Left err -> expectationFailure (show err)
-        Right (parsed, rest) -> do
+        Emit parsed rest -> do
           rest `shouldBe` ""
           case parsed of
-            P.ParsedMsg msg' -> do
+            ParsedMsg msg' -> do
               Msg.subject msg' `shouldBe` "foo-bar"
               Msg.replyTo msg' `shouldBe` Just "_INBOX.a_b"
               Msg.payload msg' `shouldBe` Just "HELLO"
             other -> expectationFailure ("unexpected parse result: " ++ show other)
+        other ->
+          expectationFailure ("unexpected parse result: " ++ show other)
     it "waits for the payload when a message spans frames" $ do
       let input = "MSG FOO 1 5\r\nHEL"
       case parse P.parserApi input of
-        Left (Parser.UnexpectedEndOfInput _ _) -> pure ()
-        Left err ->
-          expectationFailure ("expected UnexpectedEndOfInput, got " ++ show err)
-        Right result ->
-          expectationFailure ("expected parse failure, got " ++ show result)
+        NeedMore ->
+          pure ()
+        other ->
+          expectationFailure ("expected NeedMore, got " ++ show other)
 
 validSubjectCases :: [BS.ByteString]
 validSubjectCases =

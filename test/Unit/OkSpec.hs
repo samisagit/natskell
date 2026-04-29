@@ -4,8 +4,12 @@ module OkSpec (spec) where
 
 import           Control.Monad
 import qualified Data.ByteString as BS
-import           Parser.API      (parse)
-import           Parser.Nats     (ParsedMessage (ParsedOk), parserApi)
+import           Parser.API
+    ( ParseStep (Emit)
+    , ParsedMessage (ParsedOk)
+    , parse
+    )
+import           Parser.Nats     (parserApi)
 import           Test.Hspec
 import           Text.Printf
 import           Types.Ok
@@ -22,4 +26,4 @@ cases = parallel $ do
       forM_ explicitCases $ \(input, want) ->
         it (printf "correctly parses explicit case %s" (show input)) $ do
           let output = parse parserApi input
-          output `shouldBe` Right (ParsedOk want, "")
+          output `shouldBe` Emit (ParsedOk want) ""

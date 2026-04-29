@@ -5,8 +5,12 @@ module ErrSpec (spec) where
 import           Control.Monad
 import qualified Data.ByteString as BS
 import           Fixtures
-import           Parser.API      (parse)
-import           Parser.Nats     (ParsedMessage (ParsedErr), parserApi)
+import           Parser.API
+    ( ParseStep (Emit)
+    , ParsedMessage (ParsedErr)
+    , parse
+    )
+import           Parser.Nats     (parserApi)
 import           Test.Hspec
 import           Text.Printf
 import           Types.Err
@@ -43,8 +47,8 @@ cases = parallel $ do
     forM_ explicitCases $ \(input, want) ->
       it (printf "correctly parses explicit case %s" (show input)) $ do
         let output = parse parserApi input
-        output `shouldBe` Right (ParsedErr want, "")
+        output `shouldBe` Emit (ParsedErr want) ""
     forM_ generatedCases $ \(input, want) ->
       it (printf "correctly parses generated case %s" (show input)) $ do
         let output = parse parserApi input
-        output `shouldBe` Right (ParsedErr want, "")
+        output `shouldBe` Emit (ParsedErr want) ""
