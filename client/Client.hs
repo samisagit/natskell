@@ -61,7 +61,7 @@ import           Lib.Logger
     )
 import           Network.Connection       (connectionApi)
 import           Network.ConnectionAPI    (newConn)
-import           Parser.Nats              (parserApi)
+import           Parser.Attoparsec        (parserApi)
 import           Pipeline.Broadcasting    (broadcastingApi)
 import           Pipeline.Streaming       (streamingApi)
 import           Publish                  (defaultPublishConfig)

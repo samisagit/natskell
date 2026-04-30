@@ -10,7 +10,7 @@ import           Parser.API
     , ParsedMessage (ParsedPong)
     , parse
     )
-import           Parser.Nats               (parserApi)
+import           Parser.Attoparsec         (parserApi)
 import           Test.Hspec
 import           Text.Printf
 import           Transformers.Transformers

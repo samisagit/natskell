@@ -3,14 +3,14 @@
 module ErrSpec (spec) where
 
 import           Control.Monad
-import qualified Data.ByteString as BS
+import qualified Data.ByteString   as BS
 import           Fixtures
 import           Parser.API
     ( ParseStep (Emit)
     , ParsedMessage (ParsedErr)
     , parse
     )
-import           Parser.Nats     (parserApi)
+import           Parser.Attoparsec (parserApi)
 import           Test.Hspec
 import           Text.Printf
 import           Types.Err

@@ -13,7 +13,7 @@ import           Parser.API
     , ParsedMessage (ParsedMsg)
     , parse
     )
-import           Parser.Nats        (parserApi)
+import           Parser.Attoparsec  (parserApi)
 import           Test.Hspec
 import           Text.Printf
 import           Types.Msg
