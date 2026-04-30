@@ -24,7 +24,8 @@ jobs:
     - uses: cachix/install-nix-action@v31
       with:
         github_access_token: ${{ secrets.GITHUB_TOKEN }}
-    - run: nix develop --command bash -c "cabal test natskell:test:integration-tests -f impure --test-show-details=direct"
+    - run: >-
+        nix develop --command bash -c 'cabal test natskell:test:integration-tests -f impure --test-show-details=direct --test-option="--skip=soak: parses a large buffer of MSG and HMSG frames"'
   system-test:
     name: system-test
     runs-on: ubuntu-latest

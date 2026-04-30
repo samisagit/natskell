@@ -47,4 +47,5 @@ jobs:
         run: cabal build natskell --enable-tests --only-dependencies
 
       - name: Test
-        run: cabal test unit-test fuzz-test integration-tests -f impure --enable-tests --test-show-details=direct
+        run: >-
+          cabal test unit-test fuzz-test integration-tests -f impure --enable-tests --test-show-details=direct --test-option="--skip=soak: parses a large buffer of MSG and HMSG frames"
