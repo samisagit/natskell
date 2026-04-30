@@ -3,9 +3,14 @@
 module ErrSpec (spec) where
 
 import           Control.Monad
-import qualified Data.ByteString as BS
+import qualified Data.ByteString   as BS
 import           Fixtures
-import           Parsers.Parsers
+import           Parser.API
+    ( ParseStep (Emit)
+    , ParsedMessage (ParsedErr)
+    , parse
+    )
+import           Parser.Attoparsec (parserApi)
 import           Test.Hspec
 import           Text.Printf
 import           Types.Err
@@ -41,10 +46,9 @@ cases = parallel $ do
   describe "generic parser" $ do
     forM_ explicitCases $ \(input, want) ->
       it (printf "correctly parses explicit case %s" (show input)) $ do
-        let output = genericParse input
-        output `shouldBe` Right (ParsedErr want, "")
+        let output = parse parserApi input
+        output `shouldBe` Emit (ParsedErr want) ""
     forM_ generatedCases $ \(input, want) ->
       it (printf "correctly parses generated case %s" (show input)) $ do
-        let output = genericParse input
-        output `shouldBe` Right (ParsedErr want, "")
-
+        let output = parse parserApi input
+        output `shouldBe` Emit (ParsedErr want) ""

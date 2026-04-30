@@ -9,7 +9,7 @@ import           Lib.Logger.Types
 
 -- | Thin API wrapper for logger capabilities.
 data LoggerAPI = LoggerAPI
-                   { loggerRunWithLogger :: forall a. LoggerConfig -> TVar LogContext -> AppM a -> IO a
-                   , loggerUpdateLogContext :: TVar LogContext -> (LogContext -> LogContext) -> IO ()
-                   , loggerLogMessage :: LogLevel -> String -> AppM ()
+                   { runWithLogger :: forall a. LoggerConfig -> TVar LogContext -> AppM a -> IO a
+                   , updateLogContext :: TVar LogContext -> (LogContext -> LogContext) -> IO ()
+                   , logMessage :: LogLevel -> String -> AppM ()
                    }

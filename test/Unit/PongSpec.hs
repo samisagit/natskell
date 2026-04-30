@@ -5,7 +5,12 @@ module PongSpec (spec) where
 import           Control.Monad
 import qualified Data.ByteString           as BS
 import qualified Data.ByteString.Lazy      as LBS
-import           Parsers.Parsers
+import           Parser.API
+    ( ParseStep (Emit)
+    , ParsedMessage (ParsedPong)
+    , parse
+    )
+import           Parser.Attoparsec         (parserApi)
 import           Test.Hspec
 import           Text.Printf
 import           Transformers.Transformers
@@ -27,8 +32,8 @@ cases = parallel $ do
   describe "generic parser" $ do
     forM_ explicitParserCases $ \(input, want) -> do
       it (printf "correctly parses explicit case %s" (show input)) $ do
-        let output = genericParse input
-        output `shouldBe` Right (ParsedPong want, "")
+        let output = parse parserApi input
+        output `shouldBe` Emit (ParsedPong want) ""
   describe "PONG transformer" $ do
     forM_ explicitTransformerCases $ \(input, want) -> do
       it (printf "correctly transforms %s" (show input)) $ do

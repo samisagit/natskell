@@ -2,6 +2,7 @@
 
 module NKeySpec (spec) where
 
+import qualified Auth.Jwt        as Jwt
 import qualified Auth.NKey       as NKey
 import qualified Data.ByteString as BS
 import           Test.Hspec
@@ -17,10 +18,10 @@ spec = do
             \-----BEGIN USER NKEY SEED-----\n\
             \seed-token\n\
             \------END USER NKEY SEED------"
-      NKey.parseJwtBundle creds `shouldBe` Just (NKey.JwtBundle "jwt-token" "seed-token")
+      Jwt.parseJwtBundle creds `shouldBe` Just (Jwt.JwtBundle "jwt-token" "seed-token")
 
     it "returns Nothing when blocks are missing" $ do
-      NKey.parseJwtBundle "missing blocks" `shouldBe` Nothing
+      Jwt.parseJwtBundle "missing blocks" `shouldBe` Nothing
 
   describe "signNonceWithSeed" $ do
     it "derives the expected public key from a seed" $ do

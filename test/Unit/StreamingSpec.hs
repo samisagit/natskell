@@ -1,6 +1,4 @@
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module StreamingSpec where
 
@@ -16,7 +14,6 @@ import           Data.ByteString
     , hPut
     , head
     , isPrefixOf
-    , length
     , pack
     , tail
     )
@@ -31,11 +28,16 @@ import           GHC.IO.Handle
     )
 import           GHC.IO.IOMode
 import           Lib.Logger
-import           Lib.Parser
-import           Network.API
-import           Network.Socket            hiding (Debug)
-import qualified Pipeline.Broadcasting     as Broadcast
-import           Pipeline.Streaming        (run)
+import           Network.ConnectionAPI     (ReaderAPI (..), WriterAPI (..))
+import           Network.Socket            hiding (Debug, close)
+import           Parser.API
+    ( ParseStep (DropPrefix, Emit, NeedMore)
+    , ParserAPI (ParserAPI)
+    )
+import           Pipeline.Broadcasting     (broadcastingApi)
+import           Pipeline.Broadcasting.API (BroadcastingAPI (BroadcastingAPI))
+import           Pipeline.Streaming        (streamingApi)
+import           Pipeline.Streaming.API    (StreamingAPI (StreamingAPI))
 import           Prelude                   hiding
     ( head
     , last
@@ -45,10 +47,9 @@ import           Prelude                   hiding
     , tail
     , take
     )
-import qualified Queue.API                 as Queue
-import           Queue.TransactionalQueue  (QueueItem (..), newQ)
+import           Queue.API                 (QueueItem (..), close, enqueue)
+import           Queue.TransactionalQueue  (newQueue)
 import           Test.Hspec
-import           Transformers.Transformers ()
 import qualified Types.Pub                 as Pub
 
 defaultLogger' :: IO LoggerConfig
@@ -61,23 +62,29 @@ bufferLimit = 4096
 
 newtype CaptureWriter = CaptureWriter (TVar [ByteString])
 
-instance ConnectionWriter CaptureWriter where
-  writeData (CaptureWriter output) bytes = do
-    atomically $ modifyTVar' output (<> [bytes])
-    pure (Right ())
-  writeDataLazy writer bytes = writeData writer (LBS.toStrict bytes)
-  closeWriter _ = pure ()
-  openWriter _ = pure ()
+captureWriterApi :: WriterAPI CaptureWriter
+captureWriterApi =
+  WriterAPI
+    { writeData = \(CaptureWriter output) bytes -> do
+        atomically $ modifyTVar' output (<> [bytes])
+        pure (Right ())
+    , writeDataLazy = \writer bytes ->
+        writeData captureWriterApi writer (LBS.toStrict bytes)
+    , closeWriter = \_ -> pure ()
+    , openWriter = \_ -> pure ()
+    }
 
-instance ConnectionReader Handle where
-  readData h n = do
-    result <- try (hGetSome h n) :: IO (Either SomeException ByteString)
-    case result of
-      Left err    -> return $ Left (show err)
-      Right bytes -> return $ Right bytes
-
-  closeReader = hClose
-  openReader _ = pure ()
+handleReaderApi :: ReaderAPI Handle
+handleReaderApi =
+  ReaderAPI
+    { readData = \h n -> do
+        result <- try (hGetSome h n) :: IO (Either SomeException ByteString)
+        case result of
+          Left err    -> return $ Left (show err)
+          Right bytes -> return $ Right bytes
+    , closeReader = hClose
+    , openReader = \_ -> pure ()
+    }
 
 spec :: Spec
 spec = do
@@ -85,11 +92,11 @@ spec = do
       it "reads from source and writes to sink" $ do
         (server, client) <- makeSocketPair
         result <- newTVarIO "" :: IO (TVar ByteString)
-        let parser bs = Right (pack [head bs], tail bs) :: Either ParserErr (ByteString, ByteString)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
         dl <- defaultLogger'
         ctx <- newLogContext
-        (forkIO . runWithLogger dl ctx) (run bufferLimit client parser sink :: AppM ())
+        let StreamingAPI runStreaming = streamingApi
+        (forkIO . runWithLogger dl ctx) (runStreaming bufferLimit handleReaderApi client singleByteParser sink :: AppM ())
         hPut server "Hello, World"
         atomically $ assertTVarWithRetry result "Hello, World"
         hClose server
@@ -97,11 +104,11 @@ spec = do
       it "continues reading from the handle after reaching end" $ do
         (server, client) <- makeSocketPair
         result <- newTVarIO "" :: IO (TVar ByteString)
-        let parser bs = Right (pack [head bs], tail bs) :: Either ParserErr (ByteString, ByteString)
         let sink curr = atomically $ modifyTVar' result (`append` curr)
         dl <- defaultLogger'
         ctx <- newLogContext
-        (forkIO . runWithLogger dl ctx) (run bufferLimit client parser sink :: AppM ())
+        let StreamingAPI runStreaming = streamingApi
+        (forkIO . runWithLogger dl ctx) (runStreaming bufferLimit handleReaderApi client singleByteParser sink :: AppM ())
         hPut server "Hello, World"
         atomically $ assertTVarWithRetry result "Hello, World"
         hPut server "Hello, again"
@@ -114,7 +121,8 @@ spec = do
         let sink curr = atomically $ modifyTVar' result (`append` curr)
         dl <- defaultLogger'
         ctx <- newLogContext
-        (forkIO . runWithLogger dl ctx) (run bufferLimit client testParserExcludingUpper sink :: AppM ())
+        let StreamingAPI runStreaming = streamingApi
+        (forkIO . runWithLogger dl ctx) (runStreaming bufferLimit handleReaderApi client excludingUpperParser sink :: AppM ())
         hPut server "HELLO WORLD hello, world"
         atomically $ assertTVarWithRetry result "  hello, world"
         hClose server
@@ -125,7 +133,8 @@ spec = do
         let sink curr = atomically $ modifyTVar' result (`append` curr)
         dl <- defaultLogger'
         ctx <- newLogContext
-        (forkIO . runWithLogger dl ctx) (run bufferLimit client testParserForExplicitWord sink :: AppM ())
+        let StreamingAPI runStreaming = streamingApi
+        (forkIO . runWithLogger dl ctx) (runStreaming bufferLimit handleReaderApi client explicitWordParser sink :: AppM ())
         hPut server "part1"
         threadDelay 100000
         atomically $ ensureTVarIsEmpty result
@@ -137,12 +146,13 @@ spec = do
       it "drops messages larger than the buffer limit" $ do
         dl <- defaultLogger'
         ctx <- newLogContext
-        q <- newQ
+        q <- newQueue
         output <- newTVarIO []
         let pub = Pub.Pub "FOO" Nothing Nothing (Just "0123456789")
-        Queue.enqueue q (QueueItem pub) `shouldReturn` Right ()
-        Queue.close q
-        runWithLogger dl ctx (Broadcast.run 5 q (CaptureWriter output) :: AppM ())
+        let BroadcastingAPI runBroadcasting = broadcastingApi
+        enqueue q (QueueItem pub) `shouldReturn` Right ()
+        close q
+        runWithLogger dl ctx (runBroadcasting 5 q captureWriterApi (CaptureWriter output) :: AppM ())
         readTVarIO output `shouldReturn` []
 
 ensureTVarIsEmpty :: TVar ByteString -> STM ()
@@ -155,16 +165,28 @@ assertTVarWithRetry tvar expected = do
   actual <- readTVar tvar
   Control.Monad.unless (actual == expected) retry
 
-testParserExcludingUpper :: ByteString -> Either ParserErr (ByteString, ByteString)
-testParserExcludingUpper bs = case isUpper . head $ bs of
-                                False -> Right (pack [head bs], tail bs) ;
-                                True -> Left (UnexpectedChar [chr .fromIntegral . head $ bs] (length bs))
+singleByteParser :: ParserAPI ByteString
+singleByteParser = ParserAPI (\bs -> Emit (pack [head bs]) (tail bs))
 
-testParserForExplicitWord :: ByteString -> Either ParserErr (ByteString, ByteString)
-testParserForExplicitWord bs
-  | bs == "part1part2" = Right (bs, empty)
-  | bs `isPrefixOf` "part1part2" = Left (UnexpectedEndOfInput "test" (length bs))
-  | otherwise          = Left (UnexpectedChar [chr .fromIntegral . head $ bs] 1)
+excludingUpperParser :: ParserAPI ByteString
+excludingUpperParser =
+  ParserAPI $ \bs ->
+    case isUpper (head bs) of
+      False ->
+        Emit (pack [head bs]) (tail bs)
+      True ->
+        DropPrefix 1 [chr . fromIntegral . head $ bs]
+
+explicitWordParser :: ParserAPI ByteString
+explicitWordParser = ParserAPI parseWord
+  where
+    parseWord bs
+      | bs == "part1part2" =
+          Emit bs empty
+      | bs `isPrefixOf` "part1part2" =
+          NeedMore
+      | otherwise =
+          DropPrefix 1 [chr . fromIntegral . head $ bs]
 
 makeSocketPair :: IO (Handle, Handle)
 makeSocketPair = do

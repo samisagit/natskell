@@ -1,14 +1,14 @@
 module Sid
-  ( module Sid.Types
+  ( SIDCounter
   , initialSIDCounter
   , nextSID
-  , sidApi
   ) where
 
 import qualified Data.ByteString.Char8 as BC
-import           Sid.Types
-import           SidAPI                (SidAPI (..))
-import           Types
+import           Data.Word             (Word64)
+import           Types.Msg             (SID)
+
+type SIDCounter = Word64
 
 initialSIDCounter :: SIDCounter
 initialSIDCounter = 0
@@ -16,9 +16,3 @@ initialSIDCounter = 0
 nextSID :: SIDCounter -> (SID, SIDCounter)
 nextSID counter = (BC.pack (show next), next)
   where next = counter + 1
-
-sidApi :: SidAPI
-sidApi = SidAPI
-  { sidInitial = initialSIDCounter
-  , sidNext = nextSID
-  }

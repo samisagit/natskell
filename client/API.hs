@@ -11,13 +11,13 @@ module API
   , withHeaders
   ) where
 
-import           Client.PublishAPI      (PublishConfig)
-import           Client.SubscriptionAPI (SubscribeConfig (..))
-import qualified Data.ByteString        as BS
-import           Data.Time.Clock        (NominalDiffTime)
-import           Lib.CallOption         (CallOption)
-import           Types                  (Headers, Payload, SID, Subject)
-import qualified Types.Msg              as Msg
+import qualified Data.ByteString    as BS
+import           Data.Time.Clock    (NominalDiffTime)
+import           Lib.CallOption     (CallOption)
+import           Publish.Config     (PublishConfig)
+import           Subscription.Types (SubscribeConfig (..))
+import qualified Types.Msg          as Msg
+import           Types.Msg          (Headers, Payload, SID, Subject)
 
 -- | Client capabilities for publishing, subscribing, and lifecycle control.
 data Client = Client
@@ -69,7 +69,7 @@ type SubscribeOption = CallOption SubscribeConfig
 -- subscribe client \"events.created\" [withSubscriptionExpiry 2] print
 -- @
 withSubscriptionExpiry :: NominalDiffTime -> SubscribeOption
-withSubscriptionExpiry expirySeconds cfg = cfg { subscriptionExpiry = Just expirySeconds }
+withSubscriptionExpiry expirySeconds cfg = cfg { expiry = Just expirySeconds }
 
 -- | withPayload is used to set the payload for a publish operation.
 -- Default: no payload.

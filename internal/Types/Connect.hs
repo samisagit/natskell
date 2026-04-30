@@ -1,7 +1,8 @@
+{-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Types.Connect
-  ( module Types.Connect.Types
+  ( Connect (..)
   , validateAuthToken
   , validateUser
   , validatePass
@@ -12,28 +13,99 @@ module Types.Connect
   , validateSig
   , validateJwt
   , validateNKey
-  , textToByteString
-  , byteStringToText
   ) where
 
-import           Control.Monad
 import           Data.Aeson
-import qualified Data.ByteString       as BS
-import qualified Data.Text             as T
-import qualified Data.Text.Encoding    as E
-import           Types.Connect.Types
+import qualified Data.ByteString           as BS
+import qualified Data.ByteString.Lazy      as LBS
+import qualified Data.Text.Encoding        as E
+import           GHC.Generics              (Generic)
+import           Transformers.Transformers (Transformer (..))
 import           Validators.Validators
 
+data Connect = Connect
+                 { verbose       :: Bool
+                 , pedantic      :: Bool
+                 , tls_required  :: Bool
+                 , auth_token    :: Maybe BS.ByteString
+                 , user          :: Maybe BS.ByteString
+                 , pass          :: Maybe BS.ByteString
+                 , name          :: Maybe BS.ByteString
+                 , lang          :: BS.ByteString
+                 , version       :: BS.ByteString
+                 , protocol      :: Maybe Int
+                 , echo          :: Maybe Bool
+                 , sig           :: Maybe BS.ByteString
+                 , jwt           :: Maybe BS.ByteString
+                 , nkey          :: Maybe BS.ByteString
+                 , no_responders :: Maybe Bool
+                 , headers       :: Maybe Bool
+                 }
+  deriving (Eq, Show)
+
 instance ToJSON Connect where
+  toJSON = toJSON . toConnectJSON
+
+instance Transformer Connect where
+  transform c =
+    let encoded = encode c
+    in LBS.fromChunks ["CONNECT ", LBS.toStrict encoded, "\r\n"]
+
+newtype Utf8ByteString = Utf8ByteString { unUtf8ByteString :: BS.ByteString }
+  deriving (Eq, Show)
+
+instance ToJSON Utf8ByteString where
+  toJSON = toJSON . E.decodeUtf8 . unUtf8ByteString
+
+data ConnectJSON = ConnectJSON
+                     { connectJSON_verbose       :: Bool
+                     , connectJSON_pedantic      :: Bool
+                     , connectJSON_tls_required  :: Bool
+                     , connectJSON_auth_token    :: Maybe Utf8ByteString
+                     , connectJSON_user          :: Maybe Utf8ByteString
+                     , connectJSON_pass          :: Maybe Utf8ByteString
+                     , connectJSON_name          :: Maybe Utf8ByteString
+                     , connectJSON_lang          :: Utf8ByteString
+                     , connectJSON_version       :: Utf8ByteString
+                     , connectJSON_protocol      :: Maybe Int
+                     , connectJSON_echo          :: Maybe Bool
+                     , connectJSON_sig           :: Maybe Utf8ByteString
+                     , connectJSON_jwt           :: Maybe Utf8ByteString
+                     , connectJSON_nkey          :: Maybe Utf8ByteString
+                     , connectJSON_no_responders :: Maybe Bool
+                     , connectJSON_headers       :: Maybe Bool
+                     }
+  deriving (Eq, Generic, Show)
+
+instance ToJSON ConnectJSON where
   toJSON = genericToJSON defaultOptions
-    {omitNothingFields = True}
+    { fieldLabelModifier = drop connectJSONPrefixLength
+    , omitNothingFields = True
+    }
 
-instance ToJSON BS.ByteString where
-  toJSON = toJSON . byteStringToText
+connectJSONPrefixLength :: Int
+connectJSONPrefixLength = 12
 
-instance FromJSON BS.ByteString where
-  parseJSON (String x) = textToByteString x
-  parseJSON _          = mzero
+toConnectJSON :: Connect -> ConnectJSON
+toConnectJSON c =
+  ConnectJSON
+    { connectJSON_verbose = verbose c
+    , connectJSON_pedantic = pedantic c
+    , connectJSON_tls_required = tls_required c
+    , connectJSON_auth_token = Utf8ByteString <$> auth_token c
+    , connectJSON_user = Utf8ByteString <$> user c
+    , connectJSON_pass = Utf8ByteString <$> pass c
+    , connectJSON_name = Utf8ByteString <$> name c
+    , connectJSON_lang = Utf8ByteString (lang c)
+    , connectJSON_version = Utf8ByteString (version c)
+    , connectJSON_protocol = protocol c
+    , connectJSON_echo = echo c
+    , connectJSON_sig = Utf8ByteString <$> sig c
+    , connectJSON_jwt = Utf8ByteString <$> jwt c
+    , connectJSON_nkey = Utf8ByteString <$> nkey c
+    , connectJSON_no_responders = no_responders c
+    , connectJSON_headers = headers c
+    }
 
 instance Validator Connect where
   validate c = do
@@ -97,9 +169,3 @@ validateNKey :: Connect -> Either BS.ByteString ()
 validateNKey c
   | nkey c == Just "" = Left "explicit empty nkey"
   | otherwise = Right ()
-
-textToByteString :: MonadPlus m =>  T.Text -> m BS.ByteString
-textToByteString x = pure $ E.encodeUtf8 x
-
-byteStringToText :: BS.ByteString -> T.Text
-byteStringToText = E.decodeUtf8
