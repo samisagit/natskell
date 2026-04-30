@@ -8,7 +8,7 @@ See roadmap [here](https://github.com/users/samisagit/projects/1)
 
 ## Installation
 
-Natskell is still pre alpha, so there is no candidate at present.
+Natskell is available on Hackage at https://hackage.haskell.org/package/natskell
 
 ## Usage
 
