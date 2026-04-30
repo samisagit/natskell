@@ -1,4 +1,4 @@
-FROM haskell:9.12
+FROM haskell:9.14
 
 RUN apt-get update \ 
  && apt-get install -y --no-install-recommends pkg-config zlib1g-dev \ 
@@ -9,4 +9,3 @@ RUN cabal update
 COPY . .
 
 RUN cabal build all
-

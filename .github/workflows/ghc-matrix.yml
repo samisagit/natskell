@@ -15,8 +15,8 @@ jobs:
       fail-fast: true
       matrix:
         # https://github.com/haskell/aeson/issues/1155 blocks support for GHC 9.14, so we have to exclude it for now.
-        # ghc: ["8.8", "8.10", "9.0", "9.2", "9.4", "9.6", "9.8", "9.10", "9.12", "9.14"]
-        ghc: ["8.8", "8.10", "9.0", "9.2", "9.4", "9.6", "9.8", "9.10", "9.12"]
+        ghc: ["8.8", "8.10", "9.0", "9.2", "9.4", "9.6", "9.8", "9.10", "9.12", "9.14"]
+        # ghc: ["8.8", "8.10", "9.0", "9.2", "9.4", "9.6", "9.8", "9.10", "9.12"]
     steps:
       - uses: actions/checkout@v4
 
