@@ -130,9 +130,10 @@
             exit 1
           fi
           cp -R "$jetstream_docs" "$combined_docs/jetstream"
+          rm -f "$combined_docs/jetstream/$package:jetstream.txt"
 
           mkdir -p $out
-          tar -C "$TMPDIR" -czf "$out/$docs_root.tar.gz" "$docs_root"
+          tar --format=ustar -C "$TMPDIR" -czf "$out/$docs_root.tar.gz" "$docs_root"
         '');
 
       in {
