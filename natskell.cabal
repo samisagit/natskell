@@ -50,7 +50,6 @@ library
     natskell-internal,
     stm  >= 2.5 && < 2.6,
     bytestring  >= 0.10 && < 0.13,
-    heap >= 0.6 && < 1.1,
     time >= 1.9 && < 1.16
 
   exposed-modules:
