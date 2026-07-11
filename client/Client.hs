@@ -101,7 +101,7 @@ import           Subscription.Store
     , unregister
     )
 import           Subscription.Types
-    ( SubscribeConfig (SubscribeConfig)
+    ( SubscribeConfig (..)
     , SubscriptionMeta (SubscriptionMeta)
     )
 import qualified Types.Connect            as Connect
@@ -289,7 +289,7 @@ defaultConnect =
     }
 
 defaultSubscribeConfig :: SubscribeConfig
-defaultSubscribeConfig = SubscribeConfig Nothing
+defaultSubscribeConfig = SubscribeConfig Nothing Nothing
 
 selectAuth :: ClientAuth -> Auth
 selectAuth authSelection =
@@ -394,14 +394,16 @@ subscribeClient client store isReply subject cfg callback = do
   runClient client $
     logMessage Debug ("subscribing to subject: " ++ show subject)
   sid <- nextSid client
+  let queueGroup =
+        subscribeQueueGroup cfg
   let meta =
-        SubscriptionMeta subject Nothing isReply
+        SubscriptionMeta subject queueGroup isReply
   register store sid meta cfg callback
   enqueue client $
     QueueItem
       Sub.Sub
         { Sub.subject = subject
-        , Sub.queueGroup = Nothing
+        , Sub.queueGroup = queueGroup
         , Sub.sid = sid
         }
   when isReply $

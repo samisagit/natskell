@@ -5,6 +5,7 @@ module ClientSpec where
 import           API
     ( Client (..)
     , MsgView (..)
+    , withQueueGroup
     , withSubscriptionExpiry
     )
 import           Client
@@ -24,7 +25,7 @@ import           Data.IORef
 import           Data.Word8
 import           Network.Socket            (Socket, accept, listen)
 import qualified Network.Socket
-import           Network.Socket.ByteString (sendAll)
+import           Network.Socket.ByteString (recv, sendAll)
 import           Network.Socket.Free
 import           System.Timeout            (timeout)
 import           Test.Hspec
@@ -73,6 +74,30 @@ hmsgFrame subject sid headers payload =
     , payload
     , "\r\n"
     ]
+
+recvUntil :: Socket -> (BS.ByteString -> Bool) -> IO BS.ByteString
+recvUntil sock done =
+  go BS.empty
+  where
+    go acc
+      | done acc = pure acc
+      | otherwise = do
+          chunk <- recv sock 4096
+          if BS.null chunk
+            then pure acc
+            else go (acc <> chunk)
+
+expectQueuedSub :: Socket -> BS.ByteString -> BS.ByteString -> BS.ByteString -> IO ()
+expectQueuedSub sock subject queueGroup sid = do
+  let command = BS.concat ["SUB ", subject, " ", queueGroup, " ", sid, "\r\n"]
+  result <- timeout 1000000 $
+    recvUntil sock (BS.isInfixOf command)
+  case result of
+    Nothing ->
+      expectationFailure "client did not send queued SUB"
+    Just bytes ->
+      unless (BS.isInfixOf command bytes) $
+        expectationFailure ("unexpected client bytes: " ++ show bytes)
 
 startClientWith extraOptions = do
   (p, sock) <- openFreePort
@@ -145,6 +170,9 @@ spec = do
         case result of
           Nothing -> expectationFailure "flush did not return after PONG"
           Just () -> pure ()
+      it "subscribes with a queue group" $ \(serv, client, _, _) -> do
+        sid <- subscribe client "JOBS" [withQueueGroup "WORKERS"] (const (pure ()))
+        expectQueuedSub serv "JOBS" "WORKERS" sid
       it "PONG resolves one ping" $ \(serv, client, _, _) -> do
         first <- newEmptyMVar
         second <- newEmptyMVar
@@ -299,6 +327,33 @@ spec = do
           ping client $ done wg
           sendAll secondConn "PONG\r\n"
           wait wg
+          close client
+          Network.Socket.close secondConn
+      Network.Socket.close sock
+    it "resubscribes with a queue group after reconnect" $ do
+      (p, sock) <- openFreePort
+      listen sock 2
+      clientVar <- newEmptyMVar
+      void . forkIO $ do
+        let configOptions =
+              [ withMinimumLogLevel Debug
+              , withConnectionAttempts 2
+              , withConnectName "test-client"
+              ]
+        c <- newClient [("127.0.0.1", p)] configOptions
+        putMVar clientVar c
+      (firstConn, _) <- accept sock
+      sendAll firstConn defaultINFO
+      clientResult <- timeout 1000000 (takeMVar clientVar)
+      case clientResult of
+        Nothing -> expectationFailure "client did not connect"
+        Just client -> do
+          sid <- subscribe client "JOBS" [withQueueGroup "WORKERS"] (const (pure ()))
+          expectQueuedSub firstConn "JOBS" "WORKERS" sid
+          Network.Socket.close firstConn
+          (secondConn, _) <- accept sock
+          sendAll secondConn defaultINFO
+          expectQueuedSub secondConn "JOBS" "WORKERS" sid
           close client
           Network.Socket.close secondConn
       Network.Socket.close sock

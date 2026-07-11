@@ -5,6 +5,7 @@ module SubSpec (spec) where
 import           Control.Monad
 import           Data.ByteString
 import qualified Data.ByteString.Lazy      as LBS
+import           Subscription.Types
 import           Test.Hspec
 import           Text.Printf
 import           Transformers.Transformers
@@ -13,8 +14,15 @@ import           Validators.Validators
 
 spec :: Spec
 spec = do
+  subscribeOptionCases
   transformerCases
   validateCases
+
+subscribeOptionCases = parallel $ do
+  describe "subscribe config" $ do
+    it "stores the queue group" $ do
+      subscribeQueueGroup (SubscribeConfig Nothing (Just "WORKERS"))
+        `shouldBe` Just "WORKERS"
 
 explicitTransformerCases :: [(Sub, ByteString)]
 explicitTransformerCases = [
