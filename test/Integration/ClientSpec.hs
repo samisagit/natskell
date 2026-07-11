@@ -5,7 +5,9 @@ module ClientSpec where
 import           API
     ( Client (..)
     , MsgView (..)
+    , withPayload
     , withQueueGroup
+    , withReplyTo
     , withSubscriptionExpiry
     )
 import           Client
@@ -87,17 +89,20 @@ recvUntil sock done =
             then pure acc
             else go (acc <> chunk)
 
-expectQueuedSub :: Socket -> BS.ByteString -> BS.ByteString -> BS.ByteString -> IO ()
-expectQueuedSub sock subject queueGroup sid = do
-  let command = BS.concat ["SUB ", subject, " ", queueGroup, " ", sid, "\r\n"]
+expectClientCommand :: Socket -> BS.ByteString -> IO ()
+expectClientCommand sock command = do
   result <- timeout 1000000 $
     recvUntil sock (BS.isInfixOf command)
   case result of
     Nothing ->
-      expectationFailure "client did not send queued SUB"
+      expectationFailure ("client did not send command: " ++ show command)
     Just bytes ->
       unless (BS.isInfixOf command bytes) $
         expectationFailure ("unexpected client bytes: " ++ show bytes)
+
+expectQueuedSub :: Socket -> BS.ByteString -> BS.ByteString -> BS.ByteString -> IO ()
+expectQueuedSub sock subject queueGroup sid =
+  expectClientCommand sock (BS.concat ["SUB ", subject, " ", queueGroup, " ", sid, "\r\n"])
 
 startClientWith extraOptions = do
   (p, sock) <- openFreePort
@@ -173,6 +178,9 @@ spec = do
       it "subscribes with a queue group" $ \(serv, client, _, _) -> do
         sid <- subscribe client "JOBS" [withQueueGroup "WORKERS"] (const (pure ()))
         expectQueuedSub serv "JOBS" "WORKERS" sid
+      it "publishes with an explicit reply subject" $ \(serv, client, _, _) -> do
+        publish client "REQUESTS" [withPayload "hello", withReplyTo "_INBOX.custom"]
+        expectClientCommand serv "PUB REQUESTS _INBOX.custom 5\r\nhello\r\n"
       it "PONG resolves one ping" $ \(serv, client, _, _) -> do
         first <- newEmptyMVar
         second <- newEmptyMVar

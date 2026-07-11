@@ -9,6 +9,7 @@ module API
   , withQueueGroup
   , withPayload
   , withReplyCallback
+  , withReplyTo
   , withHeaders
   ) where
 
@@ -30,6 +31,8 @@ data Client = Client
                   -- ^ Subscribe with request semantics and auto-unsubscribe after a reply.
                 , unsubscribe :: SID -> IO ()
                   -- ^ Unsubscribe from a subscription by SID.
+                , newInbox :: IO Subject
+                  -- ^ Create a unique inbox subject for replies.
                 , ping :: IO () -> IO ()
                   -- ^ Send a ping and run the callback when a pong arrives.
                 , flush :: IO ()
@@ -88,7 +91,8 @@ withQueueGroup queueGroup cfg = cfg { subscribeQueueGroup = Just queueGroup }
 -- publish client \"updates\" [withPayload \"hello\"]
 -- @
 withPayload :: Payload -> PublishOption
-withPayload payload (_, callback, headers) = (Just payload, callback, headers)
+withPayload payload (_, callback, headers, replyTo') =
+  (Just payload, callback, headers, replyTo')
 
 -- | withReplyCallback is used to set a callback for a reply to a publish operation.
 -- Default: no reply subscription; publishes are fire-and-forget.
@@ -101,14 +105,24 @@ withPayload payload (_, callback, headers) = (Just payload, callback, headers)
 -- publish client \"service.echo\" [withReplyCallback print]
 -- @
 withReplyCallback :: (Maybe MsgView -> IO ()) -> PublishOption
-withReplyCallback callback (payload, _, headers) =
+withReplyCallback callback (payload, _, headers, replyTo') =
   (payload, Just (callback . fmap (\msg -> MsgView
     { subject = Msg.subject msg
     , sid = Msg.sid msg
     , replyTo = Msg.replyTo msg
     , payload = Msg.payload msg
     , headers = Msg.headers msg
-    })), headers)
+    })), headers, replyTo')
+
+-- | withReplyTo sets an explicit reply subject for a publish operation.
+-- Default: no reply subject unless a reply callback is configured.
+--
+-- This option only controls the outgoing reply subject. It does not create a
+-- subscription; callers that expect multiple replies should subscribe to the
+-- reply subject themselves.
+withReplyTo :: Subject -> PublishOption
+withReplyTo replySubject (payload, callback, headers, _) =
+  (payload, callback, headers, Just replySubject)
 
 -- | withHeaders is used to set headers for a publish operation.
 -- Default: no headers.
@@ -121,4 +135,5 @@ withReplyCallback callback (payload, _, headers) =
 -- publish client \"updates\" [withHeaders [(\"source\", \"test\")]]
 -- @
 withHeaders :: Headers -> PublishOption
-withHeaders headers (payload, callback, _) = (payload, callback, Just headers)
+withHeaders headers (payload, callback, _, replyTo') =
+  (payload, callback, Just headers, replyTo')
