@@ -6,7 +6,10 @@ module Subscription.Types
 import           Data.Time.Clock (NominalDiffTime)
 import           Types.Msg       (Subject)
 
-newtype SubscribeConfig = SubscribeConfig { expiry :: Maybe NominalDiffTime }
+data SubscribeConfig = SubscribeConfig
+                         { expiry              :: Maybe NominalDiffTime
+                         , subscribeQueueGroup :: Maybe Subject
+                         }
 
 data SubscriptionMeta = SubscriptionMeta
                           { subject    :: Subject
