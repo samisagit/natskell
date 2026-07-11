@@ -108,9 +108,31 @@
         hackageDocs = pkgs.runCommand "hackage-docs" {
           inherit (buildEnv) buildInputs nativeBuildInputs;
         } (withCabalEnv ''
-          cabal haddock --haddock-for-hackage natskell
+          package="$(awk '/^name:/ { print $2; exit }' natskell.cabal)"
+          version="$(awk '/^version:/ { print $2; exit }' natskell.cabal)"
+          docs_root="$package-$version-docs"
+          combined_docs="$TMPDIR/$docs_root"
+
+          cabal haddock --haddock-for-hackage "$package"
+          main_docs_index="$(find dist-newstyle -type f -path "*/doc/html/$docs_root/API.html" -print -quit)"
+          if [ -z "$main_docs_index" ]; then
+            echo "Could not find default library Hackage docs"
+            find dist-newstyle -type f -path "*/doc/html/*" -print
+            exit 1
+          fi
+          cp -R "$(dirname "$main_docs_index")" "$combined_docs"
+
+          cabal haddock --haddock-for-hackage "$package:jetstream"
+          jetstream_docs="$(find dist-newstyle -type d -path "*/doc/html/$docs_root/jetstream" -print -quit)"
+          if [ -z "$jetstream_docs" ]; then
+            echo "Could not find JetStream Hackage docs"
+            find dist-newstyle -type d -path "*/doc/html/*" -print
+            exit 1
+          fi
+          cp -R "$jetstream_docs" "$combined_docs/jetstream"
+
           mkdir -p $out
-          cp -v dist-newstyle/*-docs.tar.gz $out/
+          tar -C "$TMPDIR" -czf "$out/$docs_root.tar.gz" "$docs_root"
         '');
 
       in {
