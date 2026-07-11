@@ -1,0 +1,109 @@
+{-# LANGUAGE OverloadedStrings #-}
+
+module JetStream.MessageSpec (spec) where
+
+import qualified API                     as Nats
+import           Data.IORef
+import           JetStream.Message       (fetchMessages)
+import           JetStream.Message.Types
+import           JetStream.Options       (newJetStreamContext)
+import           Publish                 (defaultPublishConfig)
+import           Test.Hspec
+import           Types.Msg               (Payload, SID, Subject)
+
+spec :: Spec
+spec = do
+  describe "status classification" $ do
+    it "classifies no-message status headers" $ do
+      classifyStatusHeaders (Just [("Status", "404"), ("Description", "No Messages")])
+        `shouldBe` Just (PullNoMessages (Just "No Messages"))
+
+    it "classifies request timeout status headers case-insensitively" $ do
+      classifyStatusHeaders (Just [("status", "408"), ("description", "Request Timeout")])
+        `shouldBe` Just (PullRequestTimeout (Just "Request Timeout"))
+
+    it "preserves unrecognised status details" $ do
+      classifyStatusHeaders (Just [("Status", "503"), ("Description", "Service Unavailable")])
+        `shouldBe` Just (PullStatusError "503" (Just "Service Unavailable"))
+
+    it "ignores normal message headers" $ do
+      classifyStatusHeaders (Just [("Nats-Stream", "ORDERS")])
+        `shouldBe` Nothing
+
+  describe "ack payloads" $ do
+    it "encodes ack verbs" $ do
+      ackPayload Ack `shouldBe` "+ACK"
+      nakPayload `shouldBe` "-NAK"
+      inProgressPayload `shouldBe` "+WPI"
+      termPayload `shouldBe` "+TERM"
+
+  describe "pull request payloads" $ do
+    it "encodes one-message requests with an expires timeout" $ do
+      pullRequestPayload 1 defaultPullRequest
+        `shouldBe` "{\"batch\":1,\"expires\":1000000000}"
+
+    it "encodes no-wait requests without expires" $ do
+      let request = defaultPullRequest { pullRequestNoWait = True }
+      pullRequestPayload 1 request
+        `shouldBe` "{\"batch\":1,\"no_wait\":true}"
+
+  describe "pull fetch" $ do
+    it "uses one explicit reply inbox for a batch request" $ do
+      publishCalls <- newIORef []
+      unsubscribeCalls <- newIORef []
+      callbackRef <- newIORef Nothing
+      let client = fakeClient publishCalls unsubscribeCalls callbackRef
+          request = defaultPullRequest { pullRequestBatch = 2 }
+      response <- fetchMessages (newJetStreamContext client []) "ORDERS" "WORKER" request
+
+      publishCalls' <- readIORef publishCalls
+      publishCalls' `shouldBe`
+        [ ( "$JS.API.CONSUMER.MSG.NEXT.ORDERS.WORKER"
+          , Just "{\"batch\":2,\"expires\":1000000000}"
+          , Just "_INBOX.batch"
+          )
+        ]
+      unsubscribeCalls' <- readIORef unsubscribeCalls
+      unsubscribeCalls' `shouldBe` ["sid-1"]
+      fmap messagePayload (pullResponseMessages response) `shouldBe` [Just "one", Just "two"]
+      pullResponseStatus response `shouldBe` Nothing
+
+fakeClient
+  :: IORef [(Subject, Maybe Payload, Maybe Subject)]
+  -> IORef [SID]
+  -> IORef (Maybe (Maybe Nats.MsgView -> IO ()))
+  -> Nats.Client
+fakeClient publishCalls unsubscribeCalls callbackRef =
+  Nats.Client
+    { Nats.publish = \subject options -> do
+        let (body, _, _, replyTo') = foldr ($) defaultPublishConfig options
+        modifyIORef' publishCalls (++ [(subject, body, replyTo')])
+        callback <- readIORef callbackRef
+        case callback of
+          Nothing ->
+            pure ()
+          Just deliver -> do
+            deliver (Just (fakeMsg "one"))
+            deliver (Just (fakeMsg "two"))
+    , Nats.subscribe = \_ _ callback -> do
+        writeIORef callbackRef (Just callback)
+        pure "sid-1"
+    , Nats.request = \_ _ _ -> pure "sid-request"
+    , Nats.unsubscribe = \sid ->
+        modifyIORef' unsubscribeCalls (++ [sid])
+    , Nats.newInbox = pure "_INBOX.batch"
+    , Nats.ping = id
+    , Nats.flush = pure ()
+    , Nats.reset = pure ()
+    , Nats.close = pure ()
+    }
+
+fakeMsg :: Payload -> Nats.MsgView
+fakeMsg body =
+  Nats.MsgView
+    { Nats.subject = "ORDERS.created"
+    , Nats.sid = "sid-1"
+    , Nats.replyTo = Just "$JS.ACK.ORDERS.WORKER.1.1.1"
+    , Nats.payload = Just body
+    , Nats.headers = Nothing
+    }

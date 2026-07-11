@@ -29,6 +29,7 @@ test-suite test
     src
   build-depends:
     natskell,
+    natskell:jetstream,
     bytestring,
     directory,
     stm,
@@ -48,6 +49,7 @@ test-suite test
     ClientCloseSpec
     ClientCycleSpec
     ClientFatalErrorSpec
+    JetStreamSpec
     ClientMessagesSpec
     ClientNoServersSpec
     ClientPingSpec
