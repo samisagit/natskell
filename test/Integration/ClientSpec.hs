@@ -5,7 +5,9 @@ module ClientSpec where
 import           API
     ( Client (..)
     , MsgView (..)
+    , withPayload
     , withQueueGroup
+    , withReplyTo
     , withSubscriptionExpiry
     )
 import           Client
@@ -99,6 +101,17 @@ expectQueuedSub sock subject queueGroup sid = do
       unless (BS.isInfixOf command bytes) $
         expectationFailure ("unexpected client bytes: " ++ show bytes)
 
+expectClientCommand :: Socket -> BS.ByteString -> IO ()
+expectClientCommand sock command = do
+  result <- timeout 1000000 $
+    recvUntil sock (BS.isInfixOf command)
+  case result of
+    Nothing ->
+      expectationFailure ("client did not send command: " ++ show command)
+    Just bytes ->
+      unless (BS.isInfixOf command bytes) $
+        expectationFailure ("unexpected client bytes: " ++ show bytes)
+
 startClientWith extraOptions = do
   (p, sock) <- openFreePort
   listen sock 1
@@ -173,6 +186,9 @@ spec = do
       it "subscribes with a queue group" $ \(serv, client, _, _) -> do
         sid <- subscribe client "JOBS" [withQueueGroup "WORKERS"] (const (pure ()))
         expectQueuedSub serv "JOBS" "WORKERS" sid
+      it "publishes with an explicit reply subject" $ \(serv, client, _, _) -> do
+        publish client "REQUESTS" [withPayload "hello", withReplyTo "_INBOX.custom"]
+        expectClientCommand serv "PUB REQUESTS _INBOX.custom 5\r\nhello\r\n"
       it "PONG resolves one ping" $ \(serv, client, _, _) -> do
         first <- newEmptyMVar
         second <- newEmptyMVar

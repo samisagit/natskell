@@ -44,6 +44,7 @@ fakeClient =
     , Nats.subscribe = \_ _ _ -> pure "0"
     , Nats.request = \_ _ _ -> pure "0"
     , Nats.unsubscribe = \_ -> pure ()
+    , Nats.newInbox = pure "_INBOX.fake"
     , Nats.ping = id
     , Nats.flush = pure ()
     , Nats.reset = pure ()
