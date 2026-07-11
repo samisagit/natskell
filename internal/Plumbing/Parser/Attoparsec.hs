@@ -183,8 +183,46 @@ parseHMsgPayload subjectName sidValue replySubject headerSizeBytes totalSizeByte
 headerBlockParser :: A.Parser [(BS.ByteString, BS.ByteString)]
 headerBlockParser = do
   _ <- A.string "NATS/"
-  _ <- lineParser
-  headerPairsParser []
+  prelude <- lineParser
+  statusHeaders <- inlineStatusHeaders prelude
+  headerPairs <- headerPairsParser []
+  pure (statusHeaders ++ headerPairs)
+
+inlineStatusHeaders :: BS.ByteString -> A.Parser [(BS.ByteString, BS.ByteString)]
+inlineStatusHeaders prelude =
+  case BS.dropWhile isHorizontalSpaceByte rest of
+    statusBytes
+      | BS.null statusBytes ->
+          pure []
+      | otherwise ->
+          parseInlineStatus statusBytes
+  where
+    (_, rest) = BS.break isHorizontalSpaceByte prelude
+
+parseInlineStatus :: BS.ByteString -> A.Parser [(BS.ByteString, BS.ByteString)]
+parseInlineStatus bytes
+  | BS.length bytes < inlineStatusLength =
+      fail ("invalid HMSG status: " ++ B8.unpack bytes)
+  | not (isInlineStatusCode statusCode) =
+      fail ("invalid HMSG status: " ++ B8.unpack statusCode)
+  | BS.null remainder =
+      pure [("Status", statusCode)]
+  | isHorizontalSpaceByte (BS.head remainder) =
+      pure (("Status", statusCode) : descriptionHeader)
+  | otherwise =
+      fail ("invalid HMSG status: " ++ B8.unpack bytes)
+  where
+    (statusCode, remainder) = BS.splitAt inlineStatusLength bytes
+    description = stripHorizontalSpace remainder
+    descriptionHeader
+      | BS.null description =
+          []
+      | otherwise =
+          [("Description", description)]
+
+isInlineStatusCode :: BS.ByteString -> Bool
+isInlineStatusCode bytes =
+  BS.length bytes == inlineStatusLength && BS.all isDigitByte bytes
 
 headerPairsParser :: [(BS.ByteString, BS.ByteString)] -> A.Parser [(BS.ByteString, BS.ByteString)]
 headerPairsParser reversedPairs = do
@@ -276,6 +314,13 @@ isHorizontalSpaceByte :: Word8 -> Bool
 isHorizontalSpaceByte word8Value =
   word8Value == space || word8Value == horizontalTab
 
+isDigitByte :: Word8 -> Bool
+isDigitByte word8Value =
+  word8Value >= zero && word8Value <= nine
+
+inlineStatusLength :: Int
+inlineStatusLength = 3
+
 carriageReturn :: Word8
 carriageReturn = 13
 
@@ -290,3 +335,9 @@ space = 32
 
 horizontalTab :: Word8
 horizontalTab = 9
+
+zero :: Word8
+zero = 48
+
+nine :: Word8
+nine = 57
