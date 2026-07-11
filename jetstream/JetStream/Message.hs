@@ -8,13 +8,13 @@ module JetStream.Message
   ) where
 
 import qualified API                        as Nats
-import           Control.Concurrent.MVar    (newEmptyMVar, takeMVar, tryPutMVar)
-import           Control.Monad              (void)
+import           Control.Concurrent.STM
+import           Control.Exception          (bracket)
 import           JetStream.Error            (JetStreamError (JetStreamNoReply))
 import           JetStream.Message.API
 import           JetStream.Options          (JetStreamContext (..))
 import qualified JetStream.Protocol.Subject as Subject
-import           JetStream.Types            (ConsumerName, StreamName, Subject)
+import           JetStream.Types            (ConsumerName, StreamName)
 import           System.Timeout             (timeout)
 
 -- | Build the message capability from the shared JetStream context.
@@ -29,29 +29,24 @@ messageAPI context =
     }
 
 -- | Fetch messages for a pull consumer.
---
--- The current public client API creates a reply inbox that auto-unsubscribes
--- after one response for 'Nats.withReplyCallback'. To avoid requesting messages
--- that this client cannot observe, this function issues one safe @batch: 1@
--- request per requested message and stops on the first status response, local
--- timeout, or empty callback.
 fetchMessages :: JetStreamContext -> StreamName -> ConsumerName -> PullRequest -> IO PullResponse
 fetchMessages context stream consumer request
   | pullRequestBatch request <= 0 = pure (PullResponse [] Nothing)
-  | otherwise = go (pullRequestBatch request) []
+  | otherwise = do
+      responseQueue <- newTQueueIO
+      inbox <- Nats.newInbox natsClient
+      bracket
+        (Nats.subscribe natsClient inbox [] (atomically . writeTQueue responseQueue))
+        (Nats.unsubscribe natsClient)
+        (\_ -> do
+            Nats.publish natsClient requestSubject
+              [ Nats.withPayload (pullRequestPayload (pullRequestBatch request) request)
+              , Nats.withReplyTo inbox
+              ]
+            collectResponses (responseTimeoutMicros request) responseQueue (pullRequestBatch request) [])
   where
     natsClient = contextClient context
     requestSubject = Subject.consumerNextSubject context stream consumer
-    go 0 messages = pure (PullResponse (reverse messages) Nothing)
-    go remaining messages = do
-      result <- pullOne natsClient requestSubject request
-      case result of
-        PullResultMessage message ->
-          go (remaining - 1) (message:messages)
-        PullResultStatus status ->
-          pure (PullResponse (reverse messages) (Just status))
-        PullResultNone ->
-          pure (PullResponse (reverse messages) Nothing)
 
 ackMessage :: Nats.Client -> Message -> IO (Either JetStreamError ())
 ackMessage natsClient = publishAck natsClient Ack
@@ -69,15 +64,18 @@ data PullResult = PullResultMessage Message
                 | PullResultStatus PullStatus
                 | PullResultNone
 
-pullOne :: Nats.Client -> Subject -> PullRequest -> IO PullResult
-pullOne natsClient requestSubject request = do
-  responseVar <- newEmptyMVar
-  Nats.publish natsClient requestSubject
-    [ Nats.withPayload (pullRequestPayload 1 request)
-    , Nats.withReplyCallback (void . tryPutMVar responseVar)
-    ]
-  response <- timeout (responseTimeoutMicros request) (takeMVar responseVar)
-  pure (classifyPullResult response)
+collectResponses :: Int -> TQueue (Maybe Nats.MsgView) -> Int -> [Message] -> IO PullResponse
+collectResponses _ _ 0 messages =
+  pure (PullResponse (reverse messages) Nothing)
+collectResponses waitMicros responseQueue remaining messages = do
+  response <- timeout waitMicros (atomically (readTQueue responseQueue))
+  case classifyPullResult response of
+    PullResultMessage message ->
+      collectResponses waitMicros responseQueue (remaining - 1) (message:messages)
+    PullResultStatus status ->
+      pure (PullResponse (reverse messages) (Just status))
+    PullResultNone ->
+      pure (PullResponse (reverse messages) Nothing)
 
 classifyPullResult :: Maybe (Maybe Nats.MsgView) -> PullResult
 classifyPullResult Nothing = PullResultNone

@@ -48,20 +48,17 @@ runJetStreamScenario client = do
     Right _  -> pure ()
     Left err -> expectationFailure ("durable consumer create failed: " ++ show err)
 
-  published <- Publish.publish (publisher jetStream) subjectName payloadBody []
-  case published of
-    Right _  -> pure ()
-    Left err -> expectationFailure ("publish failed: " ++ show err)
+  mapM_ (publishPayload jetStream) payloadBodies
 
-  firstFetch <- Message.fetch (messages jetStream) streamName durableName fetchOne
+  firstFetch <- Message.fetch (messages jetStream) streamName durableName fetchBatch
   case Message.pullResponseMessages firstFetch of
-    [message] -> do
-      Message.messageSubject message `shouldBe` subjectName
-      Message.messagePayload message `shouldBe` Just payloadBody
-      acknowledged <- Message.ack (messages jetStream) message
-      acknowledged `shouldBe` Right ()
+    messages'@[_, _] -> do
+      fmap Message.messageSubject messages' `shouldBe` [subjectName, subjectName]
+      fmap Message.messagePayload messages' `shouldBe` fmap Just payloadBodies
+      acknowledgements <- mapM (Message.ack (messages jetStream)) messages'
+      acknowledgements `shouldBe` [Right (), Right ()]
     messages' ->
-      expectationFailure ("expected one JetStream message, got " ++ show (length messages'))
+      expectationFailure ("expected two JetStream messages, got " ++ show (length messages'))
   Message.pullResponseStatus firstFetch `shouldBe` Nothing
 
   emptyFetch <- Message.fetch (messages jetStream) streamName durableName shortFetch
@@ -94,10 +91,17 @@ consumerConfig =
     , Consumer.consumerConfigFilterSubject = Just subjectName
     }
 
-fetchOne :: Message.PullRequest
-fetchOne =
+publishPayload :: JetStream -> BS.ByteString -> IO ()
+publishPayload jetStream body = do
+  published <- Publish.publish (publisher jetStream) subjectName body []
+  case published of
+    Right _  -> pure ()
+    Left err -> expectationFailure ("publish failed: " ++ show err)
+
+fetchBatch :: Message.PullRequest
+fetchBatch =
   Message.defaultPullRequest
-    { Message.pullRequestBatch = 1
+    { Message.pullRequestBatch = 2
     , Message.pullRequestTimeoutMicros = 1000000
     }
 
@@ -118,5 +122,5 @@ durableName = "NATSKELL_JS_DURABLE"
 subjectName :: BS.ByteString
 subjectName = "NATSKELL.JS.SYSTEM"
 
-payloadBody :: BS.ByteString
-payloadBody = "hello jetstream"
+payloadBodies :: [BS.ByteString]
+payloadBodies = ["hello jetstream one", "hello jetstream two"]
