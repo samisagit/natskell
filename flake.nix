@@ -105,9 +105,18 @@
           cp -vr $(dirname $(find dist-newstyle -type f -path "*/doc/html/*/index.html" | grep '/doc/html/natskell/index.html$')) $out/
         '');
 
+        hackageDocs = pkgs.runCommand "hackage-docs" {
+          inherit (buildEnv) buildInputs nativeBuildInputs;
+        } (withCabalEnv ''
+          cabal haddock --haddock-for-hackage natskell
+          mkdir -p $out
+          cp -v dist-newstyle/*-docs.tar.gz $out/
+        '');
+
       in {
         packages.sdist = sdist;
         packages.docs = haddock;
+        packages.hackage-docs = hackageDocs;
         packages.default = drv;
 
         devShells.default = devEnv;

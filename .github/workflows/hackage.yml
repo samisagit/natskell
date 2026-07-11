@@ -32,6 +32,10 @@ jobs:
         with:
           name: natskell-sdist
           path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: natskell-hackage-docs
+          path: dist-docs
       - name: Upload Hackage candidate
         env:
           HACKAGE_TOKEN: ${{ secrets.HACKAGE_TOKEN }}
@@ -63,6 +67,13 @@ jobs:
             exit 1
           fi
 
+          docs_tarball="dist-docs/natskell-${version}-docs.tar.gz"
+          if [ ! -f "${docs_tarball}" ]; then
+            echo "Expected Hackage documentation tarball not found: ${docs_tarball}"
+            find dist-docs -maxdepth 2 -type f -print
+            exit 1
+          fi
+
           published_url="https://hackage.haskell.org/package/natskell-${version}/natskell.cabal"
           if curl --silent --head --fail "${published_url}" >/dev/null; then
             echo "natskell-${version} is already published on Hackage; skipping candidate upload"
@@ -70,6 +81,7 @@ jobs:
           fi
 
           nix develop --command cabal upload --token="${HACKAGE_TOKEN}" "${tarball}"
+          nix develop --command cabal upload --documentation --token="${HACKAGE_TOKEN}" "${docs_tarball}"
   publish:
     name: hackage publish
     needs: [candidate]
@@ -86,6 +98,10 @@ jobs:
         with:
           name: natskell-sdist
           path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: natskell-hackage-docs
+          path: dist-docs
       - name: Publish to Hackage
         env:
           HACKAGE_TOKEN: ${{ secrets.HACKAGE_TOKEN }}
@@ -117,10 +133,23 @@ jobs:
             exit 1
           fi
 
-          published_url="https://hackage.haskell.org/package/natskell-${version}/natskell.cabal"
-          if curl --silent --head --fail "${published_url}" >/dev/null; then
-            echo "natskell-${version} is already published on Hackage; skipping publish"
-            exit 0
+          docs_tarball="dist-docs/natskell-${version}-docs.tar.gz"
+          if [ ! -f "${docs_tarball}" ]; then
+            echo "Expected Hackage documentation tarball not found: ${docs_tarball}"
+            find dist-docs -maxdepth 2 -type f -print
+            exit 1
           fi
 
-          nix develop --command cabal upload --publish --token="${HACKAGE_TOKEN}" "${tarball}"
+          published_url="https://hackage.haskell.org/package/natskell-${version}/natskell.cabal"
+          if curl --silent --head --fail "${published_url}" >/dev/null; then
+            echo "natskell-${version} is already published on Hackage; skipping source publish"
+          else
+            nix develop --command cabal upload --publish --token="${HACKAGE_TOKEN}" "${tarball}"
+          fi
+
+          docs_url="https://hackage.haskell.org/package/natskell-${version}/docs/doc-index.html"
+          if curl --silent --head --fail "${docs_url}" >/dev/null; then
+            echo "natskell-${version} documentation is already published on Hackage; skipping documentation publish"
+          else
+            nix develop --command cabal upload --documentation --publish --token="${HACKAGE_TOKEN}" "${docs_tarball}"
+          fi
