@@ -1,19 +1,27 @@
-name: main merge
+name: Hackage release
 
 on:
   push:
-    branches:
-      - main
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hackage-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
     uses: ./.github/workflows/haskell.yml
   package:
     uses: ./.github/workflows/package.yml
-  hackage-candidate:
-    name: hackage candidate
+  publish:
+    name: hackage publish
     needs: [build, package]
     runs-on: ubuntu-latest
+    environment: hackage
     permissions:
       contents: read
     steps:
@@ -25,9 +33,10 @@ jobs:
         with:
           name: natskell-sdist
           path: dist
-      - name: Upload Hackage candidate
+      - name: Publish to Hackage
         env:
           HACKAGE_TOKEN: ${{ secrets.HACKAGE_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
 
@@ -42,6 +51,12 @@ jobs:
             exit 1
           fi
 
+          tag_version="${TAG_NAME#v}"
+          if [ "${tag_version}" != "${version}" ]; then
+            echo "Tag ${TAG_NAME} does not match natskell.cabal version ${version}"
+            exit 1
+          fi
+
           tarball="dist/natskell-${version}.tar.gz"
           if [ ! -f "${tarball}" ]; then
             echo "Expected source distribution not found: ${tarball}"
@@ -49,10 +64,4 @@ jobs:
             exit 1
           fi
 
-          published_url="https://hackage.haskell.org/package/natskell-${version}/natskell.cabal"
-          if curl --silent --head --fail "${published_url}" >/dev/null; then
-            echo "natskell-${version} is already published on Hackage; skipping candidate upload"
-            exit 0
-          fi
-
-          nix develop --command cabal upload --token="${HACKAGE_TOKEN}" "${tarball}"
+          nix develop --command cabal upload --publish --token="${HACKAGE_TOKEN}" "${tarball}"
