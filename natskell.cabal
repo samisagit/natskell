@@ -59,6 +59,42 @@ library
   hs-source-dirs:
        client
 
+library natskell-jetstream
+  import:         shared
+  visibility:     public
+  build-depends:
+    natskell,
+    aeson >= 2.1 && < 2.3,
+    bytestring >= 0.10 && < 0.13,
+    stm >= 2.5 && < 2.6,
+    text (>= 1.2 && < 1.3) || (>= 2.0 && < 2.2),
+    time >= 1.9 && < 1.16
+
+  exposed-modules:
+    JetStream
+    JetStream.API
+    JetStream.Consumer
+    JetStream.Consumer.API
+    JetStream.Consumer.Types
+    JetStream.Error
+    JetStream.Message
+    JetStream.Message.API
+    JetStream.Message.Types
+    JetStream.Options
+    JetStream.Protocol.Headers
+    JetStream.Protocol.Request
+    JetStream.Protocol.Subject
+    JetStream.Publish
+    JetStream.Publish.API
+    JetStream.Publish.Types
+    JetStream.Stream
+    JetStream.Stream.API
+    JetStream.Stream.Types
+    JetStream.Types
+
+  hs-source-dirs:
+    jetstream
+
 library natskell-internal
   import:         shared
   build-depends:
@@ -157,7 +193,9 @@ test-suite unit-test
   hs-source-dirs:   test/Unit
   main-is:          Spec.hs
   build-depends:   
+    natskell,
     natskell-internal,
+    natskell-jetstream,
     hspec >= 2.7 && < 2.12,
     bytestring,
     network,
@@ -187,6 +225,10 @@ test-suite unit-test
     NuidSpec
     WorkerPoolSpec
     WaitGroupSpec
+    JetStream.ConsumerSpec
+    JetStream.MessageSpec
+    JetStream.ProtocolSpec
+    JetStream.PublishSpec
 
 test-suite fuzz-test
   import:         shared

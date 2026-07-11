@@ -35,6 +35,7 @@ data NatsServerConfig = NatsServerConfig
                           , natsAuthorization :: NatsAuthorization
                           , natsJwtConfig     :: Maybe NatsJwtConfig
                           , natsTlsConfig     :: Maybe NatsTlsConfig
+                          , natsJetStream     :: Bool
                           }
 
 data NatsTlsConfig = NatsTlsConfig
@@ -53,6 +54,7 @@ data NatsConfigOption = WithLogVerbosity NatsLogVerbosity
                       | WithNKey String
                       | WithJwtConfig NatsJwtConfig
                       | WithTlsConfig NatsTlsConfig
+                      | WithJetStream
 
 type NatsConfigOptions = [NatsConfigOption]
 
@@ -63,6 +65,7 @@ defaultNatsServerConfig =
     , natsAuthorization = NatsAuthorizationNone
     , natsJwtConfig = Nothing
     , natsTlsConfig = Nothing
+    , natsJetStream = False
     }
 
 writeNatsServerConfigFile :: NatsConfigOptions -> IO FilePath
@@ -90,6 +93,8 @@ applyConfigOption config option =
       config { natsJwtConfig = Just jwtConfig }
     WithTlsConfig tlsConfig ->
       config { natsTlsConfig = Just tlsConfig }
+    WithJetStream ->
+      config { natsJetStream = True }
 
 renderNatsServerConfig :: NatsServerConfig -> String
 renderNatsServerConfig config =
@@ -97,6 +102,7 @@ renderNatsServerConfig config =
     logLines ++ renderAuthorization (natsAuthorization config)
       ++ maybe [] renderJwtConfig (natsJwtConfig config)
       ++ maybe [] renderTlsConfig (natsTlsConfig config)
+      ++ renderJetStreamConfig (natsJetStream config)
   where
     logLines =
       [ "debug: " ++ renderBool (natsLogVerbosity config == NatsLogDebug)
@@ -163,6 +169,10 @@ renderTlsConfig config =
         ++ maybe [] (\caFile -> ["ca_file: " ++ renderQuoted caFile]) (natsTlsCaFile config)
         ++ maybe [] (\timeout -> ["timeout: " ++ show timeout]) (natsTlsTimeout config)
     )
+
+renderJetStreamConfig :: Bool -> [String]
+renderJetStreamConfig enabled =
+  ["jetstream: enabled" | enabled]
 
 renderResolverPreload :: [(String, String)] -> [String]
 renderResolverPreload =
