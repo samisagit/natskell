@@ -6,6 +6,7 @@ module API
   , PublishOption
   , SubscribeOption
   , withSubscriptionExpiry
+  , withQueueGroup
   , withPayload
   , withReplyCallback
   , withHeaders
@@ -70,6 +71,11 @@ type SubscribeOption = CallOption SubscribeConfig
 -- @
 withSubscriptionExpiry :: NominalDiffTime -> SubscribeOption
 withSubscriptionExpiry expirySeconds cfg = cfg { expiry = Just expirySeconds }
+
+-- | withQueueGroup sets the queue group for a subscription.
+-- Default: no queue group.
+withQueueGroup :: Subject -> SubscribeOption
+withQueueGroup queueGroup cfg = cfg { subscribeQueueGroup = Just queueGroup }
 
 -- | withPayload is used to set the payload for a publish operation.
 -- Default: no payload.
