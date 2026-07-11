@@ -58,3 +58,43 @@ spec = do
               expectationFailure ("unexpected parse result: " ++ show other)
         other ->
           expectationFailure ("unexpected parse result: " ++ show other)
+
+    it "exposes inline HMSG status and description as headers" $ do
+      let input =
+            "HMSG FOO 13 28 28\r\nNATS/1.0 404 No Messages\r\n\r\n\r\n"
+      case parse parserApi input of
+        Emit parsed rest -> do
+          rest `shouldBe` ""
+          case parsed of
+            ParsedMsg msg' -> do
+              Msg.headers msg' `shouldBe` Just [("Status", "404"), ("Description", "No Messages")]
+              Msg.payload msg' `shouldBe` Just ""
+            other ->
+              expectationFailure ("unexpected parse result: " ++ show other)
+        other ->
+          expectationFailure ("unexpected parse result: " ++ show other)
+
+    it "exposes inline HMSG status without a description" $ do
+      let input =
+            "HMSG FOO 13 16 16\r\nNATS/1.0 404\r\n\r\n\r\n"
+      case parse parserApi input of
+        Emit parsed rest -> do
+          rest `shouldBe` ""
+          case parsed of
+            ParsedMsg msg' -> do
+              Msg.headers msg' `shouldBe` Just [("Status", "404")]
+              Msg.payload msg' `shouldBe` Just ""
+            other ->
+              expectationFailure ("unexpected parse result: " ++ show other)
+        other ->
+          expectationFailure ("unexpected parse result: " ++ show other)
+
+    it "rejects malformed inline HMSG statuses" $ do
+      let input =
+            "HMSG FOO 13 17 17\r\nNATS/1.0 404x\r\n\r\n\r\n"
+      case parse parserApi input of
+        DropPrefix n reason -> do
+          n `shouldSatisfy` (> 0)
+          reason `shouldContain` "invalid HMSG status"
+        other ->
+          expectationFailure ("unexpected parse result: " ++ show other)

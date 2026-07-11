@@ -11,3 +11,4 @@ Workarounds in this environment:
 - system tests can intermittently time out; rerunning `cabal test system-tests` usually succeeds (failure logs are left under `/tmp/nix-shell.*` by `TestSupport`).
 - running multiple `cabal test` commands in parallel against the same worktree can race in `dist-newstyle` and fail with missing registration/cache files; run Cabal test suites serially.
 - `testcontainers` `waitForLogLine` can miss very early readiness lines from fast-starting containers like NATS in this suite; using `withFollowLogs` plus an explicit poll of the captured log file is more reliable than relying on the built-in log wait.
+- `cabal` may be unavailable outside the Nix development shell in this harness; run it through `nix develop -c cabal ...`.
