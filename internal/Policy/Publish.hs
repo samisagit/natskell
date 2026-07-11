@@ -5,4 +5,4 @@ module Publish
 import           Publish.Config (PublishConfig)
 
 defaultPublishConfig :: PublishConfig
-defaultPublishConfig = (Nothing, Nothing, Nothing)
+defaultPublishConfig = (Nothing, Nothing, Nothing, Nothing)

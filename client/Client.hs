@@ -201,6 +201,7 @@ newClient servers configOptions = do
         let cfg = applyCallOptions subscribeOptions defaultSubscribeConfig
         subscribeClient clientState store True subject cfg (toInternalCallback callback)
     , unsubscribe = unsubscribeClient clientState store
+    , newInbox = nextInbox clientState
     , ping = pingClient clientState
     , flush = flushClient clientState
     , reset = resetClient connectionApi clientState store
@@ -354,14 +355,14 @@ toMsgView msg =
     }
 
 publishClient :: ClientState -> SubscriptionStore -> Msg.Subject -> PublishConfig -> IO ()
-publishClient client store subject (payload, callback, headers) = do
+publishClient client store subject (payload, callback, headers, configuredReplyTo) = do
   runClient client $
     logMessage Debug ("publishing to subject: " ++ show subject)
   replyTo <- case callback of
     Nothing ->
-      pure Nothing
+      pure configuredReplyTo
     Just replyCallback -> do
-      inbox <- nextInbox client
+      inbox <- maybe (nextInbox client) pure configuredReplyTo
       sid <- nextSid client
       let meta =
             SubscriptionMeta inbox Nothing True
