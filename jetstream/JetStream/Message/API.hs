@@ -1,26 +1,15 @@
 module JetStream.Message.API
   ( MessageAPI (..)
-  , AckVerb (..)
   , FetchOption
   , FetchWait (..)
   , Headers
   , Message (..)
-  , MessageMetadata (..)
   , OrderedConsumer (..)
   , OrderedConsumerOption
   , PushConsumeOption
   , PushSubscription (..)
   , PullResponse (..)
   , PullStatus (..)
-  , ackPayload
-  , classifyStatusHeaders
-  , descriptionHeader
-  , inProgressPayload
-  , isStatusMessage
-  , messageMetadata
-  , nakPayload
-  , statusHeader
-  , termPayload
   , withFetchBatch
   , withFetchWait
   , withOrderedConsumerDeliverPolicy
@@ -34,27 +23,16 @@ module JetStream.Message.API
 
 import           JetStream.Error         (JetStreamError)
 import           JetStream.Message.Types
-    ( AckVerb (..)
-    , FetchOption
+    ( FetchOption
     , FetchWait (..)
     , Headers
     , Message (..)
-    , MessageMetadata (..)
     , OrderedConsumer (..)
     , OrderedConsumerOption
     , PullResponse (..)
     , PullStatus (..)
     , PushConsumeOption
     , PushSubscription (..)
-    , ackPayload
-    , classifyStatusHeaders
-    , descriptionHeader
-    , inProgressPayload
-    , isStatusMessage
-    , messageMetadata
-    , nakPayload
-    , statusHeader
-    , termPayload
     , withFetchBatch
     , withFetchWait
     , withOrderedConsumerDeliverPolicy
@@ -69,7 +47,7 @@ import           JetStream.Types         (ConsumerName, StreamName, Subject)
 
 -- | Pull-consumer message operations.
 data MessageAPI = MessageAPI
-                    { fetch :: StreamName -> ConsumerName -> [FetchOption] -> IO PullResponse
+                    { fetch :: StreamName -> ConsumerName -> [FetchOption] -> IO (Either JetStreamError PullResponse)
                       -- ^ Fetch messages for a pull consumer.
                     , consumePush :: Subject -> [PushConsumeOption] -> (Message -> IO ()) -> IO PushSubscription
                       -- ^ Subscribe to a push consumer deliver subject.

@@ -26,7 +26,10 @@ import           Data.IORef
     )
 import           Data.Word8
 import qualified JetStream.API             as JetStream
-import           JetStream.Client          (newJetStream)
+import           JetStream.Client
+    ( newJetStream
+    , withRequestTimeoutMicros
+    )
 import           Network.Socket            (Socket, accept, listen)
 import qualified Network.Socket
 import           Network.Socket.ByteString (recv, sendAll)
@@ -639,7 +642,9 @@ spec = do
           case result of
             Nothing ->
               expectationFailure "fetch did not complete"
-            Just response -> do
+            Just (Left err) ->
+              expectationFailure ("fetch failed: " ++ show err)
+            Just (Right response) -> do
               JetStream.pullResponseMessages response `shouldBe` []
               JetStream.pullResponseStatus response
                 `shouldBe` Just (JetStream.PullNoMessages (Just "No Messages"))
@@ -661,6 +666,23 @@ spec = do
               expectationFailure ("account info failed: " ++ show err)
             Just (Right info) ->
               JetStream.accountTierStreams (JetStream.accountInfoTier info) `shouldBe` 1
+
+        it "returns a JetStream timeout when admin requests receive no response" $ \(serv, client, _, _) -> do
+          let jetStream = newJetStream client [withRequestTimeoutMicros 1000]
+          done <- newEmptyMVar
+          void . forkIO $ do
+            result <- JetStream.accountInfo jetStream
+            putMVar done result
+          captured <- capturePublish serv "$JS.API.INFO"
+          capturedPayload captured `shouldBe` ""
+          result <- timeout 1000000 (takeMVar done)
+          case result of
+            Nothing ->
+              expectationFailure "account info timeout did not complete"
+            Just (Left JetStream.JetStreamTimeout) ->
+              pure ()
+            Just other ->
+              expectationFailure ("unexpected account info timeout result: " ++ show other)
 
         it "sends stream message get and delete requests" $ \(serv, client, _, _) -> do
           let jetStream = newJetStream client []
@@ -956,11 +978,10 @@ spec = do
           case fetchResult of
             Nothing ->
               expectationFailure "ordered fetch did not return after disconnect"
-            Just (Left err) ->
-              expectationFailure ("ordered fetch failed after disconnect: " ++ show err)
-            Just (Right response) -> do
-              JetStream.pullResponseMessages response `shouldBe` []
-              JetStream.pullResponseStatus response `shouldBe` Nothing
+            Just (Left JetStream.JetStreamTimeout) ->
+              pure ()
+            Just other ->
+              expectationFailure ("unexpected ordered fetch result after disconnect: " ++ show other)
 
           (secondConn, _) <- accept sock
           sendAll secondConn defaultINFO

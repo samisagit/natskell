@@ -14,18 +14,22 @@ spec =
         publishHeaders
           [ withMsgId "msg-1"
           , withExpectedStream "ORDERS"
-          , withExpectedLastSequence 12
-          , withExpectedLastSubjectSequence 7
-          , withExpectedLastMsgId "msg-0"
+          , withPublishExpectation (ExpectedLastSequence 12)
           , withHeaders [("Nats-Expected-Test", "custom")]
           ]
           `shouldBe` [ ("Nats-Msg-Id", "msg-1")
                      , ("Nats-Expected-Stream", "ORDERS")
                      , ("Nats-Expected-Last-Sequence", "12")
-                     , ("Nats-Expected-Last-Subject-Sequence", "7")
-                     , ("Nats-Expected-Last-Msg-Id", "msg-0")
                      , ("Nats-Expected-Test", "custom")
                      ]
+
+      it "keeps publish expectations mutually exclusive" $ do
+        publishHeaders
+          [ withPublishExpectation (ExpectedLastSequence 12)
+          , withPublishExpectation (ExpectedLastSubjectSequence 7)
+          , withPublishExpectation (ExpectedLastMsgId "msg-0")
+          ]
+          `shouldBe` [("Nats-Expected-Last-Sequence", "12")]
 
     describe "PublishAck" $ do
       it "decodes required and optional publish ack fields" $ do

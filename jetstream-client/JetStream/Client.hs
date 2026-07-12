@@ -26,11 +26,12 @@ import qualified JetStream.Stream           as Stream
 newJetStream :: Nats.Client -> [JetStreamOption] -> JetStream
 newJetStream client options =
   let ctx = newJetStreamContext client options
+      consumerAPI = Consumer.consumerAPI ctx
   in JetStream
     { streams = Stream.streamAPI ctx
-    , consumers = Consumer.consumerAPI ctx
+    , consumers = consumerAPI
     , publisher = Publish.publishAPI ctx
-    , messages = Message.messageAPI ctx
+    , messages = Message.messageAPI ctx consumerAPI
     , accountInfo =
         Request.requestJSON ctx (Subject.accountInfoSubject ctx) Nothing
     }

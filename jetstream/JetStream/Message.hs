@@ -15,7 +15,7 @@ import qualified Data.ByteString            as BS
 import qualified Data.ByteString.Char8      as BC
 import           Data.Char                  (isAlphaNum)
 import           Data.Maybe                 (catMaybes, fromMaybe)
-import qualified JetStream.Consumer         as Consumer
+import           JetStream.Consumer.API     (ConsumerAPI (..))
 import           JetStream.Consumer.Types
     ( ConsumerAction (ConsumerCreateOrUpdate)
     , ConsumerConfigOption
@@ -34,7 +34,7 @@ import           JetStream.Consumer.Types
     , withConsumerReplicas
     )
 import           JetStream.Error
-    ( JetStreamError (JetStreamDecodeError, JetStreamNoReply)
+    ( JetStreamError (JetStreamDecodeError, JetStreamNoReply, JetStreamTimeout)
     )
 import           JetStream.Message.API      (MessageAPI (..))
 import           JetStream.Message.Types
@@ -50,15 +50,15 @@ import           JetStream.Types
 import           System.Timeout             (timeout)
 
 -- | Build the message capability from the shared JetStream context.
-messageAPI :: JetStreamContext -> MessageAPI
-messageAPI context =
+messageAPI :: JetStreamContext -> ConsumerAPI -> MessageAPI
+messageAPI context consumerAPI =
   MessageAPI
     { fetch = \stream consumer options ->
         fetchMessages context stream consumer (pullRequest options)
     , consumePush = \deliverSubject options handler ->
         consumePushMessages context deliverSubject (pushConsumeConfig options) handler
     , createOrderedConsumer = \stream options ->
-        createOrderedConsumerHandle context stream (orderedConsumerConfig options)
+        createOrderedConsumerHandle context consumerAPI stream (orderedConsumerConfig options)
     , ack = ackMessage (contextClient context)
     , nak = nakMessage (contextClient context)
     , inProgress = inProgressMessage (contextClient context)
@@ -88,6 +88,7 @@ consumePushMessages context deliverSubject config handler = do
 
 data OrderedState = OrderedState
                       { orderedStateContext      :: JetStreamContext
+                      , orderedStateConsumers    :: ConsumerAPI
                       , orderedStateStream       :: StreamName
                       , orderedStateConfig       :: OrderedConsumerConfig
                       , orderedStateNamePrefix   :: ConsumerName
@@ -99,12 +100,13 @@ data OrderedState = OrderedState
 
 createOrderedConsumerHandle
   :: JetStreamContext
+  -> ConsumerAPI
   -> StreamName
   -> OrderedConsumerConfig
   -> IO (Either JetStreamError OrderedConsumer)
-createOrderedConsumerHandle context stream config = do
+createOrderedConsumerHandle context consumerAPI stream config = do
   namePrefix <- orderedNamePrefix context config
-  state <- OrderedState context stream config namePrefix
+  state <- OrderedState context consumerAPI stream config namePrefix
     <$> newTVarIO 0
     <*> newTVarIO Nothing
     <*> newTVarIO Nothing
@@ -125,8 +127,8 @@ orderedInfo state = do
     Nothing ->
       pure (Left JetStreamNoReply)
     Just consumerName ->
-      Consumer.consumerInfo
-        (Consumer.consumerAPI (orderedStateContext state))
+      consumerInfo
+        (orderedStateConsumers state)
         (orderedStateStream state)
         consumerName
 
@@ -137,20 +139,24 @@ fetchOrderedMessages state options = do
     Left err ->
       pure (Left err)
     Right info -> do
-      response <- fetchMessages
+      responseResult <- fetchMessages
         (orderedStateContext state)
         (orderedStateStream state)
         (consumerInfoName info)
         (pullRequest options)
-      case orderedResponseNextSequence response of
+      case responseResult of
         Left err ->
           pure (Left err)
-        Right Nothing ->
-          pure (Right response)
-        Right (Just nextSequence) -> do
-          atomically $
-            writeTVar (orderedStateNextSequence state) (Just nextSequence)
-          pure (Right response)
+        Right response ->
+          case orderedResponseNextSequence response of
+            Left err ->
+              pure (Left err)
+            Right Nothing ->
+              pure (Right response)
+            Right (Just nextSequence) -> do
+              atomically $
+                writeTVar (orderedStateNextSequence state) (Just nextSequence)
+              pure (Right response)
 
 resetOrderedConsumer :: OrderedState -> IO (Either JetStreamError ConsumerInfo)
 resetOrderedConsumer state = do
@@ -164,8 +170,8 @@ resetOrderedConsumer state = do
           pure ()
         Just consumerName ->
           void $
-            Consumer.deleteConsumer
-              (Consumer.consumerAPI (orderedStateContext state))
+            deleteConsumer
+              (orderedStateConsumers state)
               (orderedStateStream state)
               consumerName
       (serial, nextSequence) <- atomically $ do
@@ -175,8 +181,8 @@ resetOrderedConsumer state = do
         pure (serial, nextSequence)
       let consumerName = orderedConsumerName (orderedStateNamePrefix state) serial
           options = orderedConsumerOptions (orderedStateConfig state) nextSequence
-      result <- Consumer.putConsumer
-        (Consumer.consumerAPI (orderedStateContext state))
+      result <- putConsumer
+        (orderedStateConsumers state)
         (orderedStateStream state)
         ConsumerCreateOrUpdate
         (NamedConsumer consumerName)
@@ -200,8 +206,8 @@ stopOrdered state = do
       pure ()
     Just consumerName ->
       void $
-        Consumer.deleteConsumer
-          (Consumer.consumerAPI (orderedStateContext state))
+        deleteConsumer
+          (orderedStateConsumers state)
           (orderedStateStream state)
           consumerName
 
@@ -266,9 +272,9 @@ sanitizeConsumerName =
       | otherwise = '_'
 
 -- | Fetch messages for a pull consumer.
-fetchMessages :: JetStreamContext -> StreamName -> ConsumerName -> PullRequest -> IO PullResponse
+fetchMessages :: JetStreamContext -> StreamName -> ConsumerName -> PullRequest -> IO (Either JetStreamError PullResponse)
 fetchMessages context stream consumer request
-  | pullRequestBatch request <= 0 = pure (PullResponse [] Nothing)
+  | pullRequestBatch request <= 0 = pure (Right (PullResponse [] Nothing))
   | otherwise = do
       responseQueue <- newTQueueIO
       inbox <- Nats.newInbox natsClient
@@ -299,24 +305,27 @@ termMessage natsClient = publishAck natsClient Term
 
 data PullResult = PullResultMessage Message
                 | PullResultStatus PullStatus
-                | PullResultNone
+                | PullResultTimeout
+                | PullResultClosed
 
-collectResponses :: Int -> TQueue (Maybe Nats.MsgView) -> Int -> [Message] -> IO PullResponse
+collectResponses :: Int -> TQueue (Maybe Nats.MsgView) -> Int -> [Message] -> IO (Either JetStreamError PullResponse)
 collectResponses _ _ 0 messages =
-  pure (PullResponse (reverse messages) Nothing)
+  pure (Right (PullResponse (reverse messages) Nothing))
 collectResponses waitMicros responseQueue remaining messages = do
   response <- timeout waitMicros (atomically (readTQueue responseQueue))
   case classifyPullResult response of
     PullResultMessage message ->
       collectResponses waitMicros responseQueue (remaining - 1) (message:messages)
     PullResultStatus status ->
-      pure (PullResponse (reverse messages) (Just status))
-    PullResultNone ->
-      pure (PullResponse (reverse messages) Nothing)
+      pure (Right (PullResponse (reverse messages) (Just status)))
+    PullResultTimeout ->
+      pure (Left JetStreamTimeout)
+    PullResultClosed ->
+      pure (Left JetStreamNoReply)
 
 classifyPullResult :: Maybe (Maybe Nats.MsgView) -> PullResult
-classifyPullResult Nothing = PullResultNone
-classifyPullResult (Just Nothing) = PullResultNone
+classifyPullResult Nothing = PullResultTimeout
+classifyPullResult (Just Nothing) = PullResultClosed
 classifyPullResult (Just (Just msgView)) =
   case messageStatus message of
     Nothing     -> PullResultMessage message

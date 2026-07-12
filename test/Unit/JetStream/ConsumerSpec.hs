@@ -40,6 +40,25 @@ spec = do
       fmap consumerResetResponseSequence (eitherDecode consumerResetJSON)
         `shouldBe` Right 7
 
+  describe "Consumer list JSON" $ do
+    it "decodes detailed consumer list responses" $ do
+      eitherDecode consumerListJSON
+        `shouldBe` Right ConsumerListResponse
+          { consumerListTotal = 1
+          , consumerListOffset = 0
+          , consumerListLimit = 1024
+          , consumerListConsumers = [consumerInfo]
+          }
+
+    it "decodes consumer name responses" $ do
+      eitherDecode consumerNamesJSON
+        `shouldBe` Right ConsumerNamesResponse
+          { consumerNamesTotal = 2
+          , consumerNamesOffset = 0
+          , consumerNamesLimit = 1024
+          , consumerNamesConsumers = ["orders-puller", "orders-worker"]
+          }
+
 durablePullConsumerConfigRequest :: ConsumerConfigRequest
 durablePullConsumerConfigRequest =
   consumerConfigRequest
@@ -120,6 +139,14 @@ consumerInfoJSON =
 consumerResetJSON :: LBS.ByteString
 consumerResetJSON =
   "{\"type\":\"io.nats.jetstream.api.v1.consumer_reset_response\",\"stream_name\":\"ORDERS\",\"name\":\"orders-puller\",\"created\":\"2024-01-01T00:00:00Z\",\"config\":{\"deliver_policy\":\"all\",\"ack_policy\":\"explicit\",\"replay_policy\":\"instant\"},\"delivered\":{\"consumer_seq\":1,\"stream_seq\":7},\"ack_floor\":{\"consumer_seq\":0,\"stream_seq\":0},\"num_ack_pending\":0,\"num_redelivered\":0,\"num_waiting\":0,\"num_pending\":3,\"reset_seq\":7}"
+
+consumerListJSON :: LBS.ByteString
+consumerListJSON =
+  "{\"type\":\"io.nats.jetstream.api.v1.consumer_list_response\",\"total\":1,\"offset\":0,\"limit\":1024,\"consumers\":[{\"type\":\"io.nats.jetstream.api.v1.consumer_info_response\",\"stream_name\":\"ORDERS\",\"name\":\"orders-puller\",\"created\":\"2024-01-01T00:00:00Z\",\"config\":{\"deliver_policy\":\"all\",\"ack_policy\":\"explicit\",\"replay_policy\":\"instant\"},\"delivered\":{\"consumer_seq\":2,\"stream_seq\":10},\"ack_floor\":{\"consumer_seq\":1,\"stream_seq\":9},\"num_ack_pending\":1,\"num_redelivered\":0,\"num_waiting\":0,\"num_pending\":3}]}"
+
+consumerNamesJSON :: LBS.ByteString
+consumerNamesJSON =
+  "{\"type\":\"io.nats.jetstream.api.v1.consumer_names_response\",\"total\":2,\"offset\":0,\"limit\":1024,\"consumers\":[\"orders-puller\",\"orders-worker\"]}"
 
 consumerInfo :: ConsumerInfo
 consumerInfo = ConsumerInfo

@@ -19,7 +19,7 @@ import           Data.List             (sort)
 import           Data.Time.Clock       (addUTCTime, getCurrentTime)
 import           JetStream.API         (JetStream (..))
 import qualified JetStream.API         as JetStream
-import           JetStream.Client      (newJetStream)
+import           JetStream.Client      (newJetStream, withDomain)
 import           NatsServerConfig
 import           System.Timeout        (timeout)
 import           Test.Hspec
@@ -83,11 +83,20 @@ spec =
       jetStreamSystemTest "a4249340-a096-469b-b1fb-17056515846f"
         "stops ordered consumers gracefully"
         orderedConsumerGracefulShutdownTest
+      jetStreamDomainSystemTest "66eb55d3-0d4e-42d1-a7c4-a8f68738e369"
+        "uses JetStream API domains"
+        domainJetStreamTest
 
 jetStreamServerOptions :: NatsConfigOptions
 jetStreamServerOptions =
   [ WithLogVerbosity NatsLogDebug
   , WithJetStream
+  ]
+
+jetStreamDomainServerOptions :: NatsConfigOptions
+jetStreamDomainServerOptions =
+  [ WithLogVerbosity NatsLogDebug
+  , WithJetStreamDomain "HUB"
   ]
 
 jetStreamSystemTest :: String -> String -> (JetStream -> IO ()) -> Spec
@@ -96,12 +105,25 @@ jetStreamSystemTest testId label scenario =
     it label $ \endpoints ->
       withJetStreamClient testId endpoints scenario
 
+jetStreamDomainSystemTest :: String -> String -> (JetStream -> IO ()) -> Spec
+jetStreamDomainSystemTest testId label scenario =
+  around (withNatsContainerConfigNamed testId jetStreamDomainServerOptions) .
+    it label $ \endpoints ->
+      withJetStreamDomainClient testId endpoints scenario
+
 withJetStreamClient :: String -> Endpoints -> (JetStream -> IO ()) -> IO ()
 withJetStreamClient testId (Endpoints natsHost natsPort) scenario = do
   client <- newClient [(natsHost, natsPort)] $
     withConnectName (BC.pack testId)
       : testLoggerOptions
   scenario (newJetStream client []) `finally` Nats.close client
+
+withJetStreamDomainClient :: String -> Endpoints -> (JetStream -> IO ()) -> IO ()
+withJetStreamDomainClient testId (Endpoints natsHost natsPort) scenario = do
+  client <- newClient [(natsHost, natsPort)] $
+    withConnectName (BC.pack testId)
+      : testLoggerOptions
+  scenario (newJetStream client [withDomain "HUB"]) `finally` Nats.close client
 
 durablePullConsumerTest :: JetStream -> IO ()
 durablePullConsumerTest jetStream = do
@@ -110,7 +132,8 @@ durablePullConsumerTest jetStream = do
 
   mapM_ (publishPayload jetStream subjectName) payloadBodies
 
-  firstFetch <- JetStream.fetch (messages jetStream) streamName durableName fetchBatch
+  firstFetch <- expectRight "first fetch" $
+    JetStream.fetch (messages jetStream) streamName durableName fetchBatch
   case JetStream.pullResponseMessages firstFetch of
     messages'@[_, _] -> do
       fmap JetStream.messageSubject messages' `shouldBe` [subjectName, subjectName]
@@ -121,7 +144,8 @@ durablePullConsumerTest jetStream = do
       expectationFailure ("expected two JetStream messages, got " ++ show (length messages'))
   JetStream.pullResponseStatus firstFetch `shouldBe` Nothing
 
-  emptyFetch <- JetStream.fetch (messages jetStream) streamName durableName shortFetch
+  emptyFetch <- expectRight "empty fetch" $
+    JetStream.fetch (messages jetStream) streamName durableName shortFetch
   JetStream.pullResponseMessages emptyFetch `shouldBe` []
   expectNoMessages emptyFetch
 
@@ -206,7 +230,8 @@ termStopsRedeliveryTest jetStream = do
   publishPayload jetStream subject "stop"
   message <- fetchOneMessage jetStream stream durable
   JetStream.term (messages jetStream) message `shouldReturn` Right ()
-  empty <- JetStream.fetch (messages jetStream) stream durable shortFetch
+  empty <- expectRight "fetch after term" $
+    JetStream.fetch (messages jetStream) stream durable shortFetch
   JetStream.pullResponseMessages empty `shouldBe` []
   expectNoMessages empty
 
@@ -244,7 +269,8 @@ deliverPolicyTest jetStream = do
 
   createDurableConsumerOrFail jetStream stream "DELIVER_NEW" $
     pullConsumerOptions "DELIVER_NEW" [JetStream.withConsumerDeliverPolicy JetStream.DeliverNew]
-  empty <- JetStream.fetch (messages jetStream) stream "DELIVER_NEW" shortFetch
+  empty <- expectRight "deliver new empty fetch" $
+    JetStream.fetch (messages jetStream) stream "DELIVER_NEW" shortFetch
   JetStream.pullResponseMessages empty `shouldBe` []
   expectNoMessages empty
   publishPayload jetStream subject "new"
@@ -426,6 +452,17 @@ consumerAdministrationTest jetStream = do
   JetStream.consumerConfigDescription (JetStream.consumerInfoConfig updated) `shouldBe` Just "v2"
   JetStream.consumerConfigMaxAckPending (JetStream.consumerInfoConfig updated) `shouldBe` Just 64
 
+  let secondDurable = "ADMIN_CONSUMER_SECOND"
+  createDurableConsumerOrFail jetStream stream secondDurable $
+    pullConsumerOptions secondDurable []
+  names <- expectRight "consumer names" $
+    JetStream.consumerNames (consumers jetStream) stream []
+  sort (JetStream.consumerNamesConsumers names) `shouldBe` sort [durable, secondDurable]
+  listed <- expectRight "consumer list" $
+    JetStream.listConsumers (consumers jetStream) stream []
+  sort (fmap JetStream.consumerInfoName (JetStream.consumerListConsumers listed))
+    `shouldBe` sort [durable, secondDurable]
+
   pauseUntil <- addUTCTime 2 <$> getCurrentTime
   paused <- expectRight "pause consumer" $
     JetStream.pauseConsumer (consumers jetStream) stream durable pauseUntil
@@ -434,10 +471,11 @@ consumerAdministrationTest jetStream = do
     JetStream.resumeConsumer (consumers jetStream) stream durable
   JetStream.consumerPausePaused resumed `shouldBe` False
 
-  firstBatch <- JetStream.fetch (messages jetStream) stream durable
-    [ JetStream.withFetchBatch 2
-    , JetStream.withFetchWait (JetStream.FetchExpiresMicros 1000000)
-    ]
+  firstBatch <- expectRight "consumer admin fetch" $
+    JetStream.fetch (messages jetStream) stream durable
+      [ JetStream.withFetchBatch 2
+      , JetStream.withFetchWait (JetStream.FetchExpiresMicros 1000000)
+      ]
   length (JetStream.pullResponseMessages firstBatch) `shouldBe` 2
   resetToSecond <- expectRight "reset consumer to sequence" $
     JetStream.resetConsumer
@@ -596,6 +634,17 @@ orderedConsumerGracefulShutdownTest jetStream = do
     ]
   fetchAfterStop `shouldBe` Left JetStream.JetStreamNoReply
 
+domainJetStreamTest :: JetStream -> IO ()
+domainJetStreamTest jetStream = do
+  account <- expectRight "domain account info" $
+    JetStream.accountInfo jetStream
+  JetStream.accountInfoDomain account `shouldBe` Just "HUB"
+
+  let stream = "NATSKELL_JS_DOMAIN"
+      subject = "NATSKELL.JS.DOMAIN"
+  created <- createStreamOrFail jetStream stream [subject] streamOptions
+  JetStream.streamConfigName (JetStream.streamInfoConfig created) `shouldBe` stream
+
 streamOptions :: [JetStream.StreamConfigOption]
 streamOptions =
   [ JetStream.withRetention JetStream.LimitsPolicy
@@ -677,10 +726,11 @@ fetchOnePayload jetStream stream durable =
 
 fetchOneMessage :: JetStream -> BS.ByteString -> BS.ByteString -> IO JetStream.Message
 fetchOneMessage jetStream stream durable = do
-  response <- JetStream.fetch (messages jetStream) stream durable
-    [ JetStream.withFetchBatch 1
-    , JetStream.withFetchWait (JetStream.FetchExpiresMicros 1000000)
-    ]
+  response <- expectRight "fetch one message" $
+    JetStream.fetch (messages jetStream) stream durable
+      [ JetStream.withFetchBatch 1
+      , JetStream.withFetchWait (JetStream.FetchExpiresMicros 1000000)
+      ]
   case JetStream.pullResponseMessages response of
     [message] ->
       pure message
@@ -690,10 +740,11 @@ fetchOneMessage jetStream stream durable = do
 
 fetchPayloads :: JetStream -> BS.ByteString -> BS.ByteString -> Int -> IO [Maybe BS.ByteString]
 fetchPayloads jetStream stream durable batch = do
-  response <- JetStream.fetch (messages jetStream) stream durable
-    [ JetStream.withFetchBatch batch
-    , JetStream.withFetchWait (JetStream.FetchExpiresMicros 1000000)
-    ]
+  response <- expectRight "fetch payloads" $
+    JetStream.fetch (messages jetStream) stream durable
+      [ JetStream.withFetchBatch batch
+      , JetStream.withFetchWait (JetStream.FetchExpiresMicros 1000000)
+      ]
   let received = JetStream.pullResponseMessages response
   unless (length received == batch) $
     expectationFailure ("expected " ++ show batch ++ " JetStream messages, got " ++ show (length received))

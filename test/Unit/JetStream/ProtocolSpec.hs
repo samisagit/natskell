@@ -3,13 +3,19 @@
 module JetStream.ProtocolSpec (spec) where
 
 import qualified API                        as Nats
+import           Data.Aeson                 (eitherDecodeStrict)
+import           Data.Either                (isLeft)
 import           JetStream.Error            (JetStreamError (..))
 import           JetStream.Options          (newJetStreamContext, withDomain)
 import           JetStream.Protocol.Headers (statusCode, statusDescription)
 import           JetStream.Protocol.Request (decodeJetStreamResponse)
 import           JetStream.Protocol.Subject
 import           JetStream.Stream.Types     (StreamMessage (..))
-import           JetStream.Types            (AccountInfo (..), AccountTier (..))
+import           JetStream.Types
+    ( AccountInfo (..)
+    , AccountTier (..)
+    , DeliverPolicy
+    )
 import           Test.Hspec
 
 spec :: Spec
@@ -60,6 +66,12 @@ spec = do
           length (accountInfoTiers info) `shouldBe` 1
         other ->
           expectationFailure ("unexpected account info decode: " ++ show (other :: Either JetStreamError AccountInfo))
+
+    it "rejects parameterised deliver policies without their companion fields" $ do
+      (eitherDecodeStrict "\"by_start_sequence\"" :: Either String DeliverPolicy)
+        `shouldSatisfy` isLeft
+      (eitherDecodeStrict "\"by_start_time\"" :: Either String DeliverPolicy)
+        `shouldSatisfy` isLeft
 
 testContext =
   newJetStreamContext fakeClient []

@@ -1,25 +1,23 @@
 module JetStream.Publish.API
   ( PublishAPI (..)
   , PublishAck (..)
+  , PublishExpectation (..)
   , PublishOption
   , withMsgId
   , withExpectedStream
-  , withExpectedLastSequence
-  , withExpectedLastSubjectSequence
-  , withExpectedLastMsgId
+  , withPublishExpectation
   , withHeaders
   ) where
 
 import           JetStream.Error         (JetStreamError)
 import           JetStream.Publish.Types
     ( PublishAck (..)
+    , PublishExpectation (..)
     , PublishOption
-    , withExpectedLastMsgId
-    , withExpectedLastSequence
-    , withExpectedLastSubjectSequence
     , withExpectedStream
     , withHeaders
     , withMsgId
+    , withPublishExpectation
     )
 import           JetStream.Types         (Payload, Subject)
 

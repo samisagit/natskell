@@ -34,8 +34,6 @@ module JetStream.Stream.API
   , PurgeStreamResponse (..)
   , StreamListResponse (..)
   , StreamNamesResponse (..)
-  , durationToNanoseconds
-  , nanosecondsToDuration
   ) where
 
 import           JetStream.Error        (JetStreamError)

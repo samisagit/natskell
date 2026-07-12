@@ -140,8 +140,8 @@ instance FromJSON DeliverPolicy where
       "all"               -> pure DeliverAll
       "last"              -> pure DeliverLast
       "new"               -> pure DeliverNew
-      "by_start_sequence" -> pure (DeliverByStartSequence 0)
-      "by_start_time"     -> pure DeliverAll
+      "by_start_sequence" -> fail "deliver policy by_start_sequence requires opt_start_seq"
+      "by_start_time"     -> fail "deliver policy by_start_time requires opt_start_time"
       "last_per_subject"  -> pure DeliverLastPerSubject
       _                   -> fail ("unknown deliver policy: " ++ T.unpack value)
 
