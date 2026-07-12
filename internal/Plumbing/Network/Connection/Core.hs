@@ -80,7 +80,9 @@ readWorkerLoop conn = do
               shouldContinue <- enqueueReadResult conn result
               case result of
                 Left _  -> return ()
-                Right _ -> when shouldContinue loop
+                Right bytes
+                  | BS.null bytes -> return ()
+                  | otherwise     -> when shouldContinue loop
 
 enqueueReadResult :: Conn -> Either SomeException ByteString -> IO Bool
 enqueueReadResult conn result = atomically $
@@ -213,6 +215,7 @@ closeConn conn = do
   case current of
     Nothing -> return ()
     Just currentTransport' -> void $ try @SomeException (transportClose currentTransport')
+  waitForReadWorkerStopped conn
 
 openConn :: Conn -> IO ()
 openConn conn = do
@@ -227,3 +230,9 @@ bufferRead :: Conn -> ByteString -> IO ()
 bufferRead conn bytes =
   unless (BS.null bytes)
     (atomically $ modifyTVar' (readBuffer conn) (bytes <>))
+
+waitForReadWorkerStopped :: Conn -> IO ()
+waitForReadWorkerStopped conn =
+  atomically $ do
+    running <- readTVar (readWorkerRunning conn)
+    when running retry

@@ -77,6 +77,12 @@ spec =
       jetStreamSystemTest "d9f102d7-22b9-4103-b5c1-6c3b8e6d0cd7"
         "fetches ordered consumer messages after reset"
         orderedConsumerTest
+      jetStreamSystemTest "ff173d87-7377-4ff5-a6c8-83574508b591"
+        "stops push consumer subscriptions gracefully"
+        pushConsumerGracefulShutdownTest
+      jetStreamSystemTest "a4249340-a096-469b-b1fb-17056515846f"
+        "stops ordered consumers gracefully"
+        orderedConsumerGracefulShutdownTest
 
 jetStreamServerOptions :: NatsConfigOptions
 jetStreamServerOptions =
@@ -522,6 +528,73 @@ orderedConsumerTest jetStream = do
   fmap JetStream.messagePayload (JetStream.pullResponseMessages secondBatch)
     `shouldBe` fmap Just (drop 2 payloads)
   JetStream.stopOrderedConsumer ordered
+
+pushConsumerGracefulShutdownTest :: JetStream -> IO ()
+pushConsumerGracefulShutdownTest jetStream = do
+  let stream = "NATSKELL_JS_PUSH_STOP"
+      subject = "NATSKELL.JS.PUSH.STOP"
+      consumer = "PUSH_STOP_CONSUMER"
+      deliverSubject = "NATSKELL.JS.PUSH.STOP.DELIVER"
+  createStreamOrFail jetStream stream [subject] streamOptions
+  void . expectRight "push stop consumer create" $
+    JetStream.putConsumer
+      (consumers jetStream)
+      stream
+      JetStream.ConsumerCreate
+      (JetStream.NamedConsumer consumer)
+      (JetStream.PushConsumer deliverSubject)
+      [ JetStream.withConsumerAckPolicy JetStream.AckExplicit
+      , JetStream.withConsumerDeliverPolicy JetStream.DeliverAll
+      ]
+
+  stoppedCallback <- newEmptyMVar
+  subscription <- JetStream.consumePush (messages jetStream) deliverSubject [] $ \message ->
+    void (tryPutMVar stoppedCallback message)
+  stopResult <- timeout 1000000 (JetStream.stopPushSubscription subscription)
+  stopResult `shouldBe` Just ()
+
+  publishPayload jetStream subject "after-stop"
+  stoppedDelivery <- timeout 1000000 (takeMVar stoppedCallback)
+  stoppedDelivery `shouldBe` Nothing
+
+  resumedCallback <- newEmptyMVar
+  resumed <- JetStream.consumePush (messages jetStream) deliverSubject [] $ \message -> do
+    ackOrFail jetStream message
+    when (JetStream.messagePayload message == Just "after-resume") $
+      void (tryPutMVar resumedCallback message)
+  publishPayload jetStream subject "after-resume"
+  resumedDelivery <- timeout 5000000 (takeMVar resumedCallback)
+  JetStream.stopPushSubscription resumed
+  fmap JetStream.messagePayload resumedDelivery `shouldBe` Just (Just "after-resume")
+
+orderedConsumerGracefulShutdownTest :: JetStream -> IO ()
+orderedConsumerGracefulShutdownTest jetStream = do
+  let stream = "NATSKELL_JS_ORDERED_STOP"
+      subject = "NATSKELL.JS.ORDERED.STOP"
+  createStreamOrFail jetStream stream [subject] streamOptions
+  ordered <- expectRight "ordered stop consumer create" $
+    JetStream.createOrderedConsumer
+      (messages jetStream)
+      stream
+      [JetStream.withOrderedConsumerNamePrefix "ORDERED_STOP"]
+  current <- expectRight "ordered stop consumer info" $
+    JetStream.orderedConsumerInfo ordered
+
+  stopResult <- timeout 1000000 (JetStream.stopOrderedConsumer ordered)
+  stopResult `shouldBe` Just ()
+
+  consumerInfoAfterStop <- JetStream.consumerInfo
+    (consumers jetStream)
+    stream
+    (JetStream.consumerInfoName current)
+  expectJetStreamFailure "ordered consumer info after stop" consumerInfoAfterStop
+  orderedInfoAfterStop <- JetStream.orderedConsumerInfo ordered
+  expectJetStreamFailure "ordered handle info after stop" orderedInfoAfterStop
+  fetchAfterStop <- JetStream.fetchOrdered ordered
+    [ JetStream.withFetchBatch 1
+    , JetStream.withFetchWait (JetStream.FetchNoWaitMicros 100000)
+    ]
+  fetchAfterStop `shouldBe` Left JetStream.JetStreamNoReply
 
 streamOptions :: [JetStream.StreamConfigOption]
 streamOptions =

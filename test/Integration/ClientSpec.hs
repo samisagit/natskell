@@ -88,6 +88,13 @@ data CapturedPublish = CapturedPublish
                          }
   deriving (Eq, Show)
 
+data CapturedSubscription = CapturedSubscription
+                              { capturedSubSubject    :: BS.ByteString
+                              , capturedSubQueueGroup :: Maybe BS.ByteString
+                              , capturedSubSid        :: BS.ByteString
+                              }
+  deriving (Eq, Show)
+
 recvUntil :: Socket -> (BS.ByteString -> Bool) -> IO BS.ByteString
 recvUntil sock done =
   go BS.empty
@@ -114,6 +121,40 @@ expectClientCommand sock command = do
 expectQueuedSub :: Socket -> BS.ByteString -> BS.ByteString -> BS.ByteString -> IO ()
 expectQueuedSub sock subject queueGroup sid =
   expectClientCommand sock (BS.concat ["SUB ", subject, " ", queueGroup, " ", sid, "\r\n"])
+
+captureSubscription :: Socket -> BS.ByteString -> IO CapturedSubscription
+captureSubscription sock expectedSubject = do
+  bytes <- recvUntil sock hasExpectedSubscription
+  case parseCapturedSubscription expectedSubject bytes of
+    Nothing ->
+      expectationFailure ("could not parse subscription from bytes: " ++ show bytes) >>
+        fail "could not parse subscription"
+    Just captured ->
+      pure captured
+  where
+    hasExpectedSubscription bytes =
+      case parseCapturedSubscription expectedSubject bytes of
+        Nothing -> False
+        Just _  -> True
+
+parseCapturedSubscription :: BS.ByteString -> BS.ByteString -> Maybe CapturedSubscription
+parseCapturedSubscription expectedSubject bytes =
+  findSubscription normalizedLines
+  where
+    wireLines = C.split '\n' bytes
+    stripCR = C.takeWhile (/= '\r')
+    normalizedLines = fmap stripCR wireLines
+    findSubscription [] = Nothing
+    findSubscription (line:rest) =
+      case C.words line of
+        [prefix, subject', sid]
+          | prefix == "SUB" && subject' == expectedSubject ->
+              Just (CapturedSubscription subject' Nothing sid)
+        [prefix, subject', queueGroup, sid]
+          | prefix == "SUB" && subject' == expectedSubject ->
+              Just (CapturedSubscription subject' (Just queueGroup) sid)
+        _ ->
+          findSubscription rest
 
 capturePublish :: Socket -> BS.ByteString -> IO CapturedPublish
 capturePublish sock expectedSubject = do
@@ -215,6 +256,16 @@ protoOrderedConsumerInfoResponse :: BS.ByteString
 protoOrderedConsumerInfoResponse =
   "{\"stream_name\":\"PROTO_STREAM\",\"name\":\"PROTO_ORDERED_1\",\"created\":\"2024-01-01T00:00:00Z\",\"config\":{\"name\":\"PROTO_ORDERED_1\",\"deliver_policy\":\"by_start_sequence\",\"opt_start_seq\":3,\"ack_policy\":\"none\",\"replay_policy\":\"instant\",\"max_deliver\":-1,\"max_waiting\":512,\"inactive_threshold\":300000000000,\"num_replicas\":1,\"mem_storage\":true}}"
 
+protoOrderedConsumerInfoResponseFor :: BS.ByteString -> BS.ByteString
+protoOrderedConsumerInfoResponseFor consumer =
+  BS.concat
+    [ "{\"stream_name\":\"PROTO_STREAM\",\"name\":\""
+    , consumer
+    , "\",\"created\":\"2024-01-01T00:00:00Z\",\"config\":{\"name\":\""
+    , consumer
+    , "\",\"deliver_policy\":\"all\",\"ack_policy\":\"none\",\"replay_policy\":\"instant\",\"max_deliver\":-1,\"max_waiting\":512,\"inactive_threshold\":300000000000,\"num_replicas\":1,\"mem_storage\":true}}"
+    ]
+
 protoAccountInfoResponse :: BS.ByteString
 protoAccountInfoResponse =
   "{\"memory\":10,\"storage\":20,\"reserved_memory\":0,\"reserved_storage\":0,\"streams\":1,\"consumers\":1,\"limits\":{\"max_memory\":-1,\"max_storage\":-1,\"max_streams\":-1,\"max_consumers\":-1,\"max_ack_pending\":-1,\"memory_max_stream_bytes\":-1,\"storage_max_stream_bytes\":-1,\"max_bytes_required\":false},\"api\":{\"level\":1,\"total\":3,\"errors\":0},\"tiers\":{}}"
@@ -225,6 +276,10 @@ protoStreamMessageResponse =
 
 protoDeleteStreamMessageResponse :: BS.ByteString
 protoDeleteStreamMessageResponse =
+  "{\"success\":true}"
+
+protoDeleteConsumerResponse :: BS.ByteString
+protoDeleteConsumerResponse =
   "{\"success\":true}"
 
 protoConsumerPauseResponse :: BS.ByteString
@@ -513,6 +568,28 @@ spec = do
           JetStream.stopPushSubscription subscription
           expectClientCommand serv "UNSUB "
 
+        it "keeps push consumers alive after garbled inbound bytes" $ \(serv, client, _, _) -> do
+          let jetStream = newJetStream client []
+          delivered <- newEmptyMVar
+          subscription <- JetStream.consumePush
+            (JetStream.messages jetStream)
+            "PROTO.DELIVER"
+            []
+            (putMVar delivered)
+          captured <- captureSubscription serv "PROTO.DELIVER"
+          sendAll serv $
+            BS.concat
+              [ "garbled-prefix"
+              , msgFrame "PROTO.DELIVER" (capturedSubSid captured) "payload"
+              ]
+          result <- timeout 1000000 (takeMVar delivered)
+          JetStream.stopPushSubscription subscription
+          case result of
+            Nothing ->
+              expectationFailure "push message was not delivered after garbled bytes"
+            Just message ->
+              JetStream.messagePayload message `shouldBe` Just "payload"
+
         it "creates ordered consumers with the ordered defaults" $ \(serv, client, _, _) -> do
           let jetStream = newJetStream client []
           done <- newEmptyMVar
@@ -773,6 +850,135 @@ spec = do
           (secondConn, _) <- accept sock
           sendAll secondConn defaultINFO
           expectQueuedSub secondConn "JOBS" "WORKERS" sid
+          close client
+          Network.Socket.close secondConn
+      Network.Socket.close sock
+    it "resubscribes JetStream push consumers after reconnect" $ do
+      (p, sock) <- openFreePort
+      listen sock 2
+      clientVar <- newEmptyMVar
+      void . forkIO $ do
+        let configOptions =
+              [ withMinimumLogLevel Debug
+              , withConnectionAttempts 2
+              , withConnectName "test-client"
+              ]
+        c <- newClient [("127.0.0.1", p)] configOptions
+        putMVar clientVar c
+      (firstConn, _) <- accept sock
+      sendAll firstConn defaultINFO
+      clientResult <- timeout 1000000 (takeMVar clientVar)
+      case clientResult of
+        Nothing ->
+          expectationFailure "client did not connect"
+        Just client -> do
+          let jetStream = newJetStream client []
+          delivered <- newEmptyMVar
+          subscription <- JetStream.consumePush
+            (JetStream.messages jetStream)
+            "PROTO.DELIVER"
+            []
+            (putMVar delivered)
+          firstSub <- captureSubscription firstConn "PROTO.DELIVER"
+          Network.Socket.close firstConn
+          (secondConn, _) <- accept sock
+          sendAll secondConn defaultINFO
+          secondSub <- captureSubscription secondConn "PROTO.DELIVER"
+          capturedSubSid secondSub `shouldBe` capturedSubSid firstSub
+          sendAll secondConn $
+            msgFrame "PROTO.DELIVER" (capturedSubSid secondSub) "after-reconnect"
+          result <- timeout 1000000 (takeMVar delivered)
+          case result of
+            Nothing ->
+              expectationFailure "push message was not delivered after reconnect"
+            Just message ->
+              JetStream.messagePayload message `shouldBe` Just "after-reconnect"
+          JetStream.stopPushSubscription subscription
+          close client
+          Network.Socket.close secondConn
+      Network.Socket.close sock
+    it "ordered fetch returns after disconnect and recovers on reconnect" $ do
+      (p, sock) <- openFreePort
+      listen sock 2
+      clientVar <- newEmptyMVar
+      void . forkIO $ do
+        let configOptions =
+              [ withMinimumLogLevel Debug
+              , withConnectionAttempts 2
+              , withConnectName "test-client"
+              ]
+        c <- newClient [("127.0.0.1", p)] configOptions
+        putMVar clientVar c
+      (firstConn, _) <- accept sock
+      sendAll firstConn defaultINFO
+      clientResult <- timeout 1000000 (takeMVar clientVar)
+      case clientResult of
+        Nothing ->
+          expectationFailure "client did not connect"
+        Just client -> do
+          let jetStream = newJetStream client []
+          orderedVar <- newEmptyMVar
+          void . forkIO $ do
+            result <- JetStream.createOrderedConsumer
+              (JetStream.messages jetStream)
+              "PROTO_STREAM"
+              [JetStream.withOrderedConsumerNamePrefix "PROTO_ORDERED"]
+            putMVar orderedVar result
+          createInitial <- capturePublish firstConn "$JS.API.CONSUMER.CREATE.PROTO_STREAM.PROTO_ORDERED_1"
+          replyToCapturedPublish firstConn createInitial $
+            protoOrderedConsumerInfoResponseFor "PROTO_ORDERED_1"
+          orderedResult <- timeout 1000000 (takeMVar orderedVar)
+          ordered <- case orderedResult of
+            Nothing ->
+              expectationFailure "ordered consumer create did not complete" >>
+                fail "ordered consumer create did not complete"
+            Just (Left err) ->
+              expectationFailure ("ordered consumer create failed: " ++ show err) >>
+                fail "ordered consumer create failed"
+            Just (Right ordered) ->
+              pure ordered
+
+          fetchVar <- newEmptyMVar
+          void . forkIO $ do
+            result <- JetStream.fetchOrdered ordered
+              [ JetStream.withFetchBatch 1
+              , JetStream.withFetchWait (JetStream.FetchExpiresMicros 100000)
+              ]
+            putMVar fetchVar result
+          deleteCurrent <- capturePublish firstConn "$JS.API.CONSUMER.DELETE.PROTO_STREAM.PROTO_ORDERED_1"
+          replyToCapturedPublish firstConn deleteCurrent protoDeleteConsumerResponse
+          createNext <- capturePublish firstConn "$JS.API.CONSUMER.CREATE.PROTO_STREAM.PROTO_ORDERED_2"
+          replyToCapturedPublish firstConn createNext $
+            protoOrderedConsumerInfoResponseFor "PROTO_ORDERED_2"
+          _nextRequest <- capturePublish firstConn "$JS.API.CONSUMER.MSG.NEXT.PROTO_STREAM.PROTO_ORDERED_2"
+          Network.Socket.close firstConn
+          fetchResult <- timeout 1000000 (takeMVar fetchVar)
+          case fetchResult of
+            Nothing ->
+              expectationFailure "ordered fetch did not return after disconnect"
+            Just (Left err) ->
+              expectationFailure ("ordered fetch failed after disconnect: " ++ show err)
+            Just (Right response) -> do
+              JetStream.pullResponseMessages response `shouldBe` []
+              JetStream.pullResponseStatus response `shouldBe` Nothing
+
+          (secondConn, _) <- accept sock
+          sendAll secondConn defaultINFO
+          infoVar <- newEmptyMVar
+          void . forkIO $ do
+            result <- JetStream.orderedConsumerInfo ordered
+            putMVar infoVar result
+          infoRequest <- capturePublish secondConn "$JS.API.CONSUMER.INFO.PROTO_STREAM.PROTO_ORDERED_2"
+          replyToCapturedPublish secondConn infoRequest $
+            protoOrderedConsumerInfoResponseFor "PROTO_ORDERED_2"
+          infoResult <- timeout 1000000 (takeMVar infoVar)
+          case infoResult of
+            Nothing ->
+              expectationFailure "ordered consumer info did not complete after reconnect"
+            Just (Left err) ->
+              expectationFailure ("ordered consumer info failed after reconnect: " ++ show err)
+            Just (Right info) ->
+              JetStream.consumerInfoName info `shouldBe` "PROTO_ORDERED_2"
           close client
           Network.Socket.close secondConn
       Network.Socket.close sock
