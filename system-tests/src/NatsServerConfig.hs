@@ -1,6 +1,8 @@
 module NatsServerConfig
   ( NatsLogVerbosity (..)
   , NatsAuthUser (..)
+  , NatsSubjectPermission (..)
+  , NatsUserPermissions (..)
   , NatsJwtConfig (..)
   , NatsTlsConfig (..)
   , NatsConfigOption (..)
@@ -8,7 +10,7 @@ module NatsServerConfig
   , writeNatsServerConfigFile
   ) where
 
-import           Data.List        (foldl')
+import           Data.List        (foldl', intercalate)
 import           System.Directory (getTemporaryDirectory)
 import           System.IO        (hClose, hPutStr, openTempFile)
 
@@ -22,8 +24,19 @@ data NatsAuthorization = NatsAuthorizationNone
                        | NatsAuthorizationNKey String
 
 data NatsAuthUser = NatsAuthUserPass String String
+                  | NatsAuthUserPassWithPermissions String String NatsUserPermissions
                   | NatsAuthNKeyUser String
                   | NatsAuthUserName String
+
+data NatsSubjectPermission = NatsSubjectPermission
+                               { natsPermissionAllow :: [String]
+                               , natsPermissionDeny  :: [String]
+                               }
+
+data NatsUserPermissions = NatsUserPermissions
+                             { natsUserPublishPermissions :: Maybe NatsSubjectPermission
+                             , natsUserSubscribePermissions :: Maybe NatsSubjectPermission
+                             }
 
 data NatsJwtConfig = NatsJwtConfig
                        { natsOperatorJwt        :: String
@@ -147,6 +160,12 @@ renderUser user =
         [ "user: " ++ renderQuoted name
         , "password: " ++ renderQuoted password
         ]
+    NatsAuthUserPassWithPermissions name password permissions ->
+      renderObject $
+        [ "user: " ++ renderQuoted name
+        , "password: " ++ renderQuoted password
+        ]
+          ++ renderUserPermissions permissions
     NatsAuthNKeyUser nkey ->
       renderObject
         [ "nkey: " ++ renderQuoted nkey
@@ -155,6 +174,32 @@ renderUser user =
       renderObject
         [ "user: " ++ renderQuoted name
         ]
+
+renderUserPermissions :: NatsUserPermissions -> [String]
+renderUserPermissions permissions =
+  ["permissions: {"]
+    ++ indentLines 2
+      ( renderSubjectPermission "publish" (natsUserPublishPermissions permissions)
+          ++ renderSubjectPermission "subscribe" (natsUserSubscribePermissions permissions)
+      )
+    ++ ["}"]
+
+renderSubjectPermission :: String -> Maybe NatsSubjectPermission -> [String]
+renderSubjectPermission _ Nothing =
+  []
+renderSubjectPermission name (Just permission) =
+  [name ++ ": {"]
+    ++ indentLines 2
+      ( renderPermissionSubjects "allow" (natsPermissionAllow permission)
+          ++ renderPermissionSubjects "deny" (natsPermissionDeny permission)
+      )
+    ++ ["}"]
+
+renderPermissionSubjects :: String -> [String] -> [String]
+renderPermissionSubjects _ [] =
+  []
+renderPermissionSubjects name subjects =
+  [name ++ ": " ++ renderQuotedList subjects]
 
 renderJwtConfig :: NatsJwtConfig -> [String]
 renderJwtConfig config =
@@ -206,6 +251,10 @@ indentLines width =
 renderQuoted :: String -> String
 renderQuoted value =
   "\"" ++ concatMap escapeChar value ++ "\""
+
+renderQuotedList :: [String] -> String
+renderQuotedList values =
+  "[" ++ intercalate ", " (map renderQuoted values) ++ "]"
 
 escapeChar :: Char -> String
 escapeChar char =

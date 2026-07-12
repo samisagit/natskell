@@ -5,6 +5,7 @@ module ClientMessagesSpec (spec) where
 import           API
     ( Client (..)
     , MsgView (..)
+    , withHeaders
     , withPayload
     , withQueueGroup
     )
@@ -26,6 +27,9 @@ spec = do
   clientSystemTest "9f24cb8e-c4a1-4fe5-9e87-dbb0bc3f79a2" "messages without payload are sent and received" $
     messageTest Nothing
   clientSystemTest "5b755d41-8f7a-4f5e-a336-5c4b97341b84" "queue group subscriptions distribute messages" queueGroupTest
+  clientSystemTest "f5d97b1d-ece6-4682-9343-995ee8db0c3b" "normal subscriptions survive reconnect" normalSubscriptionReconnectTest
+  clientSystemTest "e242fd0f-4134-4279-a6cc-23d49a2f58fb" "queue subscriptions survive reconnect" queueSubscriptionReconnectTest
+  clientSystemTest "2c6c1121-97e4-41e3-9663-1b2c66850a4e" "headers preserve case and duplicate values" headersRoundTripTest
 
 messageTest :: Maybe BS.ByteString -> [ConfigOption] -> Endpoints -> IO ()
 messageTest payload loggerOptions (Endpoints natsHost natsPort) = do
@@ -108,4 +112,100 @@ queueGroupTest loggerOptions (Endpoints natsHost natsPort) = do
         Just () -> expectationFailure "queue group delivered a message more than once"
       receivedPayloads <- readMVar received
       receivedPayloads `shouldMatchList` payloads)
+    `finally` cleanup
+
+normalSubscriptionReconnectTest :: [ConfigOption] -> Endpoints -> IO ()
+normalSubscriptionReconnectTest loggerOptions (Endpoints natsHost natsPort) = do
+  let topic = "RECONNECT.NORMAL"
+  received <- newEmptyMVar
+  subscriber <- newClient [(natsHost, natsPort)] $
+    withConnectName "reconnect-normal-subscriber"
+      : loggerOptions
+  publisher <- newClient [(natsHost, natsPort)] $
+    withConnectName "reconnect-normal-publisher"
+      : loggerOptions
+  let cleanup = do
+        close subscriber
+        close publisher
+  (do
+      _ <- subscribe subscriber topic [] (putMVar received)
+      flush subscriber
+      reset subscriber
+      flush subscriber
+      publish publisher topic [withPayload "after-reconnect"]
+      flush publisher
+      delivery <- timeout (5 * 1000000) (takeMVar received)
+      case delivery of
+        Nothing ->
+          expectationFailure "normal subscription did not receive after reconnect"
+        Just Nothing ->
+          expectationFailure "normal subscription received an empty callback"
+        Just (Just msg) ->
+          payload msg `shouldBe` Just "after-reconnect")
+    `finally` cleanup
+
+queueSubscriptionReconnectTest :: [ConfigOption] -> Endpoints -> IO ()
+queueSubscriptionReconnectTest loggerOptions (Endpoints natsHost natsPort) = do
+  let topic = "RECONNECT.QUEUE"
+      queueGroup = "RECONNECT-WORKERS"
+  received <- newEmptyMVar
+  subscriber <- newClient [(natsHost, natsPort)] $
+    withConnectName "reconnect-queue-subscriber"
+      : loggerOptions
+  publisher <- newClient [(natsHost, natsPort)] $
+    withConnectName "reconnect-queue-publisher"
+      : loggerOptions
+  let cleanup = do
+        close subscriber
+        close publisher
+  (do
+      _ <- subscribe subscriber topic [withQueueGroup queueGroup] (putMVar received)
+      flush subscriber
+      reset subscriber
+      flush subscriber
+      publish publisher topic [withPayload "queued-after-reconnect"]
+      flush publisher
+      delivery <- timeout (5 * 1000000) (takeMVar received)
+      case delivery of
+        Nothing ->
+          expectationFailure "queue subscription did not receive after reconnect"
+        Just Nothing ->
+          expectationFailure "queue subscription received an empty callback"
+        Just (Just msg) ->
+          payload msg `shouldBe` Just "queued-after-reconnect")
+    `finally` cleanup
+
+headersRoundTripTest :: [ConfigOption] -> Endpoints -> IO ()
+headersRoundTripTest loggerOptions (Endpoints natsHost natsPort) = do
+  let topic = "HEADERS.ROUNDTRIP"
+      expectedHeaders =
+        [ ("X-Test", "one")
+        , ("x-test", "two")
+        , ("X-Multi", "red")
+        , ("X-Multi", "blue")
+        ]
+  received <- newEmptyMVar
+  subscriber <- newClient [(natsHost, natsPort)] $
+    withConnectName "headers-round-trip-subscriber"
+      : loggerOptions
+  publisher <- newClient [(natsHost, natsPort)] $
+    withConnectName "headers-round-trip-publisher"
+      : loggerOptions
+  let cleanup = do
+        close subscriber
+        close publisher
+  (do
+      _ <- subscribe subscriber topic [] (putMVar received)
+      flush subscriber
+      publish publisher topic [withHeaders expectedHeaders, withPayload "header-payload"]
+      flush publisher
+      delivery <- timeout (5 * 1000000) (takeMVar received)
+      case delivery of
+        Nothing ->
+          expectationFailure "header message was not delivered"
+        Just Nothing ->
+          expectationFailure "header subscription received an empty callback"
+        Just (Just msg) -> do
+          payload msg `shouldBe` Just "header-payload"
+          headers msg `shouldBe` Just expectedHeaders)
     `finally` cleanup

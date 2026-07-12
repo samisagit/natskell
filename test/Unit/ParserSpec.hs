@@ -98,3 +98,22 @@ spec = do
           reason `shouldContain` "invalid HMSG status"
         other ->
           expectationFailure ("unexpected parse result: " ++ show other)
+
+    it "rejects HMSG frames whose total size is smaller than the header size" $ do
+      let input = "HMSG FOO 13 24 23\r\n"
+      case parse parserApi input of
+        DropPrefix n reason -> do
+          n `shouldSatisfy` (> 0)
+          reason `shouldContain` "invalid HMSG sizes"
+        other ->
+          expectationFailure ("unexpected parse result: " ++ show other)
+
+    it "rejects HMSG headers with an empty key after trimming" $ do
+      let input =
+            "HMSG FOO 13 23 23\r\nNATS/1.0\r\n  : VALUE\r\n\r\n\r\n"
+      case parse parserApi input of
+        DropPrefix n reason -> do
+          n `shouldSatisfy` (> 0)
+          reason `shouldContain` "invalid HMSG headers"
+        other ->
+          expectationFailure ("unexpected parse result: " ++ show other)
