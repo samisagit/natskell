@@ -49,12 +49,12 @@ instance Validator Pub where
 validateSubject :: Pub -> Either ByteString ()
 validateSubject p
   | subject p == "" = Left "explicit empty subject"
-  | otherwise = Right ()
+  | otherwise = validateSubjectSyntax (subject p)
 
 validateReplyTo :: Pub -> Either ByteString ()
 validateReplyTo p
   | replyTo p == Just "" = Left "explicit empty replyTo"
-  | otherwise = Right ()
+  | otherwise = maybe (Right ()) validateSubjectSyntax (replyTo p)
 
 validatePayload :: Pub -> Either ByteString ()
 validatePayload p
@@ -67,7 +67,17 @@ validateHeaders p
   | headers p == Just [] = Left "explicit empty headers"
   | Prelude.any (\(k, _) -> k == "") (fromJust (headers p)) = Left "explicit empty header key"
   | Prelude.any (\(_, v) -> v == "") (fromJust (headers p)) = Left "explicit empty header value"
-  | otherwise = Right ()
+  | otherwise = do
+      mapM_ (validateHeaderKeySyntax . fst) (fromJust (headers p))
+      mapM_ (validateHeaderValueSyntax . snd) (fromJust (headers p))
+
+messageSize :: Pub -> Int
+messageSize pubMsg =
+  case headers pubMsg of
+    Nothing ->
+      length (payloadChunk (payload pubMsg))
+    Just headerList ->
+      length (headerString headerList) + length (payloadChunk (payload pubMsg))
 
 headerString :: Headers -> ByteString
 headerString hs =

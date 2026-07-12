@@ -27,11 +27,15 @@ module State.Store
   , waitForNotRunning
   , waitForServerInfo
   , markConnected
+  , markConnectionReady
+  , readConnectionGeneration
+  , waitForConnectionGenerationAfter
   , readAttemptIndex
   , incrementAttemptIndex
   ) where
 
 import           Control.Concurrent.STM
+import           Control.Monad          (unless)
 import qualified Data.ByteString        as BS
 import qualified Data.ByteString.Char8  as BC
 import           Data.Maybe             (fromMaybe)
@@ -51,23 +55,25 @@ import           Types.Info             (Info, client_id)
 import           Types.Msg              (SID, Subject)
 
 data ClientState = ClientState
-                     { clientConfig        :: ClientConfig
-                     , clientQueue         :: Queue
-                     , clientPings         :: TQueue (IO ())
-                     , clientConnectedOnce :: TVar Bool
-                     , clientSidCounter    :: TVar SIDCounter
-                     , clientInboxNuid     :: TVar Nuid
-                     , clientServerInfo    :: TVar (Maybe Info)
-                     , clientAttemptIndex  :: TVar Int
-                     , clientStatus        :: TVar ClientStatus
-                     , clientConnection    :: Conn
-                     , clientLogContext    :: TVar LogContext
+                     { clientConfig               :: ClientConfig
+                     , clientQueue                :: Queue
+                     , clientPings                :: TQueue (IO ())
+                     , clientConnectedOnce        :: TVar Bool
+                     , clientConnectionGeneration :: TVar Int
+                     , clientSidCounter           :: TVar SIDCounter
+                     , clientInboxNuid            :: TVar Nuid
+                     , clientServerInfo           :: TVar (Maybe Info)
+                     , clientAttemptIndex         :: TVar Int
+                     , clientStatus               :: TVar ClientStatus
+                     , clientConnection           :: Conn
+                     , clientLogContext           :: TVar LogContext
                      }
 
 newClientState :: ClientConfig -> Queue -> Conn -> TVar LogContext -> IO ClientState
 newClientState cfg queue conn logContext = do
   pings <- newTQueueIO
   connectedOnce <- newTVarIO False
+  connectionGeneration <- newTVarIO 0
   sidCounter <- newTVarIO initialSIDCounter
   inboxNuid <- newTVarIO =<< newNuidIO
   serverInfo <- newTVarIO Nothing
@@ -78,6 +84,7 @@ newClientState cfg queue conn logContext = do
     , clientQueue = queue
     , clientPings = pings
     , clientConnectedOnce = connectedOnce
+    , clientConnectionGeneration = connectionGeneration
     , clientSidCounter = sidCounter
     , clientInboxNuid = inboxNuid
     , clientServerInfo = serverInfo
@@ -215,6 +222,20 @@ markConnected client =
     alreadyConnected <- readTVar (clientConnectedOnce client)
     writeTVar (clientConnectedOnce client) True
     pure alreadyConnected
+
+markConnectionReady :: ClientState -> IO ()
+markConnectionReady client =
+  atomically $
+    modifyTVar' (clientConnectionGeneration client) (+ 1)
+
+readConnectionGeneration :: ClientState -> IO Int
+readConnectionGeneration =
+  readTVarIO . clientConnectionGeneration
+
+waitForConnectionGenerationAfter :: ClientState -> Int -> STM ()
+waitForConnectionGenerationAfter client generation = do
+  current <- readTVar (clientConnectionGeneration client)
+  unless (current > generation) retry
 
 readAttemptIndex :: ClientState -> IO Int
 readAttemptIndex = readTVarIO . clientAttemptIndex

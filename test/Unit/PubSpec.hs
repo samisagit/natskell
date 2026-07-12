@@ -5,6 +5,8 @@ module PubSpec (spec) where
 import           Control.Monad
 import qualified Data.ByteString           as BS
 import qualified Data.ByteString.Lazy      as LBS
+import           Data.Either               (isLeft)
+import           Fixtures                  (invalidSubjectCases)
 import           Test.Hspec
 import           Text.Printf
 import           Transformers.Transformers
@@ -15,6 +17,8 @@ spec :: Spec
 spec = do
   transformerCases
   validateCases
+  validateSubjectCases
+  validateHeaderCases
 
 explicitTransformerCases :: [(Pub, BS.ByteString)]
 explicitTransformerCases = [
@@ -54,3 +58,27 @@ validateCases = parallel $ do
     forM_ explicitValidatorCases $ \(input, want) ->
       it (printf "correctly validates %s" (show input)) $ do
         validate input `shouldBe` want
+
+validateSubjectCases = parallel $ do
+  describe "PUB subject validater" $ do
+    forM_ invalidSubjectCases $ \input ->
+      it (printf "rejects invalid publish subject %s" (show input)) $ do
+        validate (Pub input Nothing Nothing Nothing) `shouldSatisfy` isLeft
+
+    forM_ invalidSubjectCases $ \input ->
+      it (printf "rejects invalid reply subject %s" (show input)) $ do
+        validate (Pub "FOO" (Just input) Nothing Nothing) `shouldSatisfy` isLeft
+
+validateHeaderCases = parallel $ do
+  describe "PUB header validater" $ do
+    it "rejects header keys containing a colon" $ do
+      validate (Pub "FOO" Nothing (Just [("bad:key", "value")]) Nothing)
+        `shouldSatisfy` isLeft
+
+    it "rejects header keys containing CRLF" $ do
+      validate (Pub "FOO" Nothing (Just [("bad\r\nkey", "value")]) Nothing)
+        `shouldSatisfy` isLeft
+
+    it "rejects header values containing CRLF" $ do
+      validate (Pub "FOO" Nothing (Just [("key", "bad\r\nvalue")]) Nothing)
+        `shouldSatisfy` isLeft

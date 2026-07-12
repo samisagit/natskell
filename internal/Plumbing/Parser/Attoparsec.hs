@@ -235,7 +235,11 @@ headerPairsParser reversedPairs = do
       headerKey <- A.takeTill (== colon)
       _ <- A.word8 colon
       headerValue <- lineParser
-      headerPairsParser ((stripHorizontalSpace headerKey, stripHorizontalSpace headerValue) : reversedPairs)
+      let trimmedKey = stripHorizontalSpace headerKey
+          trimmedValue = stripHorizontalSpace headerValue
+      if BS.null trimmedKey
+        then fail "empty HMSG header key"
+        else headerPairsParser ((trimmedKey, trimmedValue) : reversedPairs)
 
 classifyErr :: BS.ByteString -> Either String Err
 classifyErr reason

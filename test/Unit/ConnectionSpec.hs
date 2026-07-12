@@ -7,6 +7,7 @@ import           Control.Concurrent
 import           Control.Concurrent.STM
 import qualified Data.ByteString           as BS
 import qualified Data.ByteString.Lazy      as LBS
+import           Data.IORef                (newIORef, readIORef, writeIORef)
 import           Handshake.Nats            (performHandshake)
 import           Lib.Logger
     ( LogLevel (Debug)
@@ -23,17 +24,30 @@ import           Network.ConnectionAPI
     )
 import           Parser.API
     ( ParseStep (DropPrefix, Emit, NeedMore, Reject)
-    , ParsedMessage (ParsedInfo)
+    , ParsedMessage (ParsedInfo, ParsedPing, ParsedPong)
     , ParserAPI (ParserAPI)
     )
+import qualified Queue.API                 as Queue
 import           Queue.TransactionalQueue  (newQueue)
-import           State.Store               (newClientState, readServerInfo)
+import           Router.Nats
+    ( RouteDirective (RouteContinue)
+    , routeMessage
+    )
+import           State.Store
+    ( newClientState
+    , pushPingAction
+    , queue
+    , readServerInfo
+    )
 import           State.Types               (ClientConfig (..))
+import           Subscription.Store        (newSubscriptionStore)
 import           System.Timeout            (timeout)
 import           Test.Hspec
 import           Transformers.Transformers (Transformer (transform))
 import qualified Types.Connect             as Connect
 import           Types.Info                (Info (Info))
+import           Types.Ping                (Ping (Ping))
+import           Types.Pong                (Pong (Pong))
 
 spec :: Spec
 spec = do
@@ -57,6 +71,31 @@ spec = do
       closeReader (reader connectionApi) conn
       result <- timeout 1000000 (takeMVar resultVar)
       result `shouldBe` Just (Left "Read operation is blocked")
+  describe "Router ping lifecycle" $ do
+    it "responds to server PING by enqueueing PONG" $ do
+      state <- newTestState
+      store <- newSubscriptionStore
+
+      directive <- routeMessage state store (ParsedPing Ping)
+
+      directive `shouldBe` RouteContinue
+      queued <- Queue.dequeue (queue state)
+      case queued of
+        Right item ->
+          LBS.toStrict (transform item) `shouldBe` "PONG\r\n"
+        Left err ->
+          expectationFailure ("expected queued PONG, got queue error: " ++ err)
+
+    it "runs the next pending ping action when PONG is routed" $ do
+      state <- newTestState
+      store <- newSubscriptionStore
+      actionRan <- newIORef False
+      pushPingAction state (writeIORef actionRan True)
+
+      directive <- routeMessage state store (ParsedPong Pong)
+
+      directive `shouldBe` RouteContinue
+      readIORef actionRan `shouldReturn` True
   describe "Handshake" $ do
     it "accepts an incremental parser backend for the initial INFO frame" $ do
       state <- newTestState

@@ -5,6 +5,8 @@ module SubSpec (spec) where
 import           Control.Monad
 import           Data.ByteString
 import qualified Data.ByteString.Lazy      as LBS
+import           Data.Either               (isLeft)
+import           Fixtures                  (invalidSubjectCases)
 import           Subscription.Types
 import           Test.Hspec
 import           Text.Printf
@@ -17,6 +19,7 @@ spec = do
   subscribeOptionCases
   transformerCases
   validateCases
+  validateSubjectCases
 
 subscribeOptionCases = parallel $ do
   describe "subscribe config" $ do
@@ -50,3 +53,12 @@ validateCases = parallel $ do
     forM_ explicitValidaterCases $ \(input, want) ->
       it (printf "correctly validates %s" (show input)) $ do
         validate input `shouldBe` want
+
+validateSubjectCases = parallel $ do
+  describe "SUB subject validater" $ do
+    forM_ invalidSubjectCases $ \input ->
+      it (printf "rejects invalid subscription subject %s" (show input)) $ do
+        validate (Sub input Nothing "a") `shouldSatisfy` isLeft
+
+    it "rejects queue groups containing whitespace" $ do
+      validate (Sub "FOO" (Just "bad queue") "a") `shouldSatisfy` isLeft

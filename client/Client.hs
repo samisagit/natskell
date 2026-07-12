@@ -48,6 +48,7 @@ import           Control.Concurrent.STM
 import           Control.Exception        (SomeException, displayException)
 import           Control.Monad            (void, when)
 import qualified Data.ByteString          as BS
+import qualified Data.ByteString.Char8    as BC
 import           Engine                   (closeClient, resetClient, runEngine)
 import           Lib.CallOption           (CallOption, applyCallOptions)
 import           Lib.Logger
@@ -75,12 +76,13 @@ import           State.Store
     , nextInbox
     , nextSid
     , pushPingAction
+    , readServerInfo
     , readStatus
     , runClient
     , setConnectName
     , waitForClosed
+    , waitForConnectionGenerationAfter
     , waitForNotRunning
-    , waitForServerInfo
     )
 import           State.Types
     ( ClientConfig (..)
@@ -105,11 +107,13 @@ import           Subscription.Types
     , SubscriptionMeta (SubscriptionMeta)
     )
 import qualified Types.Connect            as Connect
+import qualified Types.Info               as Info
 import qualified Types.Msg                as Msg
 import           Types.Ping               (Ping (..))
 import qualified Types.Pub                as Pub
 import qualified Types.Sub                as Sub
 import qualified Types.Unsub              as Unsub
+import           Validators.Validators    (validate)
 
 data ClientAuth = ClientAuthNone
                 | ClientAuthToken AuthTokenData
@@ -187,7 +191,7 @@ newClient servers configOptions = do
       configuredAuth
 
   atomically $
-    waitForServerInfo clientState
+    waitForConnectionGenerationAfter clientState 0
       `orElse` waitForClosed clientState
 
   pure Client
@@ -359,36 +363,65 @@ publishClient client store subject (payload, callback, headers, configuredReplyT
   runClient client $
     logMessage Debug ("publishing to subject: " ++ show subject)
   replyTo <- case callback of
-    Nothing ->
-      pure configuredReplyTo
-    Just replyCallback -> do
-      inbox <- maybe (nextInbox client) pure configuredReplyTo
-      sid <- nextSid client
-      let meta =
-            SubscriptionMeta inbox Nothing True
-      register store sid meta defaultSubscribeConfig replyCallback
-      enqueue client $
-        QueueItem
-          Sub.Sub
-            { Sub.subject = inbox
-            , Sub.queueGroup = Nothing
-            , Sub.sid = sid
-            }
-      enqueue client $
-        QueueItem
-          Unsub.Unsub
-            { Unsub.sid = sid
-            , Unsub.maxMsg = Just 1
-            }
-      pure (Just inbox)
-  enqueue client $
-    QueueItem
-      Pub.Pub
-        { Pub.subject = subject
-        , Pub.payload = payload
-        , Pub.replyTo = replyTo
-        , Pub.headers = headers
-        }
+    Nothing -> pure configuredReplyTo
+    Just _  -> Just <$> maybe (nextInbox client) pure configuredReplyTo
+  let publishMessage =
+        Pub.Pub
+          { Pub.subject = subject
+          , Pub.payload = payload
+          , Pub.replyTo = replyTo
+          , Pub.headers = headers
+          }
+  shouldPublish <- canPublish client publishMessage
+  when shouldPublish $ do
+    case callback of
+      Nothing ->
+        pure ()
+      Just replyCallback -> do
+        case replyTo of
+          Nothing ->
+            pure ()
+          Just replyInbox -> do
+            sid <- nextSid client
+            let meta =
+                  SubscriptionMeta replyInbox Nothing True
+            register store sid meta defaultSubscribeConfig replyCallback
+            enqueue client $
+              QueueItem
+                Sub.Sub
+                  { Sub.subject = replyInbox
+                  , Sub.queueGroup = Nothing
+                  , Sub.sid = sid
+                  }
+            enqueue client $
+              QueueItem
+                Unsub.Unsub
+                  { Unsub.sid = sid
+                  , Unsub.maxMsg = Just 1
+                  }
+    enqueue client (QueueItem publishMessage)
+
+canPublish :: ClientState -> Pub.Pub -> IO Bool
+canPublish client publishMessage =
+  case validate publishMessage of
+    Left reason -> do
+      runClient client $
+        logMessage Error ("dropping invalid publish: " ++ BC.unpack reason)
+      pure False
+    Right () -> do
+      serverInfo <- readServerInfo client
+      case serverInfo of
+        Just info
+          | Pub.messageSize publishMessage > Info.max_payload info -> do
+              runClient client $
+                logMessage Error
+                  ("dropping publish: payload size "
+                     ++ show (Pub.messageSize publishMessage)
+                     ++ " exceeds server max_payload "
+                     ++ show (Info.max_payload info))
+              pure False
+        _ ->
+          pure True
 
 subscribeClient :: ClientState -> SubscriptionStore -> Bool -> Msg.Subject -> SubscribeConfig -> (Maybe Msg.Msg -> IO ()) -> IO Msg.SID
 subscribeClient client store isReply subject cfg callback = do
@@ -397,23 +430,30 @@ subscribeClient client store isReply subject cfg callback = do
   sid <- nextSid client
   let queueGroup =
         subscribeQueueGroup cfg
-  let meta =
-        SubscriptionMeta subject queueGroup isReply
-  register store sid meta cfg callback
-  enqueue client $
-    QueueItem
-      Sub.Sub
-        { Sub.subject = subject
-        , Sub.queueGroup = queueGroup
-        , Sub.sid = sid
-        }
-  when isReply $
-    enqueue client
-      (QueueItem
-        Unsub.Unsub
-          { Unsub.sid = sid
-          , Unsub.maxMsg = Just 1
-          })
+      subscriptionMessage =
+        Sub.Sub
+          { Sub.subject = subject
+          , Sub.queueGroup = queueGroup
+          , Sub.sid = sid
+          }
+  case validate subscriptionMessage of
+    Left reason ->
+      runClient client $
+        logMessage Error ("dropping invalid subscription: " ++ BC.unpack reason)
+    Right () -> do
+      let meta =
+            SubscriptionMeta subject queueGroup isReply
+      register store sid meta cfg callback
+      enqueue client $
+        QueueItem
+          subscriptionMessage
+      when isReply $
+        enqueue client
+          (QueueItem
+            Unsub.Unsub
+              { Unsub.sid = sid
+              , Unsub.maxMsg = Just 1
+              })
   pure sid
 
 unsubscribeClient :: ClientState -> SubscriptionStore -> Msg.SID -> IO ()

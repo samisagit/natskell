@@ -5,8 +5,10 @@ module ClientSpec where
 import           API
     ( Client (..)
     , MsgView (..)
+    , withHeaders
     , withPayload
     , withQueueGroup
+    , withReplyCallback
     , withReplyTo
     , withSubscriptionExpiry
     )
@@ -110,6 +112,31 @@ recvUntil sock done =
             then pure acc
             else go (acc <> chunk)
 
+expectClientBytes :: Socket -> (BS.ByteString -> Bool) -> String -> IO BS.ByteString
+expectClientBytes sock done failureMessage = do
+  result <- timeout 1000000 $
+    recvUntil sock done
+  case result of
+    Nothing ->
+      expectationFailure failureMessage >>
+        fail failureMessage
+    Just bytes ->
+      if done bytes
+        then pure bytes
+        else
+          expectationFailure ("unexpected client bytes: " ++ show bytes) >>
+            fail failureMessage
+
+expectNoClientBytes :: Socket -> (BS.ByteString -> Bool) -> String -> IO ()
+expectNoClientBytes sock unwanted failureMessage = do
+  result <- timeout 300000 $
+    recvUntil sock unwanted
+  case result of
+    Just bytes | unwanted bytes ->
+      expectationFailure (failureMessage ++ ": " ++ show bytes)
+    _ ->
+      pure ()
+
 expectClientCommand :: Socket -> BS.ByteString -> IO ()
 expectClientCommand sock command = do
   result <- timeout 1000000 $
@@ -120,6 +147,16 @@ expectClientCommand sock command = do
     Just bytes ->
       unless (BS.isInfixOf command bytes) $
         expectationFailure ("unexpected client bytes: " ++ show bytes)
+
+expectMVar :: String -> MVar a -> IO a
+expectMVar failureMessage var = do
+  result <- timeout 1000000 (takeMVar var)
+  case result of
+    Nothing ->
+      expectationFailure failureMessage >>
+        fail failureMessage
+    Just value ->
+      pure value
 
 expectQueuedSub :: Socket -> BS.ByteString -> BS.ByteString -> BS.ByteString -> IO ()
 expectQueuedSub sock subject queueGroup sid =
@@ -222,6 +259,14 @@ readMaybeInt bytes =
   case reads (C.unpack bytes) of
     [(value, "")] -> Just value
     _             -> Nothing
+
+appearsBefore :: BS.ByteString -> BS.ByteString -> BS.ByteString -> Bool
+appearsBefore first second bytes =
+  case (C.breakSubstring first bytes, C.breakSubstring second bytes) of
+    ((firstPrefix, firstMatch), (secondPrefix, secondMatch)) ->
+      not (BS.null firstMatch)
+        && not (BS.null secondMatch)
+        && BS.length firstPrefix < BS.length secondPrefix
 
 replyToCapturedPublish :: Socket -> CapturedPublish -> BS.ByteString -> IO ()
 replyToCapturedPublish sock captured body =
@@ -474,6 +519,224 @@ spec = do
          )
         close client
         wait wg
+
+    describe "core NATS fake-server coverage" $ do
+      around withClient $ do
+        it "ignores duplicate request replies after the first message" $ \(serv, client, _, _) -> do
+          replies <- newIORef ([] :: [Maybe MsgView])
+          firstReply <- newEmptyMVar
+          sid <- request client "SERVICE.ONCE" [] $ \reply -> do
+            atomicModifyIORef' replies $ \seen -> (seen ++ [reply], ())
+            void (tryPutMVar firstReply ())
+          sendAll serv (msgFrame "SERVICE.ONCE" sid "first")
+          sendAll serv (msgFrame "SERVICE.ONCE" sid "second")
+          expectMVar "first request reply did not arrive" firstReply
+          threadDelay 100000
+          seen <- readIORef replies
+          case seen of
+            [Just msg] ->
+              payload msg `shouldBe` Just "first"
+            other ->
+              expectationFailure ("unexpected request replies: " ++ show other)
+
+        it "handles many simultaneous request replies" $ \(serv, client, _, _) -> do
+          requests <- forM [1 .. 32 :: Int] $ \index -> do
+            replyBox <- newEmptyMVar
+            let requestSubject = C.pack ("SERVICE.MANY." ++ show index)
+            sid <- request client requestSubject [] (putMVar replyBox)
+            pure (index, requestSubject, sid, replyBox)
+          for_ requests $ \(index, requestSubject, sid, _) ->
+            sendAll serv $
+              msgFrame requestSubject sid (C.pack ("reply-" ++ show index))
+          for_ requests $ \(index, _, _, replyBox) -> do
+            reply <- expectMVar ("request reply " ++ show index ++ " did not arrive") replyBox
+            case reply of
+              Nothing ->
+                expectationFailure ("request reply " ++ show index ++ " expired")
+              Just msg ->
+                payload msg `shouldBe` Just (C.pack ("reply-" ++ show index))
+
+        it "keeps an active request alive after garbled inbound bytes" $ \(serv, client, _, _) -> do
+          replyBox <- newEmptyMVar
+          sid <- request client "SERVICE.GARBLED" [] (putMVar replyBox)
+          sendAll serv $
+            BS.concat
+              [ "bad-prefix"
+              , msgFrame "SERVICE.GARBLED" sid "ok"
+              ]
+          reply <- expectMVar "request reply after garbled bytes did not arrive" replyBox
+          case reply of
+            Nothing ->
+              expectationFailure "request expired after garbled bytes"
+            Just msg ->
+              payload msg `shouldBe` Just "ok"
+
+        it "round trips headers across request publish and reply" $ \(serv, client, _, _) -> do
+          replyBox <- newEmptyMVar
+          publish client
+            "HEADERS.SERVICE"
+            [ withHeaders [("X-Request", "one")]
+            , withPayload "ping"
+            , withReplyTo "_INBOX.headers"
+            , withReplyCallback (putMVar replyBox)
+            ]
+          bytes <- expectClientBytes
+            serv
+            (\sent ->
+              BS.isInfixOf "SUB _INBOX.headers " sent
+                && BS.isInfixOf "HPUB HEADERS.SERVICE _INBOX.headers " sent
+                && BS.isInfixOf "X-Request:one\r\n" sent
+                && BS.isInfixOf "\r\n\r\nping\r\n" sent)
+            "client did not send header request publish"
+          captured <- case parseCapturedSubscription "_INBOX.headers" bytes of
+            Nothing ->
+              expectationFailure ("could not parse header reply subscription: " ++ show bytes) >>
+                fail "could not parse header reply subscription"
+            Just sub ->
+              pure sub
+          sendAll serv $
+            hmsgFrame
+              "_INBOX.headers"
+              (capturedSubSid captured)
+              [("X-Reply", "ok")]
+              "pong"
+          reply <- expectMVar "header reply did not arrive" replyBox
+          case reply of
+            Nothing ->
+              expectationFailure "header reply expired"
+            Just msg -> do
+              subject msg `shouldBe` "_INBOX.headers"
+              payload msg `shouldBe` Just "pong"
+              headers msg `shouldBe` Just [("X-Reply", "ok")]
+
+        it "flush sends queued publishes before its PING" $ \(serv, client, _, _) -> do
+          expectClientCommand serv "CONNECT "
+          doneVar <- newEmptyMVar
+          let publishFrame = "PUB ORDER.FLUSH 3\r\none\r\n"
+          publish client "ORDER.FLUSH" [withPayload "one"]
+          void . forkIO $ do
+            flush client
+            putMVar doneVar ()
+          bytes <- expectClientBytes
+            serv
+            (\sent ->
+              BS.isInfixOf publishFrame sent
+                && BS.isInfixOf "PING\r\n" sent)
+            "client did not send publish and flush PING"
+          unless (appearsBefore publishFrame "PING\r\n" bytes) $
+            expectationFailure ("flush PING was sent before queued publish: " ++ show bytes)
+          sendAll serv "PONG\r\n"
+          expectMVar "flush did not complete after PONG" doneVar
+
+        it "exits when the server disconnects while a subscription is active" $ \(serv, client, _, exited) -> do
+          sid <- subscribe client "ACTIVE.DISCONNECT" [] (const (pure ()))
+          expectClientCommand serv (BS.concat ["SUB ACTIVE.DISCONNECT ", sid, "\r\n"])
+          Network.Socket.close serv
+          result <- atomically $ readTMVar exited
+          case result of
+            ExitRetriesExhausted _ ->
+              pure ()
+            other ->
+              expectationFailure ("Unexpected exit reason: " ++ show other)
+
+        it "does not write publishes above negotiated max_payload" $ \(serv, client, _, _) -> do
+          expectClientCommand serv "CONNECT "
+          publish client "BOUNDARY.TOO_BIG" [withPayload (BS.replicate 2048 _x)]
+          expectNoClientBytes
+            serv
+            (BS.isInfixOf "PUB BOUNDARY.TOO_BIG")
+            "oversized publish reached server"
+          wg <- newWaitGroup 1
+          ping client (done wg)
+          expectClientCommand serv "PING\r\n"
+          sendAll serv "PONG\r\n"
+          wait wg
+
+        it "does not write invalid publish commands" $ \(serv, client, _, _) -> do
+          expectClientCommand serv "CONNECT "
+          publish client "" [withPayload "x"]
+          expectNoClientBytes
+            serv
+            (\sent -> BS.isInfixOf "PUB " sent || BS.isInfixOf "HPUB " sent)
+            "invalid publish reached server"
+
+      it "cleans up no responders replies for expiring requests" $ do
+        bracket startClient stopClientSafely $ \(serv, client, _, _) -> do
+          replyBox <- newEmptyMVar
+          sid <- request client
+            "SERVICE.NO_RESPONDERS"
+            [withSubscriptionExpiry 2]
+            (putMVar replyBox)
+          sendAll serv $
+            hmsgFrame
+              "SERVICE.NO_RESPONDERS"
+              sid
+              [ ("Status", "503")
+              , ("Description", "No Responders")
+              ]
+              ""
+          reply <- expectMVar "no responders reply callback did not run" replyBox
+          case reply of
+            Nothing ->
+              expectationFailure "no responders reply expired"
+            Just msg ->
+              headers msg `shouldBe` Just
+                [ ("Status", "503")
+                , ("Description", "No Responders")
+                ]
+          result <- timeout 500000 (close client)
+          case result of
+            Nothing ->
+              expectationFailure "close blocked after no responders reply"
+            Just () ->
+              pure ()
+
+      it "does not resubscribe in-flight reply inboxes after reconnect" $ do
+        (p, sock) <- openFreePort
+        listen sock 2
+        clientVar <- newEmptyMVar
+        void . forkIO $ do
+          let configOptions =
+                [ withMinimumLogLevel Debug
+                , withConnectionAttempts 2
+                , withConnectName "test-client"
+                ]
+          c <- newClient [("127.0.0.1", p)] configOptions
+          putMVar clientVar c
+        (firstConn, _) <- accept sock
+        sendAll firstConn defaultINFO
+        clientResult <- timeout 1000000 (takeMVar clientVar)
+        case clientResult of
+          Nothing ->
+            expectationFailure "client did not connect"
+          Just client -> do
+            replyBox <- newEmptyMVar
+            publish client
+              "SERVICE.RECONNECT"
+              [ withPayload "ping"
+              , withReplyCallback (putMVar replyBox)
+              ]
+            captured <- capturePublish firstConn "SERVICE.RECONNECT"
+            Network.Socket.close firstConn
+            (secondConn, _) <- accept sock
+            sendAll secondConn defaultINFO
+            let replySubCommand = BS.concat ["SUB ", capturedInbox captured]
+            resubscribe <- timeout 300000 $
+              recvUntil secondConn (BS.isInfixOf replySubCommand)
+            case resubscribe of
+              Just bytes | BS.isInfixOf replySubCommand bytes ->
+                expectationFailure ("reply inbox was resubscribed: " ++ show bytes)
+              _ ->
+                pure ()
+            wg <- newWaitGroup 1
+            ping client (done wg)
+            expectClientCommand secondConn "PING\r\n"
+            sendAll secondConn "PONG\r\n"
+            wait wg
+            close client
+            Network.Socket.close secondConn
+        Network.Socket.close sock
+
     describe "jetstream protocol integration" $ do
       around withClient $ do
         it "sends stream create options as a JetStream API request" $ \(serv, client, _, _) -> do

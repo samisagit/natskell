@@ -37,3 +37,19 @@ spec =
           ping client (atomically (putTMVar pinged ()))
           result <- atomically $ readTMVar exitResult
           result `shouldBe` ExitClosedByUser
+        it "rejects invalid token" $ \(Endpoints natsHost natsPort) -> do
+          exitResult <- newEmptyTMVarIO
+          let clientOptions =
+                [ withConnectName "auth-token-invalid"
+                , withExitAction (atomically . putTMVar exitResult)
+                , withAuthToken "wrong-token"
+                , withConnectionAttempts 1
+                ]
+                ++ loggerOptions
+          _ <- newClient [(natsHost, natsPort)] clientOptions
+          result <- atomically $ readTMVar exitResult
+          case result of
+            ExitServerError err ->
+              show err `shouldContain` "Authorization Violation"
+            other ->
+              expectationFailure $ "Unexpected exit reason: " ++ show other
