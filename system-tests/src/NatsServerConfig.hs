@@ -31,11 +31,12 @@ data NatsJwtConfig = NatsJwtConfig
                        }
 
 data NatsServerConfig = NatsServerConfig
-                          { natsLogVerbosity  :: NatsLogVerbosity
-                          , natsAuthorization :: NatsAuthorization
-                          , natsJwtConfig     :: Maybe NatsJwtConfig
-                          , natsTlsConfig     :: Maybe NatsTlsConfig
-                          , natsJetStream     :: Bool
+                          { natsLogVerbosity    :: NatsLogVerbosity
+                          , natsAuthorization   :: NatsAuthorization
+                          , natsJwtConfig       :: Maybe NatsJwtConfig
+                          , natsTlsConfig       :: Maybe NatsTlsConfig
+                          , natsJetStream       :: Bool
+                          , natsJetStreamDomain :: Maybe String
                           }
 
 data NatsTlsConfig = NatsTlsConfig
@@ -55,6 +56,7 @@ data NatsConfigOption = WithLogVerbosity NatsLogVerbosity
                       | WithJwtConfig NatsJwtConfig
                       | WithTlsConfig NatsTlsConfig
                       | WithJetStream
+                      | WithJetStreamDomain String
 
 type NatsConfigOptions = [NatsConfigOption]
 
@@ -66,6 +68,7 @@ defaultNatsServerConfig =
     , natsJwtConfig = Nothing
     , natsTlsConfig = Nothing
     , natsJetStream = False
+    , natsJetStreamDomain = Nothing
     }
 
 writeNatsServerConfigFile :: NatsConfigOptions -> IO FilePath
@@ -95,6 +98,8 @@ applyConfigOption config option =
       config { natsTlsConfig = Just tlsConfig }
     WithJetStream ->
       config { natsJetStream = True }
+    WithJetStreamDomain domain ->
+      config { natsJetStream = True, natsJetStreamDomain = Just domain }
 
 renderNatsServerConfig :: NatsServerConfig -> String
 renderNatsServerConfig config =
@@ -102,7 +107,7 @@ renderNatsServerConfig config =
     logLines ++ renderAuthorization (natsAuthorization config)
       ++ maybe [] renderJwtConfig (natsJwtConfig config)
       ++ maybe [] renderTlsConfig (natsTlsConfig config)
-      ++ renderJetStreamConfig (natsJetStream config)
+      ++ renderJetStreamConfig (natsJetStream config) (natsJetStreamDomain config)
   where
     logLines =
       [ "debug: " ++ renderBool (natsLogVerbosity config == NatsLogDebug)
@@ -170,9 +175,17 @@ renderTlsConfig config =
         ++ maybe [] (\timeout -> ["timeout: " ++ show timeout]) (natsTlsTimeout config)
     )
 
-renderJetStreamConfig :: Bool -> [String]
-renderJetStreamConfig enabled =
-  ["jetstream: enabled" | enabled]
+renderJetStreamConfig :: Bool -> Maybe String -> [String]
+renderJetStreamConfig enabled domain =
+  case (enabled, domain) of
+    (False, _) ->
+      []
+    (True, Nothing) ->
+      ["jetstream: enabled"]
+    (True, Just domainName) ->
+      renderBlock "jetstream"
+        [ "domain: " ++ renderQuoted domainName
+        ]
 
 renderResolverPreload :: [(String, String)] -> [String]
 renderResolverPreload =

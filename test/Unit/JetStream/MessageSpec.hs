@@ -4,6 +4,7 @@ module JetStream.MessageSpec (spec) where
 
 import qualified API                     as Nats
 import           Data.IORef
+import           JetStream.Error         (JetStreamError (..))
 import           JetStream.Message       (fetchMessages)
 import           JetStream.Message.Types
 import           JetStream.Options       (newJetStreamContext)
@@ -37,13 +38,40 @@ spec = do
       inProgressPayload `shouldBe` "+WPI"
       termPayload `shouldBe` "+TERM"
 
+  describe "message metadata" $ do
+    it "parses v1 JetStream ack reply subjects" $ do
+      let metadata = messageMetadata $
+            Message "ORDERS.created" (Just "payload") Nothing
+              (Just "$JS.ACK.ORDERS.WORKER.3.10.2.123000000000.4")
+              Nothing
+      fmap messageMetadataStream metadata `shouldBe` Just "ORDERS"
+      fmap messageMetadataConsumer metadata `shouldBe` Just "WORKER"
+      fmap messageMetadataNumDelivered metadata `shouldBe` Just 3
+      fmap messageMetadataStreamSequence metadata `shouldBe` Just 10
+      fmap messageMetadataConsumerSequence metadata `shouldBe` Just 2
+      fmap messageMetadataTimestamp metadata `shouldBe` Just (read "1970-01-01 00:02:03 UTC")
+      fmap messageMetadataNumPending metadata `shouldBe` Just 4
+      fmap messageMetadataDomain metadata `shouldBe` Just Nothing
+
+    it "parses v2 JetStream ack reply subjects with domains" $ do
+      let metadata = messageMetadata $
+            Message "ORDERS.created" (Just "payload") Nothing
+              (Just "$JS.ACK.HUB.ACCOUNT.ORDERS.WORKER.1.11.3.124000000000.0")
+              Nothing
+      fmap messageMetadataDomain metadata `shouldBe` Just (Just "HUB")
+      fmap messageMetadataStreamSequence metadata `shouldBe` Just 11
+
+    it "rejects non-JetStream reply subjects" $ do
+      messageMetadata (Message "ORDERS.created" Nothing Nothing (Just "_INBOX.reply") Nothing)
+        `shouldBe` Nothing
+
   describe "pull request payloads" $ do
     it "encodes one-message requests with an expires timeout" $ do
       pullRequestPayload 1 defaultPullRequest
         `shouldBe` "{\"batch\":1,\"expires\":1000000000}"
 
     it "encodes no-wait requests without expires" $ do
-      let request = defaultPullRequest { pullRequestNoWait = True }
+      let request = pullRequest [withFetchWait (FetchNoWaitMicros 1000000)]
       pullRequestPayload 1 request
         `shouldBe` "{\"batch\":1,\"no_wait\":true}"
 
@@ -53,8 +81,8 @@ spec = do
       unsubscribeCalls <- newIORef []
       callbackRef <- newIORef Nothing
       let client = fakeClient publishCalls unsubscribeCalls callbackRef
-          request = defaultPullRequest { pullRequestBatch = 2 }
-      response <- fetchMessages (newJetStreamContext client []) "ORDERS" "WORKER" request
+          request = pullRequest [withFetchBatch 2]
+      result <- fetchMessages (newJetStreamContext client []) "ORDERS" "WORKER" request
 
       publishCalls' <- readIORef publishCalls
       publishCalls' `shouldBe`
@@ -65,8 +93,30 @@ spec = do
         ]
       unsubscribeCalls' <- readIORef unsubscribeCalls
       unsubscribeCalls' `shouldBe` ["sid-1"]
-      fmap messagePayload (pullResponseMessages response) `shouldBe` [Just "one", Just "two"]
-      pullResponseStatus response `shouldBe` Nothing
+      case result of
+        Left err ->
+          expectationFailure ("fetch failed: " ++ show err)
+        Right response -> do
+          fmap messagePayload (pullResponseMessages response) `shouldBe` [Just "one", Just "two"]
+          pullResponseStatus response `shouldBe` Nothing
+
+    it "returns a JetStream timeout when no pull response arrives" $ do
+      publishCalls <- newIORef []
+      unsubscribeCalls <- newIORef []
+      let client = silentFakeClient publishCalls unsubscribeCalls
+          request = pullRequest [withFetchWait (FetchNoWaitMicros 1000)]
+      result <- fetchMessages (newJetStreamContext client []) "ORDERS" "WORKER" request
+
+      result `shouldBe` Left JetStreamTimeout
+      publishCalls' <- readIORef publishCalls
+      publishCalls' `shouldBe`
+        [ ( "$JS.API.CONSUMER.MSG.NEXT.ORDERS.WORKER"
+          , Just "{\"batch\":1,\"no_wait\":true}"
+          , Just "_INBOX.timeout"
+          )
+        ]
+      unsubscribeCalls' <- readIORef unsubscribeCalls
+      unsubscribeCalls' `shouldBe` ["sid-timeout"]
 
 fakeClient
   :: IORef [(Subject, Maybe Payload, Maybe Subject)]
@@ -106,4 +156,25 @@ fakeMsg body =
     , Nats.replyTo = Just "$JS.ACK.ORDERS.WORKER.1.1.1"
     , Nats.payload = Just body
     , Nats.headers = Nothing
+    }
+
+silentFakeClient
+  :: IORef [(Subject, Maybe Payload, Maybe Subject)]
+  -> IORef [SID]
+  -> Nats.Client
+silentFakeClient publishCalls unsubscribeCalls =
+  Nats.Client
+    { Nats.publish = \subject options -> do
+        let (body, _, _, replyTo') = foldr ($) defaultPublishConfig options
+        modifyIORef' publishCalls (++ [(subject, body, replyTo')])
+    , Nats.subscribe = \_ _ _ ->
+        pure "sid-timeout"
+    , Nats.request = \_ _ _ -> pure "sid-request"
+    , Nats.unsubscribe = \sid ->
+        modifyIORef' unsubscribeCalls (++ [sid])
+    , Nats.newInbox = pure "_INBOX.timeout"
+    , Nats.ping = id
+    , Nats.flush = pure ()
+    , Nats.reset = pure ()
+    , Nats.close = pure ()
     }

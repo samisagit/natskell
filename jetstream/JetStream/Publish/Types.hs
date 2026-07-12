@@ -2,12 +2,11 @@
 
 module JetStream.Publish.Types
   ( PublishAck (..)
+  , PublishExpectation (..)
   , PublishOption
   , withMsgId
   , withExpectedStream
-  , withExpectedLastSequence
-  , withExpectedLastSubjectSequence
-  , withExpectedLastMsgId
+  , withPublishExpectation
   , withHeaders
   , publishHeaders
   ) where
@@ -27,6 +26,11 @@ data PublishAck = PublishAck
                     }
   deriving (Eq, Show)
 
+data PublishExpectation = ExpectedLastSequence Word64
+                        | ExpectedLastSubjectSequence Word64
+                        | ExpectedLastMsgId BS.ByteString
+  deriving (Eq, Show)
+
 instance FromJSON PublishAck where
   parseJSON = withObject "PublishAck" $ \object -> do
     streamName <- object .: "stream"
@@ -37,7 +41,7 @@ instance FromJSON PublishAck where
       { publishAckStream = encodeUtf8 streamName
       , publishAckSequence = sequence
       , publishAckDuplicate = duplicate
-      , publishAckDomain = fmap encodeUtf8 domainName
+      , publishAckDomain = encodeUtf8 <$> domainName
       }
 
 type PublishOption = PublishConfig -> PublishConfig
@@ -58,22 +62,25 @@ withExpectedStream :: StreamName -> PublishOption
 withExpectedStream =
   putHeader "Nats-Expected-Stream"
 
-withExpectedLastSequence :: Word64 -> PublishOption
-withExpectedLastSequence =
-  putHeader "Nats-Expected-Last-Sequence" . renderWord64
-
-withExpectedLastSubjectSequence :: Word64 -> PublishOption
-withExpectedLastSubjectSequence =
-  putHeader "Nats-Expected-Last-Subject-Sequence" . renderWord64
-
-withExpectedLastMsgId :: BS.ByteString -> PublishOption
-withExpectedLastMsgId =
-  putHeader "Nats-Expected-Last-Msg-Id"
+withPublishExpectation :: PublishExpectation -> PublishOption
+withPublishExpectation expectation =
+  putExpectationHeader key value
+  where
+    (key, value) =
+      case expectation of
+        ExpectedLastSequence sequenceNumber ->
+          ("Nats-Expected-Last-Sequence", renderWord64 sequenceNumber)
+        ExpectedLastSubjectSequence sequenceNumber ->
+          ("Nats-Expected-Last-Subject-Sequence", renderWord64 sequenceNumber)
+        ExpectedLastMsgId msgId ->
+          ("Nats-Expected-Last-Msg-Id", msgId)
 
 withHeaders :: [(BS.ByteString, BS.ByteString)] -> PublishOption
 withHeaders headers config =
   config
-    { publishConfigHeaders = headers ++ publishConfigHeaders config
+    { publishConfigHeaders =
+        filter (not . isPublishExpectationHeader . fst) headers
+          ++ publishConfigHeaders config
     }
 
 publishHeaders :: [PublishOption] -> [(BS.ByteString, BS.ByteString)]
@@ -86,6 +93,21 @@ putHeader key value config =
     { publishConfigHeaders =
         (key, value) : filter ((/= key) . fst) (publishConfigHeaders config)
     }
+
+putExpectationHeader :: BS.ByteString -> BS.ByteString -> PublishOption
+putExpectationHeader key value config =
+  config
+    { publishConfigHeaders =
+        (key, value) : filter (not . isPublishExpectationHeader . fst) (publishConfigHeaders config)
+    }
+
+isPublishExpectationHeader :: BS.ByteString -> Bool
+isPublishExpectationHeader key =
+  key `elem`
+    [ "Nats-Expected-Last-Sequence"
+    , "Nats-Expected-Last-Subject-Sequence"
+    , "Nats-Expected-Last-Msg-Id"
+    ]
 
 renderWord64 :: Word64 -> BS.ByteString
 renderWord64 =

@@ -8,13 +8,18 @@ module JetStream.Protocol.Subject
   , streamUpdateSubject
   , streamInfoSubject
   , streamDeleteSubject
+  , streamMessageGetSubject
+  , streamMessageDeleteSubject
   , streamPurgeSubject
   , streamListSubject
   , streamNamesSubject
   , consumerCreateSubject
+  , consumerCreateNamedSubject
   , durableConsumerCreateSubject
   , consumerInfoSubject
   , consumerDeleteSubject
+  , consumerPauseSubject
+  , consumerResetSubject
   , consumerListSubject
   , consumerNamesSubject
   , consumerNextSubject
@@ -54,6 +59,14 @@ streamDeleteSubject :: JetStreamContext -> StreamName -> Subject
 streamDeleteSubject ctx stream =
   apiSubject ctx ["STREAM", "DELETE", stream]
 
+streamMessageGetSubject :: JetStreamContext -> StreamName -> Subject
+streamMessageGetSubject ctx stream =
+  apiSubject ctx ["STREAM", "MSG", "GET", stream]
+
+streamMessageDeleteSubject :: JetStreamContext -> StreamName -> Subject
+streamMessageDeleteSubject ctx stream =
+  apiSubject ctx ["STREAM", "MSG", "DELETE", stream]
+
 streamPurgeSubject :: JetStreamContext -> StreamName -> Subject
 streamPurgeSubject ctx stream =
   apiSubject ctx ["STREAM", "PURGE", stream]
@@ -70,6 +83,10 @@ consumerCreateSubject :: JetStreamContext -> StreamName -> Subject
 consumerCreateSubject ctx stream =
   apiSubject ctx ["CONSUMER", "CREATE", stream]
 
+consumerCreateNamedSubject :: JetStreamContext -> StreamName -> ConsumerName -> Subject
+consumerCreateNamedSubject ctx stream consumer =
+  apiSubject ctx ["CONSUMER", "CREATE", stream, consumer]
+
 durableConsumerCreateSubject :: JetStreamContext -> StreamName -> ConsumerName -> Subject
 durableConsumerCreateSubject ctx stream consumer =
   apiSubject ctx ["CONSUMER", "DURABLE", "CREATE", stream, consumer]
@@ -81,6 +98,14 @@ consumerInfoSubject ctx stream consumer =
 consumerDeleteSubject :: JetStreamContext -> StreamName -> ConsumerName -> Subject
 consumerDeleteSubject ctx stream consumer =
   apiSubject ctx ["CONSUMER", "DELETE", stream, consumer]
+
+consumerPauseSubject :: JetStreamContext -> StreamName -> ConsumerName -> Subject
+consumerPauseSubject ctx stream consumer =
+  apiSubject ctx ["CONSUMER", "PAUSE", stream, consumer]
+
+consumerResetSubject :: JetStreamContext -> StreamName -> ConsumerName -> Subject
+consumerResetSubject ctx stream consumer =
+  apiSubject ctx ["CONSUMER", "RESET", stream, consumer]
 
 consumerListSubject :: JetStreamContext -> StreamName -> Subject
 consumerListSubject ctx stream =

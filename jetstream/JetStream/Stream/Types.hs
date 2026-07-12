@@ -5,18 +5,38 @@ module JetStream.Stream.Types
   , StorageType (..)
   , DiscardPolicy (..)
   , StreamConfig (..)
-  , PurgeStreamRequest (..)
-  , defaultPurgeStreamRequest
-  , StreamListRequest (..)
-  , defaultStreamListRequest
-  , StreamNamesRequest (..)
-  , defaultStreamNamesRequest
+  , StreamConfigOption
+  , streamConfigRequest
+  , withRetention
+  , withStorage
+  , withDiscard
+  , withMaxMessages
+  , withMaxBytes
+  , withMaxAge
+  , withReplicas
+  , withDuplicateWindow
+  , withAllowDirect
+  , PurgeStreamOption
+  , purgeStreamRequest
+  , withPurgeSubject
+  , withPurgeSequence
+  , withPurgeKeep
+  , StreamListOption
+  , streamListRequest
+  , streamNamesRequest
+  , withStreamListOffset
+  , withStreamListSubject
+  , StreamMessage (..)
+  , StreamMessageSelector (..)
+  , streamMessageGetRequest
+  , StreamMessageDeleteMode (..)
+  , streamMessageDeleteRequest
+  , DeleteStreamMessageResponse (..)
   , StreamInfo (..)
   , StreamState (..)
   , StreamCluster (..)
   , StreamPeer (..)
   , StreamSourceInfo (..)
-  , StreamAlternate (..)
   , DeleteStreamResponse (..)
   , PurgeStreamResponse (..)
   , StreamListResponse (..)
@@ -26,32 +46,106 @@ module JetStream.Stream.Types
   ) where
 
 import           Data.Aeson
-import           Data.Aeson.Types (Pair, Parser)
-import qualified Data.ByteString  as BS
-import           Data.Maybe       (catMaybes)
-import           Data.Time.Clock  (NominalDiffTime, UTCTime)
+import           Data.Aeson.Types       (Pair, Parser)
+import qualified Data.ByteString        as BS
+import qualified Data.ByteString.Base64 as Base64
+import           Data.Maybe             (catMaybes)
+import           Data.Time.Clock        (NominalDiffTime, UTCTime)
 import           JetStream.Types
-    ( DiscardPolicy (..)
+    ( CallOption
+    , DiscardPolicy (..)
+    , Payload
     , RetentionPolicy (..)
     , StorageType (..)
     , StreamName
     , Subject
+    , applyCallOptions
     , byteStringToJSON
     , parseByteString
     )
 
+data StreamConfigRequest = StreamConfigRequest
+                             { streamConfigRequestName :: StreamName
+                             , streamConfigRequestSubjects :: [Subject]
+                             , streamConfigRequestRetention :: Maybe RetentionPolicy
+                             , streamConfigRequestStorage :: Maybe StorageType
+                             , streamConfigRequestDiscard :: Maybe DiscardPolicy
+                             , streamConfigRequestMaxMessages :: Maybe Integer
+                             , streamConfigRequestMaxBytes :: Maybe Integer
+                             , streamConfigRequestMaxAge :: Maybe NominalDiffTime
+                             , streamConfigRequestReplicas :: Maybe Int
+                             , streamConfigRequestDuplicateWindow :: Maybe NominalDiffTime
+                             , streamConfigRequestAllowDirect :: Maybe Bool
+                             }
+  deriving (Eq, Show)
+
+type StreamConfigOption = CallOption StreamConfigRequest
+
+streamConfigRequest :: StreamName -> [Subject] -> [StreamConfigOption] -> StreamConfigRequest
+streamConfigRequest name subjects options =
+  applyCallOptions options $
+    StreamConfigRequest
+      { streamConfigRequestName = name
+      , streamConfigRequestSubjects = subjects
+      , streamConfigRequestRetention = Nothing
+      , streamConfigRequestStorage = Nothing
+      , streamConfigRequestDiscard = Nothing
+      , streamConfigRequestMaxMessages = Nothing
+      , streamConfigRequestMaxBytes = Nothing
+      , streamConfigRequestMaxAge = Nothing
+      , streamConfigRequestReplicas = Nothing
+      , streamConfigRequestDuplicateWindow = Nothing
+      , streamConfigRequestAllowDirect = Nothing
+      }
+
+withRetention :: RetentionPolicy -> StreamConfigOption
+withRetention retention config =
+  config { streamConfigRequestRetention = Just retention }
+
+withStorage :: StorageType -> StreamConfigOption
+withStorage storage config =
+  config { streamConfigRequestStorage = Just storage }
+
+withDiscard :: DiscardPolicy -> StreamConfigOption
+withDiscard discard config =
+  config { streamConfigRequestDiscard = Just discard }
+
+withMaxMessages :: Integer -> StreamConfigOption
+withMaxMessages maxMessages config =
+  config { streamConfigRequestMaxMessages = Just maxMessages }
+
+withMaxBytes :: Integer -> StreamConfigOption
+withMaxBytes maxBytes config =
+  config { streamConfigRequestMaxBytes = Just maxBytes }
+
+withMaxAge :: NominalDiffTime -> StreamConfigOption
+withMaxAge maxAge config =
+  config { streamConfigRequestMaxAge = Just maxAge }
+
+withReplicas :: Int -> StreamConfigOption
+withReplicas replicas config =
+  config { streamConfigRequestReplicas = Just replicas }
+
+withDuplicateWindow :: NominalDiffTime -> StreamConfigOption
+withDuplicateWindow window config =
+  config { streamConfigRequestDuplicateWindow = Just window }
+
+withAllowDirect :: Bool -> StreamConfigOption
+withAllowDirect allowDirect config =
+  config { streamConfigRequestAllowDirect = Just allowDirect }
+
 data StreamConfig = StreamConfig
                       { streamConfigName            :: StreamName
-                      , streamConfigSubjects        :: [Subject]
-                      , streamConfigRetention       :: Maybe RetentionPolicy
-                      , streamConfigStorage         :: Maybe StorageType
-                      , streamConfigDiscard         :: Maybe DiscardPolicy
-                      , streamConfigMaxMessages     :: Maybe Integer
-                      , streamConfigMaxBytes        :: Maybe Integer
-                      , streamConfigMaxAge          :: Maybe NominalDiffTime
-                      , streamConfigReplicas        :: Maybe Int
+                      , streamConfigSubjects        :: Maybe [Subject]
+                      , streamConfigRetention       :: RetentionPolicy
+                      , streamConfigStorage         :: StorageType
+                      , streamConfigDiscard         :: DiscardPolicy
+                      , streamConfigMaxMessages     :: Integer
+                      , streamConfigMaxBytes        :: Integer
+                      , streamConfigMaxAge          :: NominalDiffTime
+                      , streamConfigReplicas        :: Int
                       , streamConfigDuplicateWindow :: Maybe NominalDiffTime
-                      , streamConfigAllowDirect     :: Maybe Bool
+                      , streamConfigAllowDirect     :: Bool
                       }
   deriving (Eq, Show)
 
@@ -62,19 +156,44 @@ data PurgeStreamRequest = PurgeStreamRequest
                             }
   deriving (Eq, Show)
 
-defaultPurgeStreamRequest :: PurgeStreamRequest
-defaultPurgeStreamRequest =
-  PurgeStreamRequest
-    { purgeStreamSubject = Nothing
-    , purgeStreamSequence = Nothing
-    , purgeStreamKeep = Nothing
-    }
+type PurgeStreamOption = CallOption PurgeStreamRequest
+
+purgeStreamRequest :: [PurgeStreamOption] -> PurgeStreamRequest
+purgeStreamRequest options =
+  applyCallOptions options $
+    PurgeStreamRequest
+      { purgeStreamSubject = Nothing
+      , purgeStreamSequence = Nothing
+      , purgeStreamKeep = Nothing
+      }
+
+withPurgeSubject :: Subject -> PurgeStreamOption
+withPurgeSubject subject request =
+  request { purgeStreamSubject = Just subject }
+
+withPurgeSequence :: Integer -> PurgeStreamOption
+withPurgeSequence sequenceNumber request =
+  request { purgeStreamSequence = Just sequenceNumber }
+
+withPurgeKeep :: Integer -> PurgeStreamOption
+withPurgeKeep keep request =
+  request { purgeStreamKeep = Just keep }
 
 data StreamListRequest = StreamListRequest
                            { streamListRequestOffset  :: Maybe Int
                            , streamListRequestSubject :: Maybe Subject
                            }
   deriving (Eq, Show)
+
+type StreamListOption = CallOption StreamListRequest
+
+streamListRequest :: [StreamListOption] -> StreamListRequest
+streamListRequest options =
+  applyCallOptions options defaultStreamListRequest
+
+streamNamesRequest :: [StreamListOption] -> StreamListRequest
+streamNamesRequest =
+  streamListRequest
 
 defaultStreamListRequest :: StreamListRequest
 defaultStreamListRequest =
@@ -83,134 +202,178 @@ defaultStreamListRequest =
     , streamListRequestSubject = Nothing
     }
 
-data StreamNamesRequest = StreamNamesRequest
-                            { streamNamesRequestOffset  :: Maybe Int
-                            , streamNamesRequestSubject :: Maybe Subject
-                            }
-  deriving (Eq, Show)
+withStreamListOffset :: Int -> StreamListOption
+withStreamListOffset offset request =
+  request { streamListRequestOffset = Just offset }
 
-defaultStreamNamesRequest :: StreamNamesRequest
-defaultStreamNamesRequest =
-  StreamNamesRequest
-    { streamNamesRequestOffset = Nothing
-    , streamNamesRequestSubject = Nothing
-    }
+withStreamListSubject :: Subject -> StreamListOption
+withStreamListSubject subject request =
+  request { streamListRequestSubject = Just subject }
 
 data StreamInfo = StreamInfo
-                    { streamInfoType       :: Maybe BS.ByteString
-                    , streamInfoConfig     :: Maybe StreamConfig
-                    , streamInfoCreated    :: Maybe UTCTime
-                    , streamInfoState      :: Maybe StreamState
-                    , streamInfoCluster    :: Maybe StreamCluster
-                    , streamInfoMirror     :: Maybe StreamSourceInfo
-                    , streamInfoSources    :: Maybe [StreamSourceInfo]
-                    , streamInfoAlternates :: Maybe [StreamAlternate]
+                    { streamInfoConfig  :: StreamConfig
+                    , streamInfoCreated :: UTCTime
+                    , streamInfoState   :: StreamState
+                    , streamInfoCluster :: Maybe StreamCluster
+                    , streamInfoMirror  :: Maybe StreamSourceInfo
+                    , streamInfoSources :: [StreamSourceInfo]
                     }
   deriving (Eq, Show)
 
 data StreamState = StreamState
-                     { streamStateMessages      :: Maybe Integer
-                     , streamStateBytes         :: Maybe Integer
-                     , streamStateFirstSequence :: Maybe Integer
-                     , streamStateFirstTime     :: Maybe UTCTime
-                     , streamStateLastSequence  :: Maybe Integer
-                     , streamStateLastTime      :: Maybe UTCTime
-                     , streamStateConsumerCount :: Maybe Int
-                     , streamStateDeleted       :: Maybe [Integer]
-                     , streamStateNumDeleted    :: Maybe Integer
-                     , streamStateNumSubjects   :: Maybe Integer
+                     { streamStateMessages      :: Integer
+                     , streamStateBytes         :: Integer
+                     , streamStateFirstSequence :: Integer
+                     , streamStateFirstTime     :: UTCTime
+                     , streamStateLastSequence  :: Integer
+                     , streamStateLastTime      :: UTCTime
+                     , streamStateConsumerCount :: Int
+                     , streamStateDeleted       :: [Integer]
+                     , streamStateNumDeleted    :: Integer
+                     , streamStateNumSubjects   :: Integer
                      }
   deriving (Eq, Show)
 
 data StreamCluster = StreamCluster
-                       { streamClusterName     :: Maybe BS.ByteString
-                       , streamClusterLeader   :: Maybe BS.ByteString
-                       , streamClusterReplicas :: Maybe [StreamPeer]
+                       { streamClusterName     :: BS.ByteString
+                       , streamClusterLeader   :: BS.ByteString
+                       , streamClusterReplicas :: [StreamPeer]
                        }
   deriving (Eq, Show)
 
 data StreamPeer = StreamPeer
-                    { streamPeerName    :: Maybe BS.ByteString
-                    , streamPeerCurrent :: Maybe Bool
-                    , streamPeerOffline :: Maybe Bool
-                    , streamPeerActive  :: Maybe NominalDiffTime
-                    , streamPeerLag     :: Maybe Integer
+                    { streamPeerName    :: BS.ByteString
+                    , streamPeerCurrent :: Bool
+                    , streamPeerOffline :: Bool
+                    , streamPeerActive  :: NominalDiffTime
+                    , streamPeerLag     :: Integer
                     }
   deriving (Eq, Show)
 
 data StreamSourceInfo = StreamSourceInfo
-                          { streamSourceInfoName :: Maybe StreamName
-                          , streamSourceInfoFilterSubject :: Maybe Subject
-                          , streamSourceInfoLag :: Maybe Integer
-                          , streamSourceInfoActive :: Maybe NominalDiffTime
-                          , streamSourceInfoError :: Maybe Value
+                          { streamSourceInfoName          :: StreamName
+                          , streamSourceInfoFilterSubject :: Subject
+                          , streamSourceInfoLag           :: Integer
+                          , streamSourceInfoActive        :: NominalDiffTime
                           }
   deriving (Eq, Show)
 
-data StreamAlternate = StreamAlternate
-                         { streamAlternateName    :: Maybe StreamName
-                         , streamAlternateDomain  :: Maybe BS.ByteString
-                         , streamAlternateCluster :: Maybe BS.ByteString
-                         }
-  deriving (Eq, Show)
-
-newtype DeleteStreamResponse = DeleteStreamResponse { deleteStreamSuccess :: Maybe Bool }
+newtype DeleteStreamResponse = DeleteStreamResponse { deleteStreamSuccess :: Bool }
   deriving (Eq, Show)
 
 data PurgeStreamResponse = PurgeStreamResponse
-                             { purgeStreamSuccess :: Maybe Bool
-                             , purgeStreamPurged  :: Maybe Integer
+                             { purgeStreamSuccess :: Bool
+                             , purgeStreamPurged  :: Integer
                              }
   deriving (Eq, Show)
 
 data StreamListResponse = StreamListResponse
-                            { streamListTotal   :: Maybe Int
-                            , streamListOffset  :: Maybe Int
-                            , streamListLimit   :: Maybe Int
-                            , streamListStreams :: Maybe [StreamInfo]
+                            { streamListTotal   :: Int
+                            , streamListOffset  :: Int
+                            , streamListLimit   :: Int
+                            , streamListStreams :: [StreamInfo]
                             }
   deriving (Eq, Show)
 
 data StreamNamesResponse = StreamNamesResponse
-                             { streamNamesTotal   :: Maybe Int
-                             , streamNamesOffset  :: Maybe Int
-                             , streamNamesLimit   :: Maybe Int
-                             , streamNamesStreams :: Maybe [StreamName]
+                             { streamNamesTotal   :: Int
+                             , streamNamesOffset  :: Int
+                             , streamNamesLimit   :: Int
+                             , streamNamesStreams :: [StreamName]
                              }
   deriving (Eq, Show)
 
-instance ToJSON StreamConfig where
+data StreamMessage = StreamMessage
+                       { streamMessageSubject    :: Subject
+                       , streamMessageSequence   :: Integer
+                       , streamMessageHeadersRaw :: Maybe BS.ByteString
+                       , streamMessagePayload    :: Maybe Payload
+                       , streamMessageTime       :: UTCTime
+                       }
+  deriving (Eq, Show)
+
+data StreamMessageSelector = StreamMessageBySequence Integer
+                           | LastStreamMessageForSubject Subject
+                           | NextStreamMessageForSubject Subject
+  deriving (Eq, Show)
+
+newtype StreamMessageGetRequest = StreamMessageGetRequest { streamMessageGetSelector :: StreamMessageSelector }
+  deriving (Eq, Show)
+
+streamMessageGetRequest :: StreamMessageSelector -> StreamMessageGetRequest
+streamMessageGetRequest =
+  StreamMessageGetRequest
+
+data StreamMessageDeleteMode = DeleteMessage | SecureDeleteMessage
+  deriving (Eq, Show)
+
+data StreamMessageDeleteRequest = StreamMessageDeleteRequest
+                                    { streamMessageDeleteSequence :: Integer
+                                    , streamMessageDeleteNoErase  :: Maybe Bool
+                                    }
+  deriving (Eq, Show)
+
+streamMessageDeleteRequest :: Integer -> StreamMessageDeleteMode -> StreamMessageDeleteRequest
+streamMessageDeleteRequest sequenceNumber mode =
+  StreamMessageDeleteRequest
+    { streamMessageDeleteSequence = sequenceNumber
+    , streamMessageDeleteNoErase =
+        case mode of
+          DeleteMessage       -> Just True
+          SecureDeleteMessage -> Nothing
+    }
+
+newtype DeleteStreamMessageResponse = DeleteStreamMessageResponse { deleteStreamMessageSuccess :: Bool }
+  deriving (Eq, Show)
+
+instance ToJSON StreamConfigRequest where
   toJSON config =
     object $
-      [ byteStringPair "name" (streamConfigName config)
-      , "subjects" .= map byteStringToJSON (streamConfigSubjects config)
+      [ byteStringPair "name" (streamConfigRequestName config)
+      , byteStringListPair "subjects" (streamConfigRequestSubjects config)
       ] ++ catMaybes
-        [ maybePair "retention" (streamConfigRetention config)
-        , maybePair "storage" (streamConfigStorage config)
-        , maybePair "discard" (streamConfigDiscard config)
-        , maybePair "max_msgs" (streamConfigMaxMessages config)
-        , maybePair "max_bytes" (streamConfigMaxBytes config)
-        , maybeDurationPair "max_age" (streamConfigMaxAge config)
-        , maybePair "num_replicas" (streamConfigReplicas config)
-        , maybeDurationPair "duplicate_window" (streamConfigDuplicateWindow config)
-        , maybePair "allow_direct" (streamConfigAllowDirect config)
+        [ maybePair "retention" (streamConfigRequestRetention config)
+        , maybePair "storage" (streamConfigRequestStorage config)
+        , maybePair "discard" (streamConfigRequestDiscard config)
+        , maybePair "max_msgs" (streamConfigRequestMaxMessages config)
+        , maybePair "max_bytes" (streamConfigRequestMaxBytes config)
+        , maybeDurationPair "max_age" (streamConfigRequestMaxAge config)
+        , maybePair "num_replicas" (streamConfigRequestReplicas config)
+        , maybeDurationPair "duplicate_window" (streamConfigRequestDuplicateWindow config)
+        , maybePair "allow_direct" (streamConfigRequestAllowDirect config)
         ]
+
+instance ToJSON StreamConfig where
+  toJSON config =
+    object . catMaybes $
+      [ Just (byteStringPair "name" (streamConfigName config))
+      , maybeByteStringListPair "subjects" (streamConfigSubjects config)
+      , Just ("retention" .= streamConfigRetention config)
+      , Just ("storage" .= streamConfigStorage config)
+      , Just ("discard" .= streamConfigDiscard config)
+      , Just ("max_msgs" .= streamConfigMaxMessages config)
+      , Just ("max_bytes" .= streamConfigMaxBytes config)
+      , Just ("max_age" .= durationToNanoseconds (streamConfigMaxAge config))
+      , Just ("num_replicas" .= streamConfigReplicas config)
+      , maybeDurationPair "duplicate_window" (streamConfigDuplicateWindow config)
+      , Just ("allow_direct" .= streamConfigAllowDirect config)
+      ]
 
 instance FromJSON StreamConfig where
   parseJSON =
     withObject "StreamConfig" $ \value ->
       StreamConfig
         <$> parseByteStringField value "name"
-        <*> parseByteStringListField value "subjects"
-        <*> value .:? "retention"
-        <*> value .:? "storage"
-        <*> value .:? "discard"
-        <*> value .:? "max_msgs"
-        <*> value .:? "max_bytes"
-        <*> parseOptionalDurationField value "max_age"
-        <*> value .:? "num_replicas"
+        <*> parseOptionalByteStringListField value "subjects"
+        <*> value .: "retention"
+        <*> value .: "storage"
+        <*> value .: "discard"
+        <*> value .: "max_msgs"
+        <*> value .: "max_bytes"
+        <*> parseDurationField value "max_age"
+        <*> value .: "num_replicas"
         <*> parseOptionalDurationField value "duplicate_window"
-        <*> value .:? "allow_direct"
+        <*> value .: "allow_direct"
 
 instance ToJSON PurgeStreamRequest where
   toJSON request =
@@ -220,14 +383,6 @@ instance ToJSON PurgeStreamRequest where
       , maybePair "keep" (purgeStreamKeep request)
       ]
 
-instance FromJSON PurgeStreamRequest where
-  parseJSON =
-    withObject "PurgeStreamRequest" $ \value ->
-      PurgeStreamRequest
-        <$> parseOptionalByteStringField value "filter"
-        <*> value .:? "seq"
-        <*> value .:? "keep"
-
 instance ToJSON StreamListRequest where
   toJSON request =
     object . catMaybes $
@@ -235,216 +390,227 @@ instance ToJSON StreamListRequest where
       , maybeByteStringPair "subject" (streamListRequestSubject request)
       ]
 
-instance FromJSON StreamListRequest where
-  parseJSON =
-    withObject "StreamListRequest" $ \value ->
-      StreamListRequest
-        <$> value .:? "offset"
-        <*> parseOptionalByteStringField value "subject"
+instance ToJSON StreamMessageGetRequest where
+  toJSON request =
+    case streamMessageGetSelector request of
+      StreamMessageBySequence sequenceNumber ->
+        object ["seq" .= sequenceNumber]
+      LastStreamMessageForSubject subject ->
+        object [byteStringPair "last_by_subj" subject]
+      NextStreamMessageForSubject subject ->
+        object [byteStringPair "next_by_subj" subject]
 
-instance ToJSON StreamNamesRequest where
+instance ToJSON StreamMessageDeleteRequest where
   toJSON request =
     object . catMaybes $
-      [ maybePair "offset" (streamNamesRequestOffset request)
-      , maybeByteStringPair "subject" (streamNamesRequestSubject request)
+      [ Just ("seq" .= streamMessageDeleteSequence request)
+      , maybePair "no_erase" (streamMessageDeleteNoErase request)
       ]
-
-instance FromJSON StreamNamesRequest where
-  parseJSON =
-    withObject "StreamNamesRequest" $ \value ->
-      StreamNamesRequest
-        <$> value .:? "offset"
-        <*> parseOptionalByteStringField value "subject"
 
 instance ToJSON StreamInfo where
   toJSON info =
     object . catMaybes $
-      [ maybeByteStringPair "type" (streamInfoType info)
-      , maybePair "config" (streamInfoConfig info)
-      , maybePair "created" (streamInfoCreated info)
-      , maybePair "state" (streamInfoState info)
+      [ Just ("config" .= streamInfoConfig info)
+      , Just ("created" .= streamInfoCreated info)
+      , Just ("state" .= streamInfoState info)
       , maybePair "cluster" (streamInfoCluster info)
       , maybePair "mirror" (streamInfoMirror info)
-      , maybePair "sources" (streamInfoSources info)
-      , maybePair "alternates" (streamInfoAlternates info)
+      , Just ("sources" .= streamInfoSources info)
       ]
 
 instance FromJSON StreamInfo where
   parseJSON =
     withObject "StreamInfo" $ \value ->
       StreamInfo
-        <$> parseOptionalByteStringField value "type"
-        <*> value .:? "config"
-        <*> value .:? "created"
-        <*> value .:? "state"
+        <$> value .: "config"
+        <*> value .: "created"
+        <*> value .: "state"
         <*> value .:? "cluster"
         <*> value .:? "mirror"
-        <*> value .:? "sources"
-        <*> value .:? "alternates"
+        <*> value .:? "sources" .!= []
 
 instance ToJSON StreamState where
   toJSON state =
-    object . catMaybes $
-      [ maybePair "messages" (streamStateMessages state)
-      , maybePair "bytes" (streamStateBytes state)
-      , maybePair "first_seq" (streamStateFirstSequence state)
-      , maybePair "first_ts" (streamStateFirstTime state)
-      , maybePair "last_seq" (streamStateLastSequence state)
-      , maybePair "last_ts" (streamStateLastTime state)
-      , maybePair "consumer_count" (streamStateConsumerCount state)
-      , maybePair "deleted" (streamStateDeleted state)
-      , maybePair "num_deleted" (streamStateNumDeleted state)
-      , maybePair "num_subjects" (streamStateNumSubjects state)
+    object
+      [ "messages" .= streamStateMessages state
+      , "bytes" .= streamStateBytes state
+      , "first_seq" .= streamStateFirstSequence state
+      , "first_ts" .= streamStateFirstTime state
+      , "last_seq" .= streamStateLastSequence state
+      , "last_ts" .= streamStateLastTime state
+      , "consumer_count" .= streamStateConsumerCount state
+      , "deleted" .= streamStateDeleted state
+      , "num_deleted" .= streamStateNumDeleted state
+      , "num_subjects" .= streamStateNumSubjects state
       ]
 
 instance FromJSON StreamState where
   parseJSON =
     withObject "StreamState" $ \value ->
       StreamState
-        <$> value .:? "messages"
-        <*> value .:? "bytes"
-        <*> value .:? "first_seq"
-        <*> value .:? "first_ts"
-        <*> value .:? "last_seq"
-        <*> value .:? "last_ts"
-        <*> value .:? "consumer_count"
-        <*> value .:? "deleted"
-        <*> value .:? "num_deleted"
-        <*> value .:? "num_subjects"
+        <$> value .: "messages"
+        <*> value .: "bytes"
+        <*> value .: "first_seq"
+        <*> value .: "first_ts"
+        <*> value .: "last_seq"
+        <*> value .: "last_ts"
+        <*> value .: "consumer_count"
+        <*> value .:? "deleted" .!= []
+        <*> value .:? "num_deleted" .!= 0
+        <*> value .:? "num_subjects" .!= 0
 
 instance ToJSON StreamCluster where
   toJSON cluster =
-    object . catMaybes $
-      [ maybeByteStringPair "name" (streamClusterName cluster)
-      , maybeByteStringPair "leader" (streamClusterLeader cluster)
-      , maybePair "replicas" (streamClusterReplicas cluster)
+    object
+      [ "name" .= byteStringToJSON (streamClusterName cluster)
+      , "leader" .= byteStringToJSON (streamClusterLeader cluster)
+      , "replicas" .= streamClusterReplicas cluster
       ]
 
 instance FromJSON StreamCluster where
   parseJSON =
     withObject "StreamCluster" $ \value ->
       StreamCluster
-        <$> parseOptionalByteStringField value "name"
-        <*> parseOptionalByteStringField value "leader"
-        <*> value .:? "replicas"
+        <$> parseOptionalByteStringField value "name" .!= ""
+        <*> parseOptionalByteStringField value "leader" .!= ""
+        <*> value .:? "replicas" .!= []
 
 instance ToJSON StreamPeer where
   toJSON peer =
-    object . catMaybes $
-      [ maybeByteStringPair "name" (streamPeerName peer)
-      , maybePair "current" (streamPeerCurrent peer)
-      , maybePair "offline" (streamPeerOffline peer)
-      , maybeDurationPair "active" (streamPeerActive peer)
-      , maybePair "lag" (streamPeerLag peer)
+    object
+      [ "name" .= byteStringToJSON (streamPeerName peer)
+      , "current" .= streamPeerCurrent peer
+      , "offline" .= streamPeerOffline peer
+      , "active" .= durationToNanoseconds (streamPeerActive peer)
+      , "lag" .= streamPeerLag peer
       ]
 
 instance FromJSON StreamPeer where
   parseJSON =
     withObject "StreamPeer" $ \value ->
       StreamPeer
-        <$> parseOptionalByteStringField value "name"
-        <*> value .:? "current"
-        <*> value .:? "offline"
-        <*> parseOptionalDurationField value "active"
-        <*> value .:? "lag"
+        <$> parseByteStringField value "name"
+        <*> value .: "current"
+        <*> value .:? "offline" .!= False
+        <*> parseDurationField value "active"
+        <*> value .:? "lag" .!= 0
 
 instance ToJSON StreamSourceInfo where
   toJSON source =
-    object . catMaybes $
-      [ maybeByteStringPair "name" (streamSourceInfoName source)
-      , maybeByteStringPair "filter_subject" (streamSourceInfoFilterSubject source)
-      , maybePair "lag" (streamSourceInfoLag source)
-      , maybeDurationPair "active" (streamSourceInfoActive source)
-      , maybePair "error" (streamSourceInfoError source)
+    object
+      [ "name" .= byteStringToJSON (streamSourceInfoName source)
+      , "filter_subject" .= byteStringToJSON (streamSourceInfoFilterSubject source)
+      , "lag" .= streamSourceInfoLag source
+      , "active" .= durationToNanoseconds (streamSourceInfoActive source)
       ]
 
 instance FromJSON StreamSourceInfo where
   parseJSON =
     withObject "StreamSourceInfo" $ \value ->
       StreamSourceInfo
-        <$> parseOptionalByteStringField value "name"
-        <*> parseOptionalByteStringField value "filter_subject"
-        <*> value .:? "lag"
-        <*> parseOptionalDurationField value "active"
-        <*> value .:? "error"
-
-instance ToJSON StreamAlternate where
-  toJSON alternate =
-    object . catMaybes $
-      [ maybeByteStringPair "name" (streamAlternateName alternate)
-      , maybeByteStringPair "domain" (streamAlternateDomain alternate)
-      , maybeByteStringPair "cluster" (streamAlternateCluster alternate)
-      ]
-
-instance FromJSON StreamAlternate where
-  parseJSON =
-    withObject "StreamAlternate" $ \value ->
-      StreamAlternate
-        <$> parseOptionalByteStringField value "name"
-        <*> parseOptionalByteStringField value "domain"
-        <*> parseOptionalByteStringField value "cluster"
+        <$> parseByteStringField value "name"
+        <*> parseOptionalByteStringField value "filter_subject" .!= ""
+        <*> value .: "lag"
+        <*> parseDurationField value "active"
 
 instance ToJSON DeleteStreamResponse where
   toJSON response =
-    object . catMaybes $
-      [ maybePair "success" (deleteStreamSuccess response)
+    object
+      [ "success" .= deleteStreamSuccess response
       ]
 
 instance FromJSON DeleteStreamResponse where
   parseJSON =
     withObject "DeleteStreamResponse" $ \value ->
       DeleteStreamResponse
-        <$> value .:? "success"
+        <$> value .:? "success" .!= False
 
 instance ToJSON PurgeStreamResponse where
   toJSON response =
-    object . catMaybes $
-      [ maybePair "success" (purgeStreamSuccess response)
-      , maybePair "purged" (purgeStreamPurged response)
+    object
+      [ "success" .= purgeStreamSuccess response
+      , "purged" .= purgeStreamPurged response
       ]
 
 instance FromJSON PurgeStreamResponse where
   parseJSON =
     withObject "PurgeStreamResponse" $ \value ->
       PurgeStreamResponse
-        <$> value .:? "success"
-        <*> value .:? "purged"
+        <$> value .:? "success" .!= False
+        <*> value .:? "purged" .!= 0
 
 instance ToJSON StreamListResponse where
   toJSON response =
-    object . catMaybes $
-      [ maybePair "total" (streamListTotal response)
-      , maybePair "offset" (streamListOffset response)
-      , maybePair "limit" (streamListLimit response)
-      , maybePair "streams" (streamListStreams response)
+    object
+      [ "total" .= streamListTotal response
+      , "offset" .= streamListOffset response
+      , "limit" .= streamListLimit response
+      , "streams" .= streamListStreams response
       ]
 
 instance FromJSON StreamListResponse where
   parseJSON =
     withObject "StreamListResponse" $ \value ->
       StreamListResponse
-        <$> value .:? "total"
-        <*> value .:? "offset"
-        <*> value .:? "limit"
-        <*> value .:? "streams"
+        <$> value .: "total"
+        <*> value .: "offset"
+        <*> value .: "limit"
+        <*> value .:? "streams" .!= []
 
 instance ToJSON StreamNamesResponse where
   toJSON response =
-    object . catMaybes $
-      [ maybePair "total" (streamNamesTotal response)
-      , maybePair "offset" (streamNamesOffset response)
-      , maybePair "limit" (streamNamesLimit response)
-      , maybeByteStringListPair "streams" (streamNamesStreams response)
+    object
+      [ "total" .= streamNamesTotal response
+      , "offset" .= streamNamesOffset response
+      , "limit" .= streamNamesLimit response
+      , "streams" .= map byteStringToJSON (streamNamesStreams response)
       ]
 
 instance FromJSON StreamNamesResponse where
   parseJSON =
     withObject "StreamNamesResponse" $ \value ->
       StreamNamesResponse
-        <$> value .:? "total"
-        <*> value .:? "offset"
-        <*> value .:? "limit"
-        <*> parseOptionalByteStringListField value "streams"
+        <$> value .: "total"
+        <*> value .: "offset"
+        <*> value .: "limit"
+        <*> parseOptionalByteStringListField value "streams" .!= []
+
+instance FromJSON StreamMessage where
+  parseJSON =
+    withObject "StreamMessageResponse" $ \value ->
+      value .: "message" >>= parseStoredMessage
+
+instance ToJSON StreamMessage where
+  toJSON message =
+    object . catMaybes $
+      [ Just (byteStringPair "subject" (streamMessageSubject message))
+      , Just ("seq" .= streamMessageSequence message)
+      , maybeBase64Pair "hdrs" (streamMessageHeadersRaw message)
+      , maybeBase64Pair "data" (streamMessagePayload message)
+      , Just ("time" .= streamMessageTime message)
+      ]
+
+instance FromJSON DeleteStreamMessageResponse where
+  parseJSON =
+    withObject "DeleteStreamMessageResponse" $ \value ->
+      DeleteStreamMessageResponse
+        <$> value .:? "success" .!= False
+
+instance ToJSON DeleteStreamMessageResponse where
+  toJSON response =
+    object
+      [ "success" .= deleteStreamMessageSuccess response
+      ]
+
+parseStoredMessage :: Value -> Parser StreamMessage
+parseStoredMessage =
+  withObject "StreamMessage" $ \value ->
+    StreamMessage
+      <$> parseByteStringField value "subject"
+      <*> value .: "seq"
+      <*> parseOptionalBase64Field value "hdrs"
+      <*> parseOptionalBase64Field value "data"
+      <*> value .: "time"
 
 durationToNanoseconds :: NominalDiffTime -> Integer
 durationToNanoseconds duration =
@@ -457,11 +623,18 @@ nanosecondsToDuration nanoseconds =
 byteStringPair :: Key -> BS.ByteString -> Pair
 byteStringPair key value = key .= byteStringToJSON value
 
+byteStringListPair :: Key -> [BS.ByteString] -> Pair
+byteStringListPair key = (key .=) . map byteStringToJSON
+
 maybeByteStringPair :: Key -> Maybe BS.ByteString -> Maybe Pair
 maybeByteStringPair key = fmap (byteStringPair key)
 
+maybeBase64Pair :: Key -> Maybe BS.ByteString -> Maybe Pair
+maybeBase64Pair key =
+  fmap ((key .=) . byteStringToJSON . Base64.encode)
+
 maybeByteStringListPair :: Key -> Maybe [BS.ByteString] -> Maybe Pair
-maybeByteStringListPair key = fmap ((key .=) . map byteStringToJSON)
+maybeByteStringListPair key = fmap (byteStringListPair key)
 
 maybePair :: ToJSON value => Key -> Maybe value -> Maybe Pair
 maybePair key = fmap (key .=)
@@ -478,15 +651,25 @@ parseOptionalByteStringField value key = do
   byteString <- value .:? key
   traverse parseByteString byteString
 
-parseByteStringListField :: Object -> Key -> Parser [BS.ByteString]
-parseByteStringListField value key = do
-  byteStrings <- value .:? key .!= []
-  traverse parseByteString byteStrings
+parseOptionalBase64Field :: Object -> Key -> Parser (Maybe BS.ByteString)
+parseOptionalBase64Field value key = do
+  encoded <- value .:? key
+  traverse parseBase64 encoded
+  where
+    parseBase64 jsonValue = do
+      bytes <- parseByteString jsonValue
+      case Base64.decode bytes of
+        Left err      -> fail err
+        Right decoded -> pure decoded
 
 parseOptionalByteStringListField :: Object -> Key -> Parser (Maybe [BS.ByteString])
 parseOptionalByteStringListField value key = do
   byteStrings <- value .:? key
   traverse (traverse parseByteString) byteStrings
+
+parseDurationField :: Object -> Key -> Parser NominalDiffTime
+parseDurationField value key =
+  nanosecondsToDuration <$> value .: key
 
 parseOptionalDurationField :: Object -> Key -> Parser (Maybe NominalDiffTime)
 parseOptionalDurationField value key =

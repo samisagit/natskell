@@ -2,6 +2,10 @@
 module JetStream.API
   (
     JetStream (..)
+  , AccountAPIStats (..)
+  , AccountInfo (..)
+  , AccountLimits (..)
+  , AccountTier (..)
   , JetStreamApiError (..)
   , JetStreamError (..)
   , StreamName
@@ -23,7 +27,11 @@ import           JetStream.Message.API
 import           JetStream.Publish.API
 import           JetStream.Stream.API
 import           JetStream.Types
-    ( ConsumerName
+    ( AccountAPIStats (..)
+    , AccountInfo (..)
+    , AccountLimits (..)
+    , AccountTier (..)
+    , ConsumerName
     , Payload
     , StreamName
     , Subject
@@ -32,12 +40,14 @@ import           JetStream.Types
 -- | JetStream capabilities for streams, consumers, publishing, and pull
 -- message workflows.
 data JetStream = JetStream
-                   { streams   :: StreamAPI
+                   { streams     :: StreamAPI
                      -- ^ Manage streams and inspect stream state.
-                   , consumers :: ConsumerAPI
+                   , consumers   :: ConsumerAPI
                      -- ^ Manage stream consumers.
-                   , publisher :: PublishAPI
+                   , publisher   :: PublishAPI
                      -- ^ Publish messages to JetStream subjects.
-                   , messages  :: MessageAPI
-                   -- ^ Fetch and acknowledge pull-consumer messages.
+                   , messages    :: MessageAPI
+                     -- ^ Fetch and acknowledge pull-consumer messages.
+                   , accountInfo :: IO (Either JetStreamError AccountInfo)
+                   -- ^ Fetch account-level JetStream usage and limits.
                    }
