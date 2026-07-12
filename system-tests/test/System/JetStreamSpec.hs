@@ -16,6 +16,7 @@ import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as BC
 import           Data.IORef            (atomicModifyIORef', newIORef, readIORef)
 import           Data.List             (sort)
+import           Data.Maybe            (fromMaybe)
 import           Data.Time.Clock       (addUTCTime, getCurrentTime)
 import           JetStream.API         (JetStream (..))
 import qualified JetStream.API         as JetStream
@@ -35,6 +36,12 @@ spec =
       jetStreamSystemTest "a617d120-8846-48b0-a76d-b6a5975ee1c8"
         "deduplicates publishes by message id"
         duplicatePublishTest
+      jetStreamSystemTest "c8209e92-a8ab-4506-a4d8-3baedfa66f74"
+        "rejects publish expectation mismatches"
+        publishExpectationFailureTest
+      jetStreamSystemTest "250887bc-834f-4971-91dc-846862d65304"
+        "reports no messages for no-wait pull requests"
+        pullNoWaitStatusTest
       jetStreamSystemTest "2f78c7d3-fae8-408f-957e-51c22a442e9d"
         "enforces discard policy at stream message limits"
         discardPolicyTest
@@ -50,6 +57,9 @@ spec =
       jetStreamSystemTest "73b6d241-518d-4d2d-91b6-69138355246a"
         "redelivers after AckWait expires"
         ackWaitRedeliveryTest
+      jetStreamSystemTest "c89cf758-b6c6-49cf-852b-d7e433b9f86f"
+        "extends AckWait with in-progress acknowledgements"
+        inProgressAckWaitTest
       jetStreamSystemTest "375c712f-66f4-45bf-8505-9d756d0806e7"
         "honours DeliverLast and DeliverNew policies"
         deliverPolicyTest
@@ -59,6 +69,9 @@ spec =
       jetStreamSystemTest "2c4c9ad8-e97e-4e18-9df9-edaa7397e93e"
         "purges only matching subjects"
         filteredPurgeTest
+      jetStreamSystemTest "86f72368-aaa2-4642-97e4-e0aaa6df8893"
+        "purges by sequence and keep limits"
+        purgeSequenceAndKeepTest
       jetStreamSystemTest "08b58a6b-c4fb-4bf4-ae3c-d536803dc199"
         "filters stream list and names responses"
         streamListFilterTest
@@ -74,9 +87,15 @@ spec =
       jetStreamSystemTest "b8634868-d1da-4550-aa0a-2177e0f50c37"
         "delivers push consumer messages"
         pushConsumerTest
+      jetStreamSystemTest "f8fd3255-4885-475f-b8d1-27bd5addcf62"
+        "uses queue subscriptions for push consumer delivery"
+        pushQueueGroupTest
       jetStreamSystemTest "d9f102d7-22b9-4103-b5c1-6c3b8e6d0cd7"
         "fetches ordered consumer messages after reset"
         orderedConsumerTest
+      jetStreamSystemTest "2c1a4ec1-8bc6-4506-8b0c-a128ca670c09"
+        "orders filtered headers-only messages"
+        orderedFilteredHeadersOnlyTest
       jetStreamSystemTest "ff173d87-7377-4ff5-a6c8-83574508b591"
         "stops push consumer subscriptions gracefully"
         pushConsumerGracefulShutdownTest
@@ -161,6 +180,55 @@ duplicatePublishTest jetStream = do
   JetStream.publishAckDuplicate secondAck `shouldBe` Just True
   info <- streamInfoOrFail jetStream stream
   JetStream.streamStateMessages (JetStream.streamInfoState info) `shouldBe` 1
+
+publishExpectationFailureTest :: JetStream -> IO ()
+publishExpectationFailureTest jetStream = do
+  let stream = "NATSKELL_JS_EXPECT"
+      subject = "NATSKELL.JS.EXPECT"
+  createStreamOrFail jetStream stream [subject] streamOptions
+  firstAck <- publishPayloadWith jetStream subject "first" [JetStream.withMsgId "expect-1"]
+  JetStream.publishAckSequence firstAck `shouldBe` 1
+
+  wrongStream <- JetStream.publish (publisher jetStream) subject "wrong-stream"
+    [JetStream.withExpectedStream "OTHER_STREAM"]
+  expectJetStreamFailure "expected stream mismatch" wrongStream
+
+  wrongLastSequence <- JetStream.publish (publisher jetStream) subject "wrong-last-sequence"
+    [JetStream.withPublishExpectation (JetStream.ExpectedLastSequence 99)]
+  expectJetStreamFailure "expected last sequence mismatch" wrongLastSequence
+
+  wrongSubjectSequence <- JetStream.publish (publisher jetStream) subject "wrong-subject-sequence"
+    [JetStream.withPublishExpectation (JetStream.ExpectedLastSubjectSequence 99)]
+  expectJetStreamFailure "expected last subject sequence mismatch" wrongSubjectSequence
+
+  wrongMsgId <- JetStream.publish (publisher jetStream) subject "wrong-msg-id"
+    [JetStream.withPublishExpectation (JetStream.ExpectedLastMsgId "missing-id")]
+  expectJetStreamFailure "expected last msg id mismatch" wrongMsgId
+
+  secondAck <- publishPayloadWith jetStream subject "second"
+    [JetStream.withPublishExpectation (JetStream.ExpectedLastSequence (JetStream.publishAckSequence firstAck))]
+  JetStream.publishAckSequence secondAck `shouldBe` 2
+  info <- streamInfoOrFail jetStream stream
+  JetStream.streamStateMessages (JetStream.streamInfoState info) `shouldBe` 2
+
+pullNoWaitStatusTest :: JetStream -> IO ()
+pullNoWaitStatusTest jetStream = do
+  let stream = "NATSKELL_JS_PULL_NOWAIT"
+      subject = "NATSKELL.JS.PULL.NOWAIT"
+      durable = "PULL_NOWAIT"
+  createStreamOrFail jetStream stream [subject] streamOptions
+  createDurableConsumerOrFail jetStream stream durable $
+    pullConsumerOptions durable []
+
+  empty <- expectRight "no-wait fetch before publish" $
+    JetStream.fetch (messages jetStream) stream durable shortFetch
+  JetStream.pullResponseMessages empty `shouldBe` []
+  expectNoMessages empty
+
+  publishPayload jetStream subject "available"
+  message <- fetchOneMessage jetStream stream durable
+  JetStream.messagePayload message `shouldBe` Just "available"
+  ackOrFail jetStream message
 
 discardPolicyTest :: JetStream -> IO ()
 discardPolicyTest jetStream = do
@@ -254,6 +322,35 @@ ackWaitRedeliveryTest jetStream = do
   JetStream.messagePayload secondMessage `shouldBe` Just "timeout"
   ackOrFail jetStream secondMessage
 
+inProgressAckWaitTest :: JetStream -> IO ()
+inProgressAckWaitTest jetStream = do
+  let stream = "NATSKELL_JS_IN_PROGRESS"
+      subject = "NATSKELL.JS.IN_PROGRESS"
+      durable = "IN_PROGRESS_WORKER"
+  createStreamOrFail jetStream stream [subject] streamOptions
+  createDurableConsumerOrFail jetStream stream durable $
+    pullConsumerOptions durable
+      [ JetStream.withConsumerAckWait 0.3
+      , JetStream.withConsumerMaxDeliver 2
+      ]
+  publishPayload jetStream subject "slow-work"
+  firstMessage <- fetchOneMessage jetStream stream durable
+  JetStream.messagePayload firstMessage `shouldBe` Just "slow-work"
+
+  threadDelay 150000
+  JetStream.inProgress (messages jetStream) firstMessage `shouldReturn` Right ()
+  threadDelay 250000
+
+  empty <- expectRight "fetch during extended AckWait" $
+    JetStream.fetch (messages jetStream) stream durable shortFetch
+  JetStream.pullResponseMessages empty `shouldBe` []
+  expectNoMessages empty
+
+  threadDelay 300000
+  redelivered <- fetchOneMessage jetStream stream durable
+  JetStream.messagePayload redelivered `shouldBe` Just "slow-work"
+  ackOrFail jetStream redelivered
+
 deliverPolicyTest :: JetStream -> IO ()
 deliverPolicyTest jetStream = do
   let stream = "NATSKELL_JS_DELIVER"
@@ -320,6 +417,45 @@ filteredPurgeTest jetStream = do
     pullConsumerOptions durable []
   remaining <- fetchOnePayload jetStream stream durable
   remaining `shouldBe` Just "b-1"
+
+purgeSequenceAndKeepTest :: JetStream -> IO ()
+purgeSequenceAndKeepTest jetStream = do
+  let sequenceStream = "NATSKELL_JS_PURGE_SEQUENCE"
+      sequenceSubject = "NATSKELL.JS.PURGE.SEQUENCE"
+      keepStream = "NATSKELL_JS_PURGE_KEEP"
+      keepSubject = "NATSKELL.JS.PURGE.KEEP"
+      durable = "PURGE_KEEP_READER"
+      payloads = ["msg-1", "msg-2", "msg-3", "msg-4", "msg-5"]
+  createStreamOrFail jetStream sequenceStream [sequenceSubject] streamOptions
+  mapM_ (publishPayload jetStream sequenceSubject) payloads
+  purgedBySequence <- expectRight "purge stream by sequence" $
+    JetStream.purge (streams jetStream) sequenceStream [JetStream.withPurgeSequence 4]
+  JetStream.purgeStreamSuccess purgedBySequence `shouldBe` True
+  JetStream.purgeStreamPurged purgedBySequence `shouldBe` 3
+  missingFirst <- JetStream.getMessage
+    (streams jetStream)
+    sequenceStream
+    (JetStream.StreamMessageBySequence 1)
+  expectJetStreamFailure "get purged sequence" missingFirst
+  firstRemaining <- expectRight "get remaining sequence after purge" $
+    JetStream.getMessage
+      (streams jetStream)
+      sequenceStream
+      (JetStream.StreamMessageBySequence 4)
+  JetStream.streamMessagePayload firstRemaining `shouldBe` Just "msg-4"
+
+  createStreamOrFail jetStream keepStream [keepSubject] streamOptions
+  mapM_ (publishPayload jetStream keepSubject) payloads
+  purgedByKeep <- expectRight "purge stream with keep" $
+    JetStream.purge (streams jetStream) keepStream [JetStream.withPurgeKeep 2]
+  JetStream.purgeStreamSuccess purgedByKeep `shouldBe` True
+  JetStream.purgeStreamPurged purgedByKeep `shouldBe` 3
+  info <- streamInfoOrFail jetStream keepStream
+  JetStream.streamStateMessages (JetStream.streamInfoState info) `shouldBe` 2
+  createDurableConsumerOrFail jetStream keepStream durable $
+    pullConsumerOptions durable []
+  remaining <- fetchPayloads jetStream keepStream durable 2
+  remaining `shouldBe` fmap Just ["msg-4", "msg-5"]
 
 streamListFilterTest :: JetStream -> IO ()
 streamListFilterTest jetStream = do
@@ -528,6 +664,62 @@ pushConsumerTest jetStream = do
   received <- readIORef receivedRef
   received `shouldBe` fmap Just payloads
 
+pushQueueGroupTest :: JetStream -> IO ()
+pushQueueGroupTest jetStream = do
+  let stream = "NATSKELL_JS_PUSH_QUEUE"
+      subject = "NATSKELL.JS.PUSH.QUEUE"
+      consumer = "PUSH_QUEUE_CONSUMER"
+      deliverSubject = "NATSKELL.JS.PUSH.QUEUE.DELIVER"
+      queueGroup = "PUSH_QUEUE_WORKERS"
+      payloads =
+        [ "queue-1", "queue-2", "queue-3", "queue-4", "queue-5"
+        , "queue-6", "queue-7", "queue-8"
+        ]
+  createStreamOrFail jetStream stream [subject] streamOptions
+  void . expectRight "push queue consumer create" $
+    JetStream.putConsumer
+      (consumers jetStream)
+      stream
+      JetStream.ConsumerCreate
+      (JetStream.NamedConsumer consumer)
+      (JetStream.PushConsumer deliverSubject)
+      [ JetStream.withConsumerAckPolicy JetStream.AckExplicit
+      , JetStream.withConsumerDeliverGroup queueGroup
+      , JetStream.withConsumerDeliverPolicy JetStream.DeliverAll
+      ]
+
+  receivedRef <- newIORef []
+  done <- newEmptyMVar
+  let expectedCount = length payloads
+      record worker message = do
+        count <- atomicModifyIORef' receivedRef $ \received ->
+          let next = received ++ [(worker, JetStream.messagePayload message)]
+          in (next, length next)
+        void (JetStream.ack (messages jetStream) message)
+        when (count >= expectedCount) $
+          void (tryPutMVar done ())
+  subscriberA <- JetStream.consumePush
+    (messages jetStream)
+    deliverSubject
+    [JetStream.withPushQueueGroup queueGroup]
+    (record ("worker-a" :: BS.ByteString))
+  subscriberB <- JetStream.consumePush
+    (messages jetStream)
+    deliverSubject
+    [JetStream.withPushQueueGroup queueGroup]
+    (record "worker-b")
+
+  threadDelay 200000
+  mapM_ (publishPayload jetStream subject) payloads
+  result <- timeout 5000000 (takeMVar done)
+  threadDelay 500000
+  JetStream.stopPushSubscription subscriberA
+  JetStream.stopPushSubscription subscriberB
+  result `shouldBe` Just ()
+  received <- readIORef receivedRef
+  length received `shouldBe` expectedCount
+  fmap snd received `shouldMatchList` fmap Just payloads
+
 orderedConsumerTest :: JetStream -> IO ()
 orderedConsumerTest jetStream = do
   let stream = "NATSKELL_JS_ORDERED"
@@ -565,6 +757,45 @@ orderedConsumerTest jetStream = do
       ]
   fmap JetStream.messagePayload (JetStream.pullResponseMessages secondBatch)
     `shouldBe` fmap Just (drop 2 payloads)
+  JetStream.stopOrderedConsumer ordered
+
+orderedFilteredHeadersOnlyTest :: JetStream -> IO ()
+orderedFilteredHeadersOnlyTest jetStream = do
+  let stream = "NATSKELL_JS_ORDERED_HEADERS"
+      prefix = "NATSKELL.JS.ORDERED.HEADERS"
+      subjectA = prefix <> ".A"
+      subjectB = prefix <> ".B"
+  createStreamOrFail jetStream stream [prefix <> ".*"] streamOptions
+  void . publishPayloadWith jetStream subjectA "body-a" $
+    [JetStream.withHeaders [("X-Test", "one")]]
+  publishPayload jetStream subjectB "body-b"
+
+  ordered <- expectRight "ordered filtered headers-only consumer create" $
+    JetStream.createOrderedConsumer
+      (messages jetStream)
+      stream
+      [ JetStream.withOrderedConsumerNamePrefix "ORDERED_HEADERS"
+      , JetStream.withOrderedConsumerFilter (JetStream.ConsumerFilterSubject subjectA)
+      , JetStream.withOrderedConsumerHeadersOnly True
+      ]
+
+  firstFetch <- expectRight "ordered filtered headers-only fetch" $
+    JetStream.fetchOrdered ordered
+      [ JetStream.withFetchBatch 1
+      , JetStream.withFetchWait (JetStream.FetchExpiresMicros 1000000)
+      ]
+  case JetStream.pullResponseMessages firstFetch of
+    [message] -> do
+      JetStream.messageSubject message `shouldBe` subjectA
+      JetStream.messagePayload message `shouldNotBe` Just "body-a"
+      lookup "X-Test" (fromMaybe [] (JetStream.messageHeaders message)) `shouldBe` Just "one"
+    received ->
+      expectationFailure ("expected one ordered JetStream message, got " ++ show (length received))
+
+  empty <- expectRight "ordered filtered no-wait fetch" $
+    JetStream.fetchOrdered ordered shortFetch
+  JetStream.pullResponseMessages empty `shouldBe` []
+  expectNoMessages empty
   JetStream.stopOrderedConsumer ordered
 
 pushConsumerGracefulShutdownTest :: JetStream -> IO ()
