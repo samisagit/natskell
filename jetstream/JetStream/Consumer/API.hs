@@ -1,9 +1,11 @@
 module JetStream.Consumer.API
   ( ConsumerAPI (..)
   , AckPolicy (..)
+  , ConsumerAction (..)
   , ConsumerConfig (..)
   , ConsumerConfigOption
   , ConsumerFilter (..)
+  , ConsumerKind (..)
   , ConsumerInfo (..)
   , ConsumerListOption
   , ConsumerListResponse (..)
@@ -12,6 +14,7 @@ module JetStream.Consumer.API
   , ConsumerResetOption
   , ConsumerResetResponse (..)
   , ConsumerSequenceInfo (..)
+  , ConsumerTarget (..)
   , DeleteConsumerResponse (..)
   , DeliverPolicy (..)
   , ReplayPolicy (..)
@@ -19,9 +22,7 @@ module JetStream.Consumer.API
   , withConsumerAckWait
   , withConsumerDescription
   , withConsumerDeliverGroup
-  , withConsumerDurableName
   , withConsumerDeliverPolicy
-  , withConsumerDeliverSubject
   , withConsumerFilter
   , withConsumerHeadersOnly
   , withConsumerIdleHeartbeat
@@ -31,7 +32,6 @@ module JetStream.Consumer.API
   , withConsumerMaxDeliver
   , withConsumerMaxWaiting
   , withConsumerMemoryStorage
-  , withConsumerName
   , withConsumerReplicas
   , withConsumerReplayPolicy
   , withConsumerResetSequence
@@ -40,28 +40,12 @@ module JetStream.Consumer.API
 import           Data.Time.Clock          (UTCTime)
 import           JetStream.Consumer.Types
 import           JetStream.Error          (JetStreamError)
-import           JetStream.Types          (ConsumerName, StreamName, Subject)
+import           JetStream.Types          (ConsumerName, StreamName)
 
 -- | Consumer management operations.
 data ConsumerAPI = ConsumerAPI
-                     { createConsumer :: StreamName -> [ConsumerConfigOption] -> IO (Either JetStreamError ConsumerInfo)
-                       -- ^ Create an ephemeral or named consumer for a stream.
-                     , createOrUpdateConsumer :: StreamName -> ConsumerName -> [ConsumerConfigOption] -> IO (Either JetStreamError ConsumerInfo)
-                       -- ^ Create a named consumer or update it if it already exists.
-                     , updateConsumer :: StreamName -> ConsumerName -> [ConsumerConfigOption] -> IO (Either JetStreamError ConsumerInfo)
-                       -- ^ Update an existing named consumer.
-                     , createDurableConsumer :: StreamName -> ConsumerName -> [ConsumerConfigOption] -> IO (Either JetStreamError ConsumerInfo)
-                       -- ^ Create a durable consumer for a stream.
-                     , createOrUpdateDurableConsumer :: StreamName -> ConsumerName -> [ConsumerConfigOption] -> IO (Either JetStreamError ConsumerInfo)
-                       -- ^ Create a durable consumer or update it if it already exists.
-                     , updateDurableConsumer :: StreamName -> ConsumerName -> [ConsumerConfigOption] -> IO (Either JetStreamError ConsumerInfo)
-                       -- ^ Update an existing durable consumer.
-                     , createPushConsumer :: StreamName -> ConsumerName -> Subject -> [ConsumerConfigOption] -> IO (Either JetStreamError ConsumerInfo)
-                       -- ^ Create a named push consumer.
-                     , createOrUpdatePushConsumer :: StreamName -> ConsumerName -> Subject -> [ConsumerConfigOption] -> IO (Either JetStreamError ConsumerInfo)
-                       -- ^ Create a named push consumer or update it if it already exists.
-                     , updatePushConsumer :: StreamName -> ConsumerName -> Subject -> [ConsumerConfigOption] -> IO (Either JetStreamError ConsumerInfo)
-                       -- ^ Update an existing named push consumer.
+                     { putConsumer :: StreamName -> ConsumerAction -> ConsumerTarget -> ConsumerKind -> [ConsumerConfigOption] -> IO (Either JetStreamError ConsumerInfo)
+                       -- ^ Create, update, or create-or-update a stream consumer.
                      , consumerInfo :: StreamName -> ConsumerName -> IO (Either JetStreamError ConsumerInfo)
                        -- ^ Fetch consumer configuration and state.
                      , pauseConsumer :: StreamName -> ConsumerName -> UTCTime -> IO (Either JetStreamError ConsumerPauseResponse)

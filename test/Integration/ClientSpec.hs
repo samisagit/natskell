@@ -447,9 +447,12 @@ spec = do
           let jetStream = newJetStream client []
           done <- newEmptyMVar
           void . forkIO $ do
-            result <- JetStream.createDurableConsumer (JetStream.consumers jetStream)
+            result <- JetStream.putConsumer
+              (JetStream.consumers jetStream)
               "PROTO_STREAM"
-              "PROTO_CONSUMER"
+              JetStream.ConsumerCreate
+              (JetStream.DurableConsumer "PROTO_CONSUMER")
+              JetStream.PullConsumer
               [ JetStream.withConsumerDeliverPolicy JetStream.DeliverAll
               , JetStream.withConsumerAckPolicy JetStream.AckExplicit
               , JetStream.withConsumerFilter
@@ -473,11 +476,12 @@ spec = do
           let jetStream = newJetStream client []
           done <- newEmptyMVar
           void . forkIO $ do
-            result <- JetStream.createPushConsumer
+            result <- JetStream.putConsumer
               (JetStream.consumers jetStream)
               "PROTO_STREAM"
-              "PROTO_PUSH"
-              "PROTO.DELIVER"
+              JetStream.ConsumerCreate
+              (JetStream.NamedConsumer "PROTO_PUSH")
+              (JetStream.PushConsumer "PROTO.DELIVER")
               [ JetStream.withConsumerDeliverGroup "workers"
               , JetStream.withConsumerAckPolicy JetStream.AckExplicit
               ]
@@ -627,10 +631,12 @@ spec = do
           let jetStream = newJetStream client []
           done <- newEmptyMVar
           void . forkIO $ do
-            result <- JetStream.updateDurableConsumer
+            result <- JetStream.putConsumer
               (JetStream.consumers jetStream)
               "PROTO_STREAM"
-              "PROTO_CONSUMER"
+              JetStream.ConsumerUpdate
+              (JetStream.DurableConsumer "PROTO_CONSUMER")
+              JetStream.PullConsumer
               [ JetStream.withConsumerDescription "updated"
               , JetStream.withConsumerAckPolicy JetStream.AckExplicit
               ]

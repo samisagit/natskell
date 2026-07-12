@@ -22,6 +22,10 @@ spec = do
     it "encodes push and ordered consumer fields" $ do
       eitherDecode (encode pushConsumerConfigRequest) `shouldBe` Right pushConsumerConfigValue
 
+    it "lets consumer target and kind own mutually exclusive fields" $ do
+      eitherDecode (encode targetKindConsumerConfigRequest)
+        `shouldBe` Right targetKindConsumerConfigValue
+
   describe "Consumer reset request JSON" $ do
     it "encodes an optional reset sequence" $ do
       eitherDecode (encode (consumerResetRequest [withConsumerResetSequence 7]))
@@ -90,6 +94,23 @@ pushConsumerConfigValue = object
   , "headers_only" .= True
   , "num_replicas" .= (1 :: Int)
   , "mem_storage" .= True
+  ]
+
+targetKindConsumerConfigRequest :: ConsumerConfigRequest
+targetKindConsumerConfigRequest =
+  applyConsumerTarget (NamedConsumer "right") .
+    applyConsumerKind (PushConsumer "deliver") $
+    consumerConfigRequest
+      [ withConsumerName "wrong"
+      , withConsumerDeliverSubject "wrong"
+      , withConsumerDeliverGroup "workers"
+      ]
+
+targetKindConsumerConfigValue :: Value
+targetKindConsumerConfigValue = object
+  [ "name" .= ("right" :: String)
+  , "deliver_subject" .= ("deliver" :: String)
+  , "deliver_group" .= ("workers" :: String)
   ]
 
 consumerInfoJSON :: LBS.ByteString

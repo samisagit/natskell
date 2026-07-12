@@ -3,10 +3,11 @@
 module JetStream.Consumer.Types
   ( AckPolicy (..)
   , ConsumerConfig (..)
-  , ConsumerConfigAction (..)
+  , ConsumerAction (..)
   , ConsumerConfigOption
   , ConsumerConfigRequest
   , ConsumerFilter (..)
+  , ConsumerKind (..)
   , ConsumerInfo (..)
   , ConsumerListOption
   , ConsumerListResponse (..)
@@ -15,17 +16,18 @@ module JetStream.Consumer.Types
   , ConsumerResetOption
   , ConsumerResetResponse (..)
   , ConsumerSequenceInfo (..)
+  , ConsumerTarget (..)
   , DeleteConsumerResponse (..)
   , DeliverPolicy (..)
   , ReplayPolicy (..)
+  , applyConsumerKind
+  , applyConsumerTarget
   , consumerConfigRequest
-  , consumerConfigAction
+  , consumerActionValue
   , consumerListRequest
   , consumerNamesRequest
   , consumerPauseRequest
   , consumerResetRequest
-  , ensureDurableConsumerConfig
-  , ensureNamedConsumerConfig
   , withConsumerAckPolicy
   , withConsumerAckWait
   , withConsumerDescription
@@ -90,13 +92,22 @@ data ConsumerConfigRequest = ConsumerConfigRequest
                                }
   deriving (Eq, Show)
 
-data ConsumerConfigAction = ConsumerCreate | ConsumerCreateOrUpdate | ConsumerUpdate
+data ConsumerAction = ConsumerCreate | ConsumerCreateOrUpdate | ConsumerUpdate
   deriving (Eq, Show)
 
-consumerConfigAction :: ConsumerConfigAction -> Maybe BS.ByteString
-consumerConfigAction ConsumerCreate         = Just "create"
-consumerConfigAction ConsumerCreateOrUpdate = Nothing
-consumerConfigAction ConsumerUpdate         = Just "update"
+consumerActionValue :: ConsumerAction -> Maybe BS.ByteString
+consumerActionValue ConsumerCreate         = Just "create"
+consumerActionValue ConsumerCreateOrUpdate = Nothing
+consumerActionValue ConsumerUpdate         = Just "update"
+
+data ConsumerTarget = EphemeralConsumer
+                    | NamedConsumer ConsumerName
+                    | DurableConsumer ConsumerName
+  deriving (Eq, Show)
+
+data ConsumerKind = PullConsumer
+                  | PushConsumer Subject
+  deriving (Eq, Show)
 
 type ConsumerConfigOption = CallOption ConsumerConfigRequest
 
@@ -127,28 +138,31 @@ emptyConsumerConfigRequest =
     , consumerConfigRequestMemoryStorage = Nothing
     }
 
-ensureDurableConsumerConfig :: ConsumerName -> ConsumerConfigRequest -> ConsumerConfigRequest
-ensureDurableConsumerConfig durable config =
+applyConsumerTarget :: ConsumerTarget -> ConsumerConfigRequest -> ConsumerConfigRequest
+applyConsumerTarget EphemeralConsumer config =
   config
-    { consumerConfigRequestDurableName = choose (consumerConfigRequestDurableName config)
-    , consumerConfigRequestName = choose (consumerConfigRequestName config)
+    { consumerConfigRequestDurableName = Nothing
+    , consumerConfigRequestName = Nothing
     }
-  where
-    choose Nothing = Just durable
-    choose (Just existing)
-      | BS.null existing = Just durable
-      | otherwise = Just existing
+applyConsumerTarget (NamedConsumer name) config =
+  config
+    { consumerConfigRequestDurableName = Nothing
+    , consumerConfigRequestName = Just name
+    }
+applyConsumerTarget (DurableConsumer durable) config =
+  config
+    { consumerConfigRequestDurableName = Just durable
+    , consumerConfigRequestName = Just durable
+    }
 
-ensureNamedConsumerConfig :: ConsumerName -> ConsumerConfigRequest -> ConsumerConfigRequest
-ensureNamedConsumerConfig name config =
+applyConsumerKind :: ConsumerKind -> ConsumerConfigRequest -> ConsumerConfigRequest
+applyConsumerKind PullConsumer config =
   config
-    { consumerConfigRequestName = choose (consumerConfigRequestName config)
+    { consumerConfigRequestDeliverSubject = Nothing
+    , consumerConfigRequestDeliverGroup = Nothing
     }
-  where
-    choose Nothing = Just name
-    choose (Just existing)
-      | BS.null existing = Just name
-      | otherwise = Just existing
+applyConsumerKind (PushConsumer deliverSubject) config =
+  config { consumerConfigRequestDeliverSubject = Just deliverSubject }
 
 withConsumerDurableName :: ConsumerName -> ConsumerConfigOption
 withConsumerDurableName durable config =

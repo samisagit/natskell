@@ -398,17 +398,21 @@ consumerAdministrationTest jetStream = do
     ["msg-1", "msg-2", "msg-3", "msg-4"]
 
   created <- expectRight "create or update durable consumer" $
-    JetStream.createOrUpdateDurableConsumer
+    JetStream.putConsumer
       (consumers jetStream)
       stream
-      durable
+      JetStream.ConsumerCreateOrUpdate
+      (JetStream.DurableConsumer durable)
+      JetStream.PullConsumer
       (pullConsumerOptions durable [JetStream.withConsumerDescription "v1"])
   JetStream.consumerInfoName created `shouldBe` durable
   updated <- expectRight "update durable consumer" $
-    JetStream.updateDurableConsumer
+    JetStream.putConsumer
       (consumers jetStream)
       stream
-      durable
+      JetStream.ConsumerUpdate
+      (JetStream.DurableConsumer durable)
+      JetStream.PullConsumer
       (pullConsumerOptions durable
         [ JetStream.withConsumerDescription "v2"
         , JetStream.withConsumerMaxAckPending 64
@@ -448,11 +452,12 @@ pushConsumerTest jetStream = do
       payloads = ["push-1", "push-2", "push-3"]
   createStreamOrFail jetStream stream [subject] streamOptions
   created <- expectRight "push consumer create" $
-    JetStream.createPushConsumer
+    JetStream.putConsumer
       (consumers jetStream)
       stream
-      consumer
-      deliverSubject
+      JetStream.ConsumerCreate
+      (JetStream.NamedConsumer consumer)
+      (JetStream.PushConsumer deliverSubject)
       [ JetStream.withConsumerAckPolicy JetStream.AckExplicit
       , JetStream.withConsumerDeliverPolicy JetStream.DeliverAll
       ]
@@ -530,10 +535,9 @@ consumerOptions =
     [JetStream.withConsumerFilter (JetStream.ConsumerFilterSubject subjectName)]
 
 pullConsumerOptions :: BS.ByteString -> [JetStream.ConsumerConfigOption] -> [JetStream.ConsumerConfigOption]
-pullConsumerOptions durable extraOptions =
+pullConsumerOptions _durable extraOptions =
   extraOptions ++
-  [ JetStream.withConsumerName durable
-  , JetStream.withConsumerDeliverPolicy JetStream.DeliverAll
+  [ JetStream.withConsumerDeliverPolicy JetStream.DeliverAll
   , JetStream.withConsumerAckPolicy JetStream.AckExplicit
   ]
 
@@ -555,7 +559,13 @@ createDurableConsumerOrFail
   -> IO JetStream.ConsumerInfo
 createDurableConsumerOrFail jetStream stream durable options =
   expectRight ("durable consumer create " ++ BC.unpack durable) $
-    JetStream.createDurableConsumer (consumers jetStream) stream durable options
+    JetStream.putConsumer
+      (consumers jetStream)
+      stream
+      JetStream.ConsumerCreate
+      (JetStream.DurableConsumer durable)
+      JetStream.PullConsumer
+      options
 
 streamInfoOrFail :: JetStream -> BS.ByteString -> IO JetStream.StreamInfo
 streamInfoOrFail jetStream stream =

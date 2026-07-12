@@ -17,8 +17,11 @@ import           Data.Char                  (isAlphaNum)
 import           Data.Maybe                 (catMaybes, fromMaybe)
 import qualified JetStream.Consumer         as Consumer
 import           JetStream.Consumer.Types
-    ( ConsumerConfigOption
+    ( ConsumerAction (ConsumerCreateOrUpdate)
+    , ConsumerConfigOption
     , ConsumerInfo (consumerInfoName)
+    , ConsumerKind (PullConsumer)
+    , ConsumerTarget (NamedConsumer)
     , withConsumerAckPolicy
     , withConsumerDeliverPolicy
     , withConsumerFilter
@@ -27,7 +30,6 @@ import           JetStream.Consumer.Types
     , withConsumerMaxDeliver
     , withConsumerMaxWaiting
     , withConsumerMemoryStorage
-    , withConsumerName
     , withConsumerReplayPolicy
     , withConsumerReplicas
     )
@@ -172,11 +174,13 @@ resetOrderedConsumer state = do
         nextSequence <- readTVar (orderedStateNextSequence state)
         pure (serial, nextSequence)
       let consumerName = orderedConsumerName (orderedStateNamePrefix state) serial
-          options = orderedConsumerOptions (orderedStateConfig state) consumerName nextSequence
-      result <- Consumer.createOrUpdateConsumer
+          options = orderedConsumerOptions (orderedStateConfig state) nextSequence
+      result <- Consumer.putConsumer
         (Consumer.consumerAPI (orderedStateContext state))
         (orderedStateStream state)
-        consumerName
+        ConsumerCreateOrUpdate
+        (NamedConsumer consumerName)
+        PullConsumer
         options
       case result of
         Left err ->
@@ -203,13 +207,11 @@ stopOrdered state = do
 
 orderedConsumerOptions
   :: OrderedConsumerConfig
-  -> ConsumerName
   -> Maybe Integer
   -> [ConsumerConfigOption]
-orderedConsumerOptions config consumerName nextSequence =
+orderedConsumerOptions config nextSequence =
   catMaybes
-    [ Just (withConsumerName consumerName)
-    , Just (withConsumerAckPolicy AckNone)
+    [ Just (withConsumerAckPolicy AckNone)
     , Just (withConsumerDeliverPolicy deliverPolicy)
     , Just (withConsumerMaxDeliver (-1))
     , Just (withConsumerMaxWaiting 512)
