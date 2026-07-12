@@ -37,6 +37,33 @@ spec = do
       inProgressPayload `shouldBe` "+WPI"
       termPayload `shouldBe` "+TERM"
 
+  describe "message metadata" $ do
+    it "parses v1 JetStream ack reply subjects" $ do
+      let metadata = messageMetadata $
+            Message "ORDERS.created" (Just "payload") Nothing
+              (Just "$JS.ACK.ORDERS.WORKER.3.10.2.123000000000.4")
+              Nothing
+      fmap messageMetadataStream metadata `shouldBe` Just "ORDERS"
+      fmap messageMetadataConsumer metadata `shouldBe` Just "WORKER"
+      fmap messageMetadataNumDelivered metadata `shouldBe` Just 3
+      fmap messageMetadataStreamSequence metadata `shouldBe` Just 10
+      fmap messageMetadataConsumerSequence metadata `shouldBe` Just 2
+      fmap messageMetadataTimestamp metadata `shouldBe` Just (read "1970-01-01 00:02:03 UTC")
+      fmap messageMetadataNumPending metadata `shouldBe` Just 4
+      fmap messageMetadataDomain metadata `shouldBe` Just Nothing
+
+    it "parses v2 JetStream ack reply subjects with domains" $ do
+      let metadata = messageMetadata $
+            Message "ORDERS.created" (Just "payload") Nothing
+              (Just "$JS.ACK.HUB.ACCOUNT.ORDERS.WORKER.1.11.3.124000000000.0")
+              Nothing
+      fmap messageMetadataDomain metadata `shouldBe` Just (Just "HUB")
+      fmap messageMetadataStreamSequence metadata `shouldBe` Just 11
+
+    it "rejects non-JetStream reply subjects" $ do
+      messageMetadata (Message "ORDERS.created" Nothing Nothing (Just "_INBOX.reply") Nothing)
+        `shouldBe` Nothing
+
   describe "pull request payloads" $ do
     it "encodes one-message requests with an expires timeout" $ do
       pullRequestPayload 1 defaultPullRequest

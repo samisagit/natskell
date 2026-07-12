@@ -26,6 +26,12 @@ module JetStream.Stream.Types
   , streamNamesRequest
   , withStreamListOffset
   , withStreamListSubject
+  , StreamMessage (..)
+  , StreamMessageSelector (..)
+  , streamMessageGetRequest
+  , StreamMessageDeleteMode (..)
+  , streamMessageDeleteRequest
+  , DeleteStreamMessageResponse (..)
   , StreamInfo (..)
   , StreamState (..)
   , StreamCluster (..)
@@ -40,13 +46,15 @@ module JetStream.Stream.Types
   ) where
 
 import           Data.Aeson
-import           Data.Aeson.Types (Pair, Parser)
-import qualified Data.ByteString  as BS
-import           Data.Maybe       (catMaybes)
-import           Data.Time.Clock  (NominalDiffTime, UTCTime)
+import           Data.Aeson.Types       (Pair, Parser)
+import qualified Data.ByteString        as BS
+import qualified Data.ByteString.Base64 as Base64
+import           Data.Maybe             (catMaybes)
+import           Data.Time.Clock        (NominalDiffTime, UTCTime)
 import           JetStream.Types
     ( CallOption
     , DiscardPolicy (..)
+    , Payload
     , RetentionPolicy (..)
     , StorageType (..)
     , StreamName
@@ -275,6 +283,49 @@ data StreamNamesResponse = StreamNamesResponse
                              }
   deriving (Eq, Show)
 
+data StreamMessage = StreamMessage
+                       { streamMessageSubject    :: Subject
+                       , streamMessageSequence   :: Integer
+                       , streamMessageHeadersRaw :: Maybe BS.ByteString
+                       , streamMessagePayload    :: Maybe Payload
+                       , streamMessageTime       :: UTCTime
+                       }
+  deriving (Eq, Show)
+
+data StreamMessageSelector = StreamMessageBySequence Integer
+                           | LastStreamMessageForSubject Subject
+                           | NextStreamMessageForSubject Subject
+  deriving (Eq, Show)
+
+newtype StreamMessageGetRequest = StreamMessageGetRequest { streamMessageGetSelector :: StreamMessageSelector }
+  deriving (Eq, Show)
+
+streamMessageGetRequest :: StreamMessageSelector -> StreamMessageGetRequest
+streamMessageGetRequest =
+  StreamMessageGetRequest
+
+data StreamMessageDeleteMode = DeleteMessage | SecureDeleteMessage
+  deriving (Eq, Show)
+
+data StreamMessageDeleteRequest = StreamMessageDeleteRequest
+                                    { streamMessageDeleteSequence :: Integer
+                                    , streamMessageDeleteNoErase  :: Maybe Bool
+                                    }
+  deriving (Eq, Show)
+
+streamMessageDeleteRequest :: Integer -> StreamMessageDeleteMode -> StreamMessageDeleteRequest
+streamMessageDeleteRequest sequenceNumber mode =
+  StreamMessageDeleteRequest
+    { streamMessageDeleteSequence = sequenceNumber
+    , streamMessageDeleteNoErase =
+        case mode of
+          DeleteMessage       -> Just True
+          SecureDeleteMessage -> Nothing
+    }
+
+newtype DeleteStreamMessageResponse = DeleteStreamMessageResponse { deleteStreamMessageSuccess :: Bool }
+  deriving (Eq, Show)
+
 instance ToJSON StreamConfigRequest where
   toJSON config =
     object $
@@ -337,6 +388,23 @@ instance ToJSON StreamListRequest where
     object . catMaybes $
       [ maybePair "offset" (streamListRequestOffset request)
       , maybeByteStringPair "subject" (streamListRequestSubject request)
+      ]
+
+instance ToJSON StreamMessageGetRequest where
+  toJSON request =
+    case streamMessageGetSelector request of
+      StreamMessageBySequence sequenceNumber ->
+        object ["seq" .= sequenceNumber]
+      LastStreamMessageForSubject subject ->
+        object [byteStringPair "last_by_subj" subject]
+      NextStreamMessageForSubject subject ->
+        object [byteStringPair "next_by_subj" subject]
+
+instance ToJSON StreamMessageDeleteRequest where
+  toJSON request =
+    object . catMaybes $
+      [ Just ("seq" .= streamMessageDeleteSequence request)
+      , maybePair "no_erase" (streamMessageDeleteNoErase request)
       ]
 
 instance ToJSON StreamInfo where
@@ -507,6 +575,43 @@ instance FromJSON StreamNamesResponse where
         <*> value .: "limit"
         <*> parseOptionalByteStringListField value "streams" .!= []
 
+instance FromJSON StreamMessage where
+  parseJSON =
+    withObject "StreamMessageResponse" $ \value ->
+      value .: "message" >>= parseStoredMessage
+
+instance ToJSON StreamMessage where
+  toJSON message =
+    object . catMaybes $
+      [ Just (byteStringPair "subject" (streamMessageSubject message))
+      , Just ("seq" .= streamMessageSequence message)
+      , maybeBase64Pair "hdrs" (streamMessageHeadersRaw message)
+      , maybeBase64Pair "data" (streamMessagePayload message)
+      , Just ("time" .= streamMessageTime message)
+      ]
+
+instance FromJSON DeleteStreamMessageResponse where
+  parseJSON =
+    withObject "DeleteStreamMessageResponse" $ \value ->
+      DeleteStreamMessageResponse
+        <$> value .:? "success" .!= False
+
+instance ToJSON DeleteStreamMessageResponse where
+  toJSON response =
+    object
+      [ "success" .= deleteStreamMessageSuccess response
+      ]
+
+parseStoredMessage :: Value -> Parser StreamMessage
+parseStoredMessage =
+  withObject "StreamMessage" $ \value ->
+    StreamMessage
+      <$> parseByteStringField value "subject"
+      <*> value .: "seq"
+      <*> parseOptionalBase64Field value "hdrs"
+      <*> parseOptionalBase64Field value "data"
+      <*> value .: "time"
+
 durationToNanoseconds :: NominalDiffTime -> Integer
 durationToNanoseconds duration =
   round (realToFrac duration * (1000000000 :: Double))
@@ -523,6 +628,10 @@ byteStringListPair key = (key .=) . map byteStringToJSON
 
 maybeByteStringPair :: Key -> Maybe BS.ByteString -> Maybe Pair
 maybeByteStringPair key = fmap (byteStringPair key)
+
+maybeBase64Pair :: Key -> Maybe BS.ByteString -> Maybe Pair
+maybeBase64Pair key =
+  fmap ((key .=) . byteStringToJSON . Base64.encode)
 
 maybeByteStringListPair :: Key -> Maybe [BS.ByteString] -> Maybe Pair
 maybeByteStringListPair key = fmap (byteStringListPair key)
@@ -541,6 +650,17 @@ parseOptionalByteStringField :: Object -> Key -> Parser (Maybe BS.ByteString)
 parseOptionalByteStringField value key = do
   byteString <- value .:? key
   traverse parseByteString byteString
+
+parseOptionalBase64Field :: Object -> Key -> Parser (Maybe BS.ByteString)
+parseOptionalBase64Field value key = do
+  encoded <- value .:? key
+  traverse parseBase64 encoded
+  where
+    parseBase64 jsonValue = do
+      bytes <- parseByteString jsonValue
+      case Base64.decode bytes of
+        Left err      -> fail err
+        Right decoded -> pure decoded
 
 parseOptionalByteStringListField :: Object -> Key -> Parser (Maybe [BS.ByteString])
 parseOptionalByteStringListField value key = do

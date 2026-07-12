@@ -1,7 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module JetStream.Types
-  ( StreamName
+  ( AccountAPIStats (..)
+  , AccountInfo (..)
+  , AccountLimits (..)
+  , AccountTier (..)
+  , StreamName
   , ConsumerName
   , Subject
   , Payload
@@ -20,8 +24,11 @@ module JetStream.Types
   ) where
 
 import           Data.Aeson
-import           Data.Aeson.Types   (Parser)
+import qualified Data.Aeson.Key     as Key
+import qualified Data.Aeson.KeyMap  as KeyMap
+import           Data.Aeson.Types   (Pair, Parser, typeMismatch)
 import qualified Data.ByteString    as BS
+import           Data.Maybe         (catMaybes)
 import qualified Data.Text          as T
 import qualified Data.Text.Encoding as E
 import           Data.Time.Clock    (NominalDiffTime)
@@ -33,6 +40,45 @@ type Subject = BS.ByteString
 type Payload = BS.ByteString
 type Headers = [(BS.ByteString, BS.ByteString)]
 type CallOption a = a -> a
+
+data AccountInfo = AccountInfo
+                     { accountInfoTier   :: AccountTier
+                     , accountInfoDomain :: Maybe BS.ByteString
+                     , accountInfoAPI    :: AccountAPIStats
+                     , accountInfoTiers  :: [(BS.ByteString, AccountTier)]
+                     }
+  deriving (Eq, Show)
+
+data AccountTier = AccountTier
+                     { accountTierMemory          :: Integer
+                     , accountTierStorage         :: Integer
+                     , accountTierReservedMemory  :: Integer
+                     , accountTierReservedStorage :: Integer
+                     , accountTierStreams         :: Int
+                     , accountTierConsumers       :: Int
+                     , accountTierLimits          :: AccountLimits
+                     }
+  deriving (Eq, Show)
+
+data AccountAPIStats = AccountAPIStats
+                         { accountAPILevel    :: Int
+                         , accountAPITotal    :: Integer
+                         , accountAPIErrors   :: Integer
+                         , accountAPIInflight :: Maybe Integer
+                         }
+  deriving (Eq, Show)
+
+data AccountLimits = AccountLimits
+                       { accountLimitsMaxMemory             :: Integer
+                       , accountLimitsMaxStorage            :: Integer
+                       , accountLimitsMaxStreams            :: Int
+                       , accountLimitsMaxConsumers          :: Int
+                       , accountLimitsMaxAckPending         :: Int
+                       , accountLimitsMemoryMaxStreamBytes  :: Integer
+                       , accountLimitsStorageMaxStreamBytes :: Integer
+                       , accountLimitsMaxBytesRequired      :: Bool
+                       }
+  deriving (Eq, Show)
 
 applyCallOptions :: [CallOption a] -> a -> a
 applyCallOptions options value =
@@ -168,3 +214,128 @@ parseByteString =
 diffTimeNanosToJSON :: NominalDiffTime -> Value
 diffTimeNanosToJSON diffTime =
   Number (fromInteger (floor (realToFrac diffTime * (1000000000 :: Double))))
+
+instance FromJSON AccountInfo where
+  parseJSON value@(Object obj) =
+    AccountInfo
+      <$> parseJSON value
+      <*> parseOptionalByteStringField obj "domain"
+      <*> obj .: "api"
+      <*> parseAccountTiers obj
+  parseJSON invalid =
+    typeMismatch "AccountInfo" invalid
+
+instance ToJSON AccountInfo where
+  toJSON info =
+    object $
+      accountTierPairs (accountInfoTier info)
+        ++ catMaybes
+          [ maybeByteStringPair "domain" (accountInfoDomain info)
+          , Just ("api" .= accountInfoAPI info)
+          , Just ("tiers" .= accountTiersValue (accountInfoTiers info))
+          ]
+
+instance FromJSON AccountTier where
+  parseJSON =
+    withObject "AccountTier" $ \obj ->
+      AccountTier
+        <$> obj .: "memory"
+        <*> obj .: "storage"
+        <*> obj .: "reserved_memory"
+        <*> obj .: "reserved_storage"
+        <*> obj .: "streams"
+        <*> obj .: "consumers"
+        <*> obj .: "limits"
+
+instance ToJSON AccountTier where
+  toJSON =
+    object . accountTierPairs
+
+instance FromJSON AccountAPIStats where
+  parseJSON =
+    withObject "AccountAPIStats" $ \obj ->
+      AccountAPIStats
+        <$> obj .: "level"
+        <*> obj .: "total"
+        <*> obj .: "errors"
+        <*> obj .:? "inflight"
+
+instance ToJSON AccountAPIStats where
+  toJSON stats =
+    object . catMaybes $
+      [ Just ("level" .= accountAPILevel stats)
+      , Just ("total" .= accountAPITotal stats)
+      , Just ("errors" .= accountAPIErrors stats)
+      , maybePair "inflight" (accountAPIInflight stats)
+      ]
+
+instance FromJSON AccountLimits where
+  parseJSON =
+    withObject "AccountLimits" $ \obj ->
+      AccountLimits
+        <$> obj .: "max_memory"
+        <*> obj .: "max_storage"
+        <*> obj .: "max_streams"
+        <*> obj .: "max_consumers"
+        <*> obj .: "max_ack_pending"
+        <*> obj .: "memory_max_stream_bytes"
+        <*> obj .: "storage_max_stream_bytes"
+        <*> obj .: "max_bytes_required"
+
+instance ToJSON AccountLimits where
+  toJSON limits =
+    object
+      [ "max_memory" .= accountLimitsMaxMemory limits
+      , "max_storage" .= accountLimitsMaxStorage limits
+      , "max_streams" .= accountLimitsMaxStreams limits
+      , "max_consumers" .= accountLimitsMaxConsumers limits
+      , "max_ack_pending" .= accountLimitsMaxAckPending limits
+      , "memory_max_stream_bytes" .= accountLimitsMemoryMaxStreamBytes limits
+      , "storage_max_stream_bytes" .= accountLimitsStorageMaxStreamBytes limits
+      , "max_bytes_required" .= accountLimitsMaxBytesRequired limits
+      ]
+
+accountTierPairs :: AccountTier -> [Pair]
+accountTierPairs tier =
+  [ "memory" .= accountTierMemory tier
+  , "storage" .= accountTierStorage tier
+  , "reserved_memory" .= accountTierReservedMemory tier
+  , "reserved_storage" .= accountTierReservedStorage tier
+  , "streams" .= accountTierStreams tier
+  , "consumers" .= accountTierConsumers tier
+  , "limits" .= accountTierLimits tier
+  ]
+
+parseAccountTiers :: Object -> Parser [(BS.ByteString, AccountTier)]
+parseAccountTiers obj = do
+  tiers <- obj .:? "tiers"
+  case tiers of
+    Nothing ->
+      pure []
+    Just (Object tierMap) ->
+      traverse parseTier (KeyMap.toList tierMap)
+    Just invalid ->
+      typeMismatch "AccountInfo.tiers" invalid
+  where
+    parseTier (name, value) =
+      (,) (E.encodeUtf8 (Key.toText name)) <$> parseJSON value
+
+accountTiersValue :: [(BS.ByteString, AccountTier)] -> Value
+accountTiersValue =
+  Object . KeyMap.fromList . fmap tierPair
+  where
+    tierPair (name, tier) =
+      (Key.fromText (E.decodeUtf8 name), toJSON tier)
+
+parseOptionalByteStringField :: Object -> Key.Key -> Parser (Maybe BS.ByteString)
+parseOptionalByteStringField obj key = do
+  value <- obj .:? key
+  traverse parseByteString value
+
+maybeByteStringPair :: Key.Key -> Maybe BS.ByteString -> Maybe Pair
+maybeByteStringPair key =
+  fmap ((key .=) . byteStringToJSON)
+
+maybePair :: ToJSON value => Key.Key -> Maybe value -> Maybe Pair
+maybePair key =
+  fmap (key .=)

@@ -3,6 +3,7 @@
 module JetStream.Consumer.Types
   ( AckPolicy (..)
   , ConsumerConfig (..)
+  , ConsumerConfigAction (..)
   , ConsumerConfigOption
   , ConsumerConfigRequest
   , ConsumerFilter (..)
@@ -10,26 +11,41 @@ module JetStream.Consumer.Types
   , ConsumerListOption
   , ConsumerListResponse (..)
   , ConsumerNamesResponse (..)
+  , ConsumerPauseResponse (..)
+  , ConsumerResetOption
+  , ConsumerResetResponse (..)
   , ConsumerSequenceInfo (..)
   , DeleteConsumerResponse (..)
   , DeliverPolicy (..)
   , ReplayPolicy (..)
   , consumerConfigRequest
+  , consumerConfigAction
   , consumerListRequest
   , consumerNamesRequest
+  , consumerPauseRequest
+  , consumerResetRequest
   , ensureDurableConsumerConfig
+  , ensureNamedConsumerConfig
   , withConsumerAckPolicy
   , withConsumerAckWait
   , withConsumerDescription
+  , withConsumerDeliverGroup
   , withConsumerDurableName
+  , withConsumerDeliverSubject
   , withConsumerFilter
+  , withConsumerHeadersOnly
+  , withConsumerIdleHeartbeat
   , withConsumerInactiveThreshold
   , withConsumerListOffset
   , withConsumerMaxAckPending
   , withConsumerMaxDeliver
+  , withConsumerMaxWaiting
+  , withConsumerMemoryStorage
   , withConsumerName
+  , withConsumerReplicas
   , withConsumerDeliverPolicy
   , withConsumerReplayPolicy
+  , withConsumerResetSequence
   ) where
 
 import           Data.Aeson
@@ -56,16 +72,31 @@ data ConsumerConfigRequest = ConsumerConfigRequest
                                { consumerConfigRequestDurableName :: Maybe ConsumerName
                                , consumerConfigRequestName :: Maybe ConsumerName
                                , consumerConfigRequestDescription :: Maybe BS.ByteString
+                               , consumerConfigRequestDeliverSubject :: Maybe Subject
+                               , consumerConfigRequestDeliverGroup :: Maybe Subject
                                , consumerConfigRequestDeliverPolicy :: Maybe DeliverPolicy
                                , consumerConfigRequestAckPolicy :: Maybe AckPolicy
                                , consumerConfigRequestReplayPolicy :: Maybe ReplayPolicy
                                , consumerConfigRequestFilter :: Maybe ConsumerFilter
                                , consumerConfigRequestAckWait :: Maybe NominalDiffTime
                                , consumerConfigRequestMaxDeliver :: Maybe Int
+                               , consumerConfigRequestMaxWaiting :: Maybe Int
                                , consumerConfigRequestMaxAckPending :: Maybe Int
                                , consumerConfigRequestInactiveThreshold :: Maybe NominalDiffTime
+                               , consumerConfigRequestIdleHeartbeat :: Maybe NominalDiffTime
+                               , consumerConfigRequestHeadersOnly :: Maybe Bool
+                               , consumerConfigRequestReplicas :: Maybe Int
+                               , consumerConfigRequestMemoryStorage :: Maybe Bool
                                }
   deriving (Eq, Show)
+
+data ConsumerConfigAction = ConsumerCreate | ConsumerCreateOrUpdate | ConsumerUpdate
+  deriving (Eq, Show)
+
+consumerConfigAction :: ConsumerConfigAction -> Maybe BS.ByteString
+consumerConfigAction ConsumerCreate         = Just "create"
+consumerConfigAction ConsumerCreateOrUpdate = Nothing
+consumerConfigAction ConsumerUpdate         = Just "update"
 
 type ConsumerConfigOption = CallOption ConsumerConfigRequest
 
@@ -79,14 +110,21 @@ emptyConsumerConfigRequest =
     { consumerConfigRequestDurableName = Nothing
     , consumerConfigRequestName = Nothing
     , consumerConfigRequestDescription = Nothing
+    , consumerConfigRequestDeliverSubject = Nothing
+    , consumerConfigRequestDeliverGroup = Nothing
     , consumerConfigRequestDeliverPolicy = Nothing
     , consumerConfigRequestAckPolicy = Nothing
     , consumerConfigRequestReplayPolicy = Nothing
     , consumerConfigRequestFilter = Nothing
     , consumerConfigRequestAckWait = Nothing
     , consumerConfigRequestMaxDeliver = Nothing
+    , consumerConfigRequestMaxWaiting = Nothing
     , consumerConfigRequestMaxAckPending = Nothing
     , consumerConfigRequestInactiveThreshold = Nothing
+    , consumerConfigRequestIdleHeartbeat = Nothing
+    , consumerConfigRequestHeadersOnly = Nothing
+    , consumerConfigRequestReplicas = Nothing
+    , consumerConfigRequestMemoryStorage = Nothing
     }
 
 ensureDurableConsumerConfig :: ConsumerName -> ConsumerConfigRequest -> ConsumerConfigRequest
@@ -101,6 +139,17 @@ ensureDurableConsumerConfig durable config =
       | BS.null existing = Just durable
       | otherwise = Just existing
 
+ensureNamedConsumerConfig :: ConsumerName -> ConsumerConfigRequest -> ConsumerConfigRequest
+ensureNamedConsumerConfig name config =
+  config
+    { consumerConfigRequestName = choose (consumerConfigRequestName config)
+    }
+  where
+    choose Nothing = Just name
+    choose (Just existing)
+      | BS.null existing = Just name
+      | otherwise = Just existing
+
 withConsumerDurableName :: ConsumerName -> ConsumerConfigOption
 withConsumerDurableName durable config =
   config { consumerConfigRequestDurableName = Just durable }
@@ -112,6 +161,14 @@ withConsumerName name config =
 withConsumerDescription :: BS.ByteString -> ConsumerConfigOption
 withConsumerDescription description config =
   config { consumerConfigRequestDescription = Just description }
+
+withConsumerDeliverSubject :: Subject -> ConsumerConfigOption
+withConsumerDeliverSubject subject config =
+  config { consumerConfigRequestDeliverSubject = Just subject }
+
+withConsumerDeliverGroup :: Subject -> ConsumerConfigOption
+withConsumerDeliverGroup group config =
+  config { consumerConfigRequestDeliverGroup = Just group }
 
 withConsumerDeliverPolicy :: DeliverPolicy -> ConsumerConfigOption
 withConsumerDeliverPolicy policy config =
@@ -141,6 +198,10 @@ withConsumerMaxDeliver :: Int -> ConsumerConfigOption
 withConsumerMaxDeliver maxDeliver config =
   config { consumerConfigRequestMaxDeliver = Just maxDeliver }
 
+withConsumerMaxWaiting :: Int -> ConsumerConfigOption
+withConsumerMaxWaiting maxWaiting config =
+  config { consumerConfigRequestMaxWaiting = Just maxWaiting }
+
 withConsumerMaxAckPending :: Int -> ConsumerConfigOption
 withConsumerMaxAckPending maxAckPending config =
   config { consumerConfigRequestMaxAckPending = Just maxAckPending }
@@ -149,10 +210,28 @@ withConsumerInactiveThreshold :: NominalDiffTime -> ConsumerConfigOption
 withConsumerInactiveThreshold inactiveThreshold config =
   config { consumerConfigRequestInactiveThreshold = Just inactiveThreshold }
 
+withConsumerIdleHeartbeat :: NominalDiffTime -> ConsumerConfigOption
+withConsumerIdleHeartbeat idleHeartbeat config =
+  config { consumerConfigRequestIdleHeartbeat = Just idleHeartbeat }
+
+withConsumerHeadersOnly :: Bool -> ConsumerConfigOption
+withConsumerHeadersOnly headersOnly config =
+  config { consumerConfigRequestHeadersOnly = Just headersOnly }
+
+withConsumerReplicas :: Int -> ConsumerConfigOption
+withConsumerReplicas replicas config =
+  config { consumerConfigRequestReplicas = Just replicas }
+
+withConsumerMemoryStorage :: Bool -> ConsumerConfigOption
+withConsumerMemoryStorage memoryStorage config =
+  config { consumerConfigRequestMemoryStorage = Just memoryStorage }
+
 data ConsumerConfig = ConsumerConfig
                         { consumerConfigDurableName :: Maybe ConsumerName
                         , consumerConfigName :: Maybe ConsumerName
                         , consumerConfigDescription :: Maybe BS.ByteString
+                        , consumerConfigDeliverSubject :: Maybe Subject
+                        , consumerConfigDeliverGroup :: Maybe Subject
                         , consumerConfigDeliverPolicy :: DeliverPolicy
                         , consumerConfigAckPolicy :: AckPolicy
                         , consumerConfigReplayPolicy :: ReplayPolicy
@@ -160,8 +239,13 @@ data ConsumerConfig = ConsumerConfig
                         , consumerConfigFilterSubjects :: Maybe [Subject]
                         , consumerConfigAckWait :: Maybe NominalDiffTime
                         , consumerConfigMaxDeliver :: Maybe Int
+                        , consumerConfigMaxWaiting :: Maybe Int
                         , consumerConfigMaxAckPending :: Maybe Int
                         , consumerConfigInactiveThreshold :: Maybe NominalDiffTime
+                        , consumerConfigIdleHeartbeat :: Maybe NominalDiffTime
+                        , consumerConfigHeadersOnly :: Maybe Bool
+                        , consumerConfigReplicas :: Maybe Int
+                        , consumerConfigMemoryStorage :: Maybe Bool
                         }
   deriving (Eq, Show)
 
@@ -187,6 +271,42 @@ data ConsumerSequenceInfo = ConsumerSequenceInfo
   deriving (Eq, Show)
 
 newtype DeleteConsumerResponse = DeleteConsumerResponse { deleteConsumerSuccess :: Bool }
+  deriving (Eq, Show)
+
+newtype ConsumerPauseRequest = ConsumerPauseRequest { consumerPauseUntil :: Maybe UTCTime }
+  deriving (Eq, Show)
+
+consumerPauseRequest :: Maybe UTCTime -> ConsumerPauseRequest
+consumerPauseRequest =
+  ConsumerPauseRequest
+
+data ConsumerPauseResponse = ConsumerPauseResponse
+                               { consumerPausePaused    :: Bool
+                               , consumerPauseUntilTime :: Maybe UTCTime
+                               , consumerPauseRemaining :: Maybe NominalDiffTime
+                               }
+  deriving (Eq, Show)
+
+newtype ConsumerResetRequest = ConsumerResetRequest { consumerResetRequestSequence :: Maybe Integer }
+  deriving (Eq, Show)
+
+type ConsumerResetOption = CallOption ConsumerResetRequest
+
+consumerResetRequest :: [ConsumerResetOption] -> ConsumerResetRequest
+consumerResetRequest options =
+  applyCallOptions options $
+    ConsumerResetRequest
+      { consumerResetRequestSequence = Nothing
+      }
+
+withConsumerResetSequence :: Integer -> ConsumerResetOption
+withConsumerResetSequence sequenceNumber request =
+  request { consumerResetRequestSequence = Just sequenceNumber }
+
+data ConsumerResetResponse = ConsumerResetResponse
+                               { consumerResetInfo             :: ConsumerInfo
+                               , consumerResetResponseSequence :: Integer
+                               }
   deriving (Eq, Show)
 
 newtype ConsumerListRequest = ConsumerListRequest { consumerListRequestOffset :: Maybe Int }
@@ -234,12 +354,19 @@ instance ToJSON ConsumerConfigRequest where
       [ maybeByteStringPair "durable_name" (consumerConfigRequestDurableName config)
       , maybeByteStringPair "name" (consumerConfigRequestName config)
       , maybeByteStringPair "description" (consumerConfigRequestDescription config)
+      , maybeByteStringPair "deliver_subject" (consumerConfigRequestDeliverSubject config)
+      , maybeByteStringPair "deliver_group" (consumerConfigRequestDeliverGroup config)
       , maybePair "ack_policy" (consumerConfigRequestAckPolicy config)
       , maybePair "replay_policy" (consumerConfigRequestReplayPolicy config)
       , maybeJsonPair "ack_wait" (diffTimeNanosToJSON <$> consumerConfigRequestAckWait config)
       , maybePair "max_deliver" (consumerConfigRequestMaxDeliver config)
+      , maybePair "max_waiting" (consumerConfigRequestMaxWaiting config)
       , maybePair "max_ack_pending" (consumerConfigRequestMaxAckPending config)
       , maybeJsonPair "inactive_threshold" (diffTimeNanosToJSON <$> consumerConfigRequestInactiveThreshold config)
+      , maybeJsonPair "idle_heartbeat" (diffTimeNanosToJSON <$> consumerConfigRequestIdleHeartbeat config)
+      , maybePair "headers_only" (consumerConfigRequestHeadersOnly config)
+      , maybePair "num_replicas" (consumerConfigRequestReplicas config)
+      , maybePair "mem_storage" (consumerConfigRequestMemoryStorage config)
       ] ++ maybe [] deliverPolicyRequestPairs (consumerConfigRequestDeliverPolicy config)
         ++ maybe [] consumerFilterPairs (consumerConfigRequestFilter config)
 
@@ -249,14 +376,21 @@ instance ToJSON ConsumerConfig where
       [ maybeByteStringPair "durable_name" (consumerConfigDurableName config)
       , maybeByteStringPair "name" (consumerConfigName config)
       , maybeByteStringPair "description" (consumerConfigDescription config)
+      , maybeByteStringPair "deliver_subject" (consumerConfigDeliverSubject config)
+      , maybeByteStringPair "deliver_group" (consumerConfigDeliverGroup config)
       , Just ("ack_policy" .= consumerConfigAckPolicy config)
       , Just ("replay_policy" .= consumerConfigReplayPolicy config)
       , maybeByteStringPair "filter_subject" (consumerConfigFilterSubject config)
       , maybeByteStringListPair "filter_subjects" (consumerConfigFilterSubjects config)
       , maybeJsonPair "ack_wait" (diffTimeNanosToJSON <$> consumerConfigAckWait config)
       , maybePair "max_deliver" (consumerConfigMaxDeliver config)
+      , maybePair "max_waiting" (consumerConfigMaxWaiting config)
       , maybePair "max_ack_pending" (consumerConfigMaxAckPending config)
       , maybeJsonPair "inactive_threshold" (diffTimeNanosToJSON <$> consumerConfigInactiveThreshold config)
+      , maybeJsonPair "idle_heartbeat" (diffTimeNanosToJSON <$> consumerConfigIdleHeartbeat config)
+      , maybePair "headers_only" (consumerConfigHeadersOnly config)
+      , maybePair "num_replicas" (consumerConfigReplicas config)
+      , maybePair "mem_storage" (consumerConfigMemoryStorage config)
       ] ++ fmap Just (deliverPolicyPairs (consumerConfigDeliverPolicy config))
 
 instance FromJSON ConsumerConfig where
@@ -265,6 +399,8 @@ instance FromJSON ConsumerConfig where
       <$> parseOptionalByteStringField obj "durable_name"
       <*> parseOptionalByteStringField obj "name"
       <*> parseOptionalByteStringField obj "description"
+      <*> parseOptionalByteStringField obj "deliver_subject"
+      <*> parseOptionalByteStringField obj "deliver_group"
       <*> parseDeliverPolicyField obj "deliver_policy"
       <*> obj .: "ack_policy"
       <*> obj .: "replay_policy"
@@ -272,8 +408,13 @@ instance FromJSON ConsumerConfig where
       <*> parseOptionalByteStringListField obj "filter_subjects"
       <*> parseOptionalDurationField obj "ack_wait"
       <*> obj .:? "max_deliver"
+      <*> obj .:? "max_waiting"
       <*> obj .:? "max_ack_pending"
       <*> parseOptionalDurationField obj "inactive_threshold"
+      <*> parseOptionalDurationField obj "idle_heartbeat"
+      <*> obj .:? "headers_only"
+      <*> obj .:? "num_replicas"
+      <*> obj .:? "mem_storage"
 
 instance FromJSON ConsumerInfo where
   parseJSON = withObject "ConsumerInfo" $ \obj ->
@@ -323,6 +464,35 @@ instance FromJSON DeleteConsumerResponse where
   parseJSON = withObject "DeleteConsumerResponse" $ \obj ->
     DeleteConsumerResponse
       <$> obj .:? "success" .!= False
+
+instance ToJSON ConsumerPauseRequest where
+  toJSON request =
+    object . catMaybes $
+      [ maybePair "pause_until" (consumerPauseUntil request)
+      ]
+
+instance FromJSON ConsumerPauseResponse where
+  parseJSON = withObject "ConsumerPauseResponse" $ \obj ->
+    ConsumerPauseResponse
+      <$> obj .: "paused"
+      <*> obj .:? "pause_until"
+      <*> parseOptionalDurationField obj "pause_remaining"
+
+instance ToJSON ConsumerResetRequest where
+  toJSON request =
+    object . catMaybes $
+      [ maybePair "seq" (consumerResetRequestSequence request)
+      ]
+
+instance FromJSON ConsumerResetResponse where
+  parseJSON value =
+    ConsumerResetResponse
+      <$> parseJSON value
+      <*> parseResetSequence value
+    where
+      parseResetSequence =
+        withObject "ConsumerResetResponse" $ \obj ->
+          obj .: "reset_seq"
 
 instance ToJSON ConsumerListRequest where
   toJSON request =
