@@ -37,7 +37,7 @@ instance FromJSON PublishAck where
       { publishAckStream = encodeUtf8 streamName
       , publishAckSequence = sequence
       , publishAckDuplicate = duplicate
-      , publishAckDomain = fmap encodeUtf8 domainName
+      , publishAckDomain = encodeUtf8 <$> domainName
       }
 
 type PublishOption = PublishConfig -> PublishConfig

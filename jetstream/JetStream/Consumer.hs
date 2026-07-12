@@ -6,28 +6,31 @@ module JetStream.Consumer
   ) where
 
 import           Data.Aeson                 (Value, object, toJSON, (.=))
-import qualified Data.ByteString            as BS
-import           JetStream.Consumer.API
+import           JetStream.Consumer.API     (ConsumerAPI (..))
+import           JetStream.Consumer.Types
+    ( ConsumerConfigRequest
+    , consumerConfigRequest
+    , consumerListRequest
+    , consumerNamesRequest
+    , ensureDurableConsumerConfig
+    )
 import           JetStream.Options          (JetStreamContext)
 import qualified JetStream.Protocol.Request as Request
 import qualified JetStream.Protocol.Subject as Subject
-import           JetStream.Types
-    ( ConsumerName
-    , StreamName
-    , byteStringToJSON
-    )
+import           JetStream.Types            (StreamName, byteStringToJSON)
 
 consumerAPI :: JetStreamContext -> ConsumerAPI
 consumerAPI context =
   ConsumerAPI
-    { createConsumer = \stream config ->
+    { createConsumer = \stream options ->
         Request.requestJSON context
           (Subject.consumerCreateSubject context stream)
-          (Just (createConsumerRequest stream config))
-    , createDurableConsumer = \stream durable config ->
-        Request.requestJSON context
+          (Just (createConsumerRequest stream (consumerConfigRequest options)))
+    , createDurableConsumer = \stream durable options ->
+        let config = ensureDurableConsumerConfig durable (consumerConfigRequest options)
+        in Request.requestJSON context
           (Subject.durableConsumerCreateSubject context stream durable)
-          (Just (createConsumerRequest stream (withDurable durable config)))
+          (Just (createConsumerRequest stream config))
     , consumerInfo = \stream consumer ->
         Request.requestJSON context
           (Subject.consumerInfoSubject context stream consumer)
@@ -36,29 +39,17 @@ consumerAPI context =
         Request.requestJSON context
           (Subject.consumerDeleteSubject context stream consumer)
           Nothing
-    , listConsumers = \stream request ->
+    , listConsumers = \stream options ->
         Request.requestJSON context
           (Subject.consumerListSubject context stream)
-          (Just (toJSON request))
-    , consumerNames = \stream request ->
+          (Just (toJSON (consumerListRequest options)))
+    , consumerNames = \stream options ->
         Request.requestJSON context
           (Subject.consumerNamesSubject context stream)
-          (Just (toJSON request))
+          (Just (toJSON (consumerNamesRequest options)))
     }
 
-withDurable :: ConsumerName -> ConsumerConfig -> ConsumerConfig
-withDurable durable config =
-  config
-    { consumerConfigDurableName = choose (consumerConfigDurableName config)
-    , consumerConfigName = choose (consumerConfigName config)
-    }
-  where
-    choose Nothing = Just durable
-    choose (Just existing)
-      | BS.null existing = Just durable
-      | otherwise = Just existing
-
-createConsumerRequest :: StreamName -> ConsumerConfig -> Value
+createConsumerRequest :: StreamName -> ConsumerConfigRequest -> Value
 createConsumerRequest stream config =
   object
     [ "stream_name" .= byteStringToJSON stream

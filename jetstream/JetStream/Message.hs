@@ -11,7 +11,8 @@ import qualified API                        as Nats
 import           Control.Concurrent.STM
 import           Control.Exception          (bracket)
 import           JetStream.Error            (JetStreamError (JetStreamNoReply))
-import           JetStream.Message.API
+import           JetStream.Message.API      (MessageAPI (..))
+import           JetStream.Message.Types
 import           JetStream.Options          (JetStreamContext (..))
 import qualified JetStream.Protocol.Subject as Subject
 import           JetStream.Types            (ConsumerName, StreamName)
@@ -21,7 +22,8 @@ import           System.Timeout             (timeout)
 messageAPI :: JetStreamContext -> MessageAPI
 messageAPI context =
   MessageAPI
-    { fetch = fetchMessages context
+    { fetch = \stream consumer options ->
+        fetchMessages context stream consumer (pullRequest options)
     , ack = ackMessage (contextClient context)
     , nak = nakMessage (contextClient context)
     , inProgress = inProgressMessage (contextClient context)
@@ -106,7 +108,10 @@ publishAck natsClient verb message =
       Right <$> Nats.publish natsClient reply [Nats.withPayload (ackPayload verb)]
 
 responseTimeoutMicros :: PullRequest -> Int
-responseTimeoutMicros request
-  | pullRequestNoWait request = max 1 (pullRequestTimeoutMicros request)
-  | pullRequestTimeoutMicros request <= 0 = 1
-  | otherwise = pullRequestTimeoutMicros request + 100000
+responseTimeoutMicros request =
+  case pullRequestWait request of
+    FetchNoWaitMicros timeoutMicros ->
+      max 1 timeoutMicros
+    FetchExpiresMicros timeoutMicros
+      | timeoutMicros <= 0 -> 1
+      | otherwise -> timeoutMicros + 100000

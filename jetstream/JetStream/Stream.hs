@@ -7,18 +7,26 @@ import           Data.Aeson                 (toJSON)
 import           JetStream.Options          (JetStreamContext)
 import qualified JetStream.Protocol.Request as Request
 import qualified JetStream.Protocol.Subject as Subject
-import           JetStream.Stream.API
+import           JetStream.Stream.API       (StreamAPI (..))
+import           JetStream.Stream.Types
+    ( purgeStreamRequest
+    , streamConfigRequest
+    , streamListRequest
+    , streamNamesRequest
+    )
 
 streamAPI :: JetStreamContext -> StreamAPI
 streamAPI context =
   StreamAPI
-    { create = \config ->
-        Request.requestJSON context
-          (Subject.streamCreateSubject context (streamConfigName config))
+    { create = \name subjects options ->
+        let config = streamConfigRequest name subjects options
+        in Request.requestJSON context
+          (Subject.streamCreateSubject context name)
           (Just (toJSON config))
-    , update = \config ->
-        Request.requestJSON context
-          (Subject.streamUpdateSubject context (streamConfigName config))
+    , update = \name subjects options ->
+        let config = streamConfigRequest name subjects options
+        in Request.requestJSON context
+          (Subject.streamUpdateSubject context name)
           (Just (toJSON config))
     , info = \streamName ->
         Request.requestJSON context
@@ -28,16 +36,16 @@ streamAPI context =
         Request.requestJSON context
           (Subject.streamDeleteSubject context streamName)
           Nothing
-    , purge = \streamName request ->
+    , purge = \streamName options ->
         Request.requestJSON context
           (Subject.streamPurgeSubject context streamName)
-          (Just (toJSON request))
+          (Just (toJSON (purgeStreamRequest options)))
     , list =
         Request.requestJSON context
-          (Subject.streamListSubject context)
-          . Just . toJSON
+          (Subject.streamListSubject context) .
+          Just . toJSON . streamListRequest
     , names =
         Request.requestJSON context
-          (Subject.streamNamesSubject context)
-          . Just . toJSON
+          (Subject.streamNamesSubject context) .
+          Just . toJSON . streamNamesRequest
     }

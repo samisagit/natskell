@@ -36,12 +36,12 @@ durablePullConsumerTest (Endpoints natsHost natsPort) = do
 runJetStreamScenario :: Nats.Client -> IO ()
 runJetStreamScenario client = do
   let jetStream = newJetStream client []
-  createdStream <- JetStream.create (streams jetStream) streamConfig
+  createdStream <- JetStream.create (streams jetStream) streamName [subjectName] streamOptions
   case createdStream of
     Right _  -> pure ()
     Left err -> expectationFailure ("stream create failed: " ++ show err)
 
-  createdConsumer <- JetStream.createDurableConsumer (consumers jetStream) streamName durableName consumerConfig
+  createdConsumer <- JetStream.createDurableConsumer (consumers jetStream) streamName durableName consumerOptions
   case createdConsumer of
     Right _  -> pure ()
     Left err -> expectationFailure ("durable consumer create failed: " ++ show err)
@@ -63,31 +63,19 @@ runJetStreamScenario client = do
   JetStream.pullResponseMessages emptyFetch `shouldBe` []
   JetStream.pullResponseStatus emptyFetch `shouldBe` Just (JetStream.PullNoMessages (Just "No Messages"))
 
-streamConfig :: JetStream.StreamConfig
-streamConfig =
-  JetStream.StreamConfig
-    { JetStream.streamConfigName = streamName
-    , JetStream.streamConfigSubjects = [subjectName]
-    , JetStream.streamConfigRetention = Just JetStream.LimitsPolicy
-    , JetStream.streamConfigStorage = Just JetStream.MemoryStorage
-    , JetStream.streamConfigDiscard = Nothing
-    , JetStream.streamConfigMaxMessages = Nothing
-    , JetStream.streamConfigMaxBytes = Nothing
-    , JetStream.streamConfigMaxAge = Nothing
-    , JetStream.streamConfigReplicas = Nothing
-    , JetStream.streamConfigDuplicateWindow = Nothing
-    , JetStream.streamConfigAllowDirect = Nothing
-    }
+streamOptions :: [JetStream.StreamConfigOption]
+streamOptions =
+  [ JetStream.withRetention JetStream.LimitsPolicy
+  , JetStream.withStorage JetStream.MemoryStorage
+  ]
 
-consumerConfig :: JetStream.ConsumerConfig
-consumerConfig =
-  JetStream.emptyConsumerConfig
-    { JetStream.consumerConfigDurableName = Just durableName
-    , JetStream.consumerConfigName = Just durableName
-    , JetStream.consumerConfigDeliverPolicy = Just JetStream.DeliverAll
-    , JetStream.consumerConfigAckPolicy = Just JetStream.AckExplicit
-    , JetStream.consumerConfigFilterSubject = Just subjectName
-    }
+consumerOptions :: [JetStream.ConsumerConfigOption]
+consumerOptions =
+  [ JetStream.withConsumerName durableName
+  , JetStream.withConsumerDeliverPolicy JetStream.DeliverAll
+  , JetStream.withConsumerAckPolicy JetStream.AckExplicit
+  , JetStream.withConsumerFilter (JetStream.ConsumerFilterSubject subjectName)
+  ]
 
 publishPayload :: JetStream -> BS.ByteString -> IO ()
 publishPayload jetStream body = do
@@ -96,20 +84,17 @@ publishPayload jetStream body = do
     Right _  -> pure ()
     Left err -> expectationFailure ("publish failed: " ++ show err)
 
-fetchBatch :: JetStream.PullRequest
+fetchBatch :: [JetStream.FetchOption]
 fetchBatch =
-  JetStream.defaultPullRequest
-    { JetStream.pullRequestBatch = 2
-    , JetStream.pullRequestTimeoutMicros = 1000000
-    }
+  [ JetStream.withFetchBatch 2
+  , JetStream.withFetchWait (JetStream.FetchExpiresMicros 1000000)
+  ]
 
-shortFetch :: JetStream.PullRequest
+shortFetch :: [JetStream.FetchOption]
 shortFetch =
-  JetStream.defaultPullRequest
-    { JetStream.pullRequestBatch = 1
-    , JetStream.pullRequestTimeoutMicros = 100000
-    , JetStream.pullRequestNoWait = True
-    }
+  [ JetStream.withFetchBatch 1
+  , JetStream.withFetchWait (JetStream.FetchNoWaitMicros 100000)
+  ]
 
 streamName :: BS.ByteString
 streamName = "NATSKELL_JS_SYSTEM"

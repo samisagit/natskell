@@ -1,47 +1,49 @@
 module JetStream.Message.API
   ( MessageAPI (..)
   , AckVerb (..)
+  , FetchOption
+  , FetchWait (..)
   , Headers
   , Message (..)
-  , PullRequest (..)
   , PullResponse (..)
   , PullStatus (..)
   , ackPayload
   , classifyStatusHeaders
-  , defaultPullRequest
   , descriptionHeader
   , inProgressPayload
   , isStatusMessage
   , nakPayload
-  , pullRequestPayload
   , statusHeader
   , termPayload
+  , withFetchBatch
+  , withFetchWait
   ) where
 
 import           JetStream.Error         (JetStreamError)
 import           JetStream.Message.Types
     ( AckVerb (..)
+    , FetchOption
+    , FetchWait (..)
     , Headers
     , Message (..)
-    , PullRequest (..)
     , PullResponse (..)
     , PullStatus (..)
     , ackPayload
     , classifyStatusHeaders
-    , defaultPullRequest
     , descriptionHeader
     , inProgressPayload
     , isStatusMessage
     , nakPayload
-    , pullRequestPayload
     , statusHeader
     , termPayload
+    , withFetchBatch
+    , withFetchWait
     )
 import           JetStream.Types         (ConsumerName, StreamName)
 
 -- | Pull-consumer message operations.
 data MessageAPI = MessageAPI
-                    { fetch :: StreamName -> ConsumerName -> PullRequest -> IO PullResponse
+                    { fetch :: StreamName -> ConsumerName -> [FetchOption] -> IO PullResponse
                       -- ^ Fetch messages for a pull consumer.
                     , ack :: Message -> IO (Either JetStreamError ())
                       -- ^ Acknowledge successful message processing.

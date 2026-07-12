@@ -15,35 +15,28 @@ import           Test.Hspec
 
 spec :: Spec
 spec = do
-  describe "ConsumerConfig JSON" $ do
-    it "decodes durable pull consumer fields" $ do
-      eitherDecode durablePullConsumerConfigJSON `shouldBe` Right durablePullConsumerConfig
-
+  describe "ConsumerConfig request JSON" $ do
     it "encodes only populated fields" $ do
-      eitherDecode (encode durablePullConsumerConfig) `shouldBe` Right durablePullConsumerConfigValue
+      eitherDecode (encode durablePullConsumerConfigRequest) `shouldBe` Right durablePullConsumerConfigValue
 
   describe "ConsumerInfo JSON" .
-    it "decodes partial server responses" $ do
-      eitherDecode partialConsumerInfoJSON `shouldBe` Right partialConsumerInfo
+    it "decodes server responses into concrete fields" $ do
+      eitherDecode consumerInfoJSON `shouldBe` Right consumerInfo
 
-durablePullConsumerConfigJSON :: LBS.ByteString
-durablePullConsumerConfigJSON =
-  "{\"durable_name\":\"orders-puller\",\"name\":\"orders-puller\",\"deliver_policy\":\"all\",\"ack_policy\":\"explicit\",\"replay_policy\":\"instant\",\"filter_subject\":\"orders.created\",\"filter_subjects\":[\"orders.created\",\"orders.updated\"],\"max_deliver\":5,\"ack_wait\":30000000000,\"max_ack_pending\":256,\"inactive_threshold\":60000000000}"
-
-durablePullConsumerConfig :: ConsumerConfig
-durablePullConsumerConfig = emptyConsumerConfig
-  { consumerConfigDurableName = Just "orders-puller"
-  , consumerConfigName = Just "orders-puller"
-  , consumerConfigDeliverPolicy = Just DeliverAll
-  , consumerConfigAckPolicy = Just AckExplicit
-  , consumerConfigReplayPolicy = Just ReplayInstant
-  , consumerConfigFilterSubject = Just "orders.created"
-  , consumerConfigFilterSubjects = Just ["orders.created", "orders.updated"]
-  , consumerConfigMaxDeliver = Just 5
-  , consumerConfigAckWait = Just 30
-  , consumerConfigMaxAckPending = Just 256
-  , consumerConfigInactiveThreshold = Just 60
-  }
+durablePullConsumerConfigRequest :: ConsumerConfigRequest
+durablePullConsumerConfigRequest =
+  consumerConfigRequest
+    [ withConsumerDurableName "orders-puller"
+    , withConsumerName "orders-puller"
+    , withConsumerDeliverPolicy DeliverAll
+    , withConsumerAckPolicy AckExplicit
+    , withConsumerReplayPolicy ReplayInstant
+    , withConsumerFilter (ConsumerFilterSubjects ["orders.created", "orders.updated"])
+    , withConsumerMaxDeliver 5
+    , withConsumerAckWait 30
+    , withConsumerMaxAckPending 256
+    , withConsumerInactiveThreshold 60
+    ]
 
 durablePullConsumerConfigValue :: Value
 durablePullConsumerConfigValue = object
@@ -52,7 +45,6 @@ durablePullConsumerConfigValue = object
   , "deliver_policy" .= ("all" :: String)
   , "ack_policy" .= ("explicit" :: String)
   , "replay_policy" .= ("instant" :: String)
-  , "filter_subject" .= ("orders.created" :: String)
   , "filter_subjects" .= ["orders.created" :: String, "orders.updated"]
   , "max_deliver" .= (5 :: Int)
   , "ack_wait" .= (30000000000 :: Integer)
@@ -60,27 +52,43 @@ durablePullConsumerConfigValue = object
   , "inactive_threshold" .= (60000000000 :: Integer)
   ]
 
-partialConsumerInfoJSON :: LBS.ByteString
-partialConsumerInfoJSON =
-  "{\"type\":\"io.nats.jetstream.api.v1.consumer_info_response\",\"stream_name\":\"ORDERS\",\"name\":\"orders-puller\",\"config\":{\"ack_policy\":\"explicit\"},\"delivered\":{\"consumer_seq\":2,\"stream_seq\":10},\"num_ack_pending\":1}"
+consumerInfoJSON :: LBS.ByteString
+consumerInfoJSON =
+  "{\"type\":\"io.nats.jetstream.api.v1.consumer_info_response\",\"stream_name\":\"ORDERS\",\"name\":\"orders-puller\",\"created\":\"2024-01-01T00:00:00Z\",\"config\":{\"deliver_policy\":\"all\",\"ack_policy\":\"explicit\",\"replay_policy\":\"instant\"},\"delivered\":{\"consumer_seq\":2,\"stream_seq\":10},\"ack_floor\":{\"consumer_seq\":1,\"stream_seq\":9},\"num_ack_pending\":1,\"num_redelivered\":0,\"num_waiting\":0,\"num_pending\":3}"
 
-partialConsumerInfo :: ConsumerInfo
-partialConsumerInfo = ConsumerInfo
-  { consumerInfoType = Just "io.nats.jetstream.api.v1.consumer_info_response"
-  , consumerInfoStreamName = Just "ORDERS"
-  , consumerInfoName = Just "orders-puller"
-  , consumerInfoCreated = Nothing
-  , consumerInfoConfig = Just emptyConsumerConfig
-      { consumerConfigAckPolicy = Just AckExplicit
+consumerInfo :: ConsumerInfo
+consumerInfo = ConsumerInfo
+  { consumerInfoStreamName = "ORDERS"
+  , consumerInfoName = "orders-puller"
+  , consumerInfoCreated = timestamp
+  , consumerInfoConfig = ConsumerConfig
+      { consumerConfigDurableName = Nothing
+      , consumerConfigName = Nothing
+      , consumerConfigDescription = Nothing
+      , consumerConfigDeliverPolicy = DeliverAll
+      , consumerConfigAckPolicy = AckExplicit
+      , consumerConfigReplayPolicy = ReplayInstant
+      , consumerConfigFilterSubject = Nothing
+      , consumerConfigFilterSubjects = Nothing
+      , consumerConfigAckWait = Nothing
+      , consumerConfigMaxDeliver = Nothing
+      , consumerConfigMaxAckPending = Nothing
+      , consumerConfigInactiveThreshold = Nothing
       }
-  , consumerInfoDelivered = Just ConsumerSequenceInfo
-      { consumerSequenceConsumer = Just 2
-      , consumerSequenceStream = Just 10
+  , consumerInfoDelivered = ConsumerSequenceInfo
+      { consumerSequenceConsumer = 2
+      , consumerSequenceStream = 10
       , consumerSequenceLast = Nothing
       }
-  , consumerInfoAckFloor = Nothing
-  , consumerInfoNumAckPending = Just 1
-  , consumerInfoNumRedelivered = Nothing
-  , consumerInfoNumWaiting = Nothing
-  , consumerInfoNumPending = Nothing
+  , consumerInfoAckFloor = ConsumerSequenceInfo
+      { consumerSequenceConsumer = 1
+      , consumerSequenceStream = 9
+      , consumerSequenceLast = Nothing
+      }
+  , consumerInfoNumAckPending = 1
+  , consumerInfoNumRedelivered = 0
+  , consumerInfoNumWaiting = 0
+  , consumerInfoNumPending = 3
   }
+
+timestamp = read "2024-01-01 00:00:00 UTC"

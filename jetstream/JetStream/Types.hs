@@ -6,8 +6,7 @@ module JetStream.Types
   , Subject
   , Payload
   , Headers
-  , ListRequest (..)
-  , defaultListRequest
+  , CallOption
   , AckPolicy (..)
   , DeliverPolicy (..)
   , DiscardPolicy (..)
@@ -17,6 +16,7 @@ module JetStream.Types
   , byteStringToJSON
   , parseByteString
   , diffTimeNanosToJSON
+  , applyCallOptions
   ) where
 
 import           Data.Aeson
@@ -32,15 +32,11 @@ type ConsumerName = BS.ByteString
 type Subject = BS.ByteString
 type Payload = BS.ByteString
 type Headers = [(BS.ByteString, BS.ByteString)]
+type CallOption a = a -> a
 
-newtype ListRequest = ListRequest { listOffset :: Maybe Int }
-  deriving (Eq, Show)
-
-defaultListRequest :: ListRequest
-defaultListRequest =
-  ListRequest
-    { listOffset = Nothing
-    }
+applyCallOptions :: [CallOption a] -> a -> a
+applyCallOptions options value =
+  foldr ($) value options
 
 data AckPolicy = AckNone | AckAll | AckExplicit
   deriving (Eq, Show)
@@ -64,10 +60,6 @@ data RetentionPolicy = LimitsPolicy | InterestPolicy | WorkQueuePolicy
 
 data StorageType = FileStorage | MemoryStorage
   deriving (Eq, Show)
-
-instance ToJSON ListRequest where
-  toJSON request =
-    object (maybe [] (\offset -> ["offset" .= offset]) (listOffset request))
 
 instance ToJSON AckPolicy where
   toJSON policy =

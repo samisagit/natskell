@@ -10,9 +10,9 @@ import qualified Data.ByteString    as BS
 import qualified Data.Text.Encoding as E
 
 data JetStreamApiError = JetStreamApiError
-                           { apiErrorCode        :: Maybe Int
-                           , apiErrorCodeDetail  :: Maybe Int
-                           , apiErrorDescription :: Maybe BS.ByteString
+                           { apiErrorCode        :: Int
+                           , apiErrorCodeDetail  :: Int
+                           , apiErrorDescription :: BS.ByteString
                            }
   deriving (Eq, Show)
 
@@ -26,14 +26,14 @@ data JetStreamError = JetStreamApiFailure JetStreamApiError
 instance FromJSON JetStreamApiError where
   parseJSON = withObject "JetStreamApiError" $ \obj ->
     JetStreamApiError
-      <$> obj .:? "code"
-      <*> obj .:? "err_code"
-      <*> fmap (fmap E.encodeUtf8) (obj .:? "description")
+      <$> obj .: "code"
+      <*> obj .:? "err_code" .!= 0
+      <*> fmap E.encodeUtf8 (obj .:? "description" .!= "")
 
 instance ToJSON JetStreamApiError where
   toJSON err =
     object
-      ( maybe [] (\code -> ["code" .= code]) (apiErrorCode err)
-          ++ maybe [] (\code -> ["err_code" .= code]) (apiErrorCodeDetail err)
-          ++ maybe [] (\desc -> ["description" .= E.decodeUtf8 desc]) (apiErrorDescription err)
-      )
+      [ "code" .= apiErrorCode err
+      , "err_code" .= apiErrorCodeDetail err
+      , "description" .= E.decodeUtf8 (apiErrorDescription err)
+      ]

@@ -43,7 +43,7 @@ spec = do
         `shouldBe` "{\"batch\":1,\"expires\":1000000000}"
 
     it "encodes no-wait requests without expires" $ do
-      let request = defaultPullRequest { pullRequestNoWait = True }
+      let request = pullRequest [withFetchWait (FetchNoWaitMicros 1000000)]
       pullRequestPayload 1 request
         `shouldBe` "{\"batch\":1,\"no_wait\":true}"
 
@@ -53,7 +53,7 @@ spec = do
       unsubscribeCalls <- newIORef []
       callbackRef <- newIORef Nothing
       let client = fakeClient publishCalls unsubscribeCalls callbackRef
-          request = defaultPullRequest { pullRequestBatch = 2 }
+          request = pullRequest [withFetchBatch 2]
       response <- fetchMessages (newJetStreamContext client []) "ORDERS" "WORKER" request
 
       publishCalls' <- readIORef publishCalls

@@ -3,18 +3,33 @@
 module JetStream.Consumer.Types
   ( AckPolicy (..)
   , ConsumerConfig (..)
+  , ConsumerConfigOption
+  , ConsumerConfigRequest
+  , ConsumerFilter (..)
   , ConsumerInfo (..)
-  , ConsumerListRequest (..)
+  , ConsumerListOption
   , ConsumerListResponse (..)
-  , ConsumerNamesRequest (..)
   , ConsumerNamesResponse (..)
   , ConsumerSequenceInfo (..)
   , DeleteConsumerResponse (..)
   , DeliverPolicy (..)
   , ReplayPolicy (..)
-  , emptyConsumerConfig
-  , defaultConsumerListRequest
-  , defaultConsumerNamesRequest
+  , consumerConfigRequest
+  , consumerListRequest
+  , consumerNamesRequest
+  , ensureDurableConsumerConfig
+  , withConsumerAckPolicy
+  , withConsumerAckWait
+  , withConsumerDescription
+  , withConsumerDurableName
+  , withConsumerFilter
+  , withConsumerInactiveThreshold
+  , withConsumerListOffset
+  , withConsumerMaxAckPending
+  , withConsumerMaxDeliver
+  , withConsumerName
+  , withConsumerDeliverPolicy
+  , withConsumerReplayPolicy
   ) where
 
 import           Data.Aeson
@@ -25,23 +40,122 @@ import qualified Data.Text        as T
 import           Data.Time.Clock  (NominalDiffTime, UTCTime)
 import           JetStream.Types
     ( AckPolicy (..)
+    , CallOption
     , ConsumerName
     , DeliverPolicy (..)
     , ReplayPolicy (..)
     , StreamName
     , Subject
+    , applyCallOptions
     , byteStringToJSON
     , diffTimeNanosToJSON
     , parseByteString
     )
 
+data ConsumerConfigRequest = ConsumerConfigRequest
+                               { consumerConfigRequestDurableName :: Maybe ConsumerName
+                               , consumerConfigRequestName :: Maybe ConsumerName
+                               , consumerConfigRequestDescription :: Maybe BS.ByteString
+                               , consumerConfigRequestDeliverPolicy :: Maybe DeliverPolicy
+                               , consumerConfigRequestAckPolicy :: Maybe AckPolicy
+                               , consumerConfigRequestReplayPolicy :: Maybe ReplayPolicy
+                               , consumerConfigRequestFilter :: Maybe ConsumerFilter
+                               , consumerConfigRequestAckWait :: Maybe NominalDiffTime
+                               , consumerConfigRequestMaxDeliver :: Maybe Int
+                               , consumerConfigRequestMaxAckPending :: Maybe Int
+                               , consumerConfigRequestInactiveThreshold :: Maybe NominalDiffTime
+                               }
+  deriving (Eq, Show)
+
+type ConsumerConfigOption = CallOption ConsumerConfigRequest
+
+consumerConfigRequest :: [ConsumerConfigOption] -> ConsumerConfigRequest
+consumerConfigRequest options =
+  applyCallOptions options emptyConsumerConfigRequest
+
+emptyConsumerConfigRequest :: ConsumerConfigRequest
+emptyConsumerConfigRequest =
+  ConsumerConfigRequest
+    { consumerConfigRequestDurableName = Nothing
+    , consumerConfigRequestName = Nothing
+    , consumerConfigRequestDescription = Nothing
+    , consumerConfigRequestDeliverPolicy = Nothing
+    , consumerConfigRequestAckPolicy = Nothing
+    , consumerConfigRequestReplayPolicy = Nothing
+    , consumerConfigRequestFilter = Nothing
+    , consumerConfigRequestAckWait = Nothing
+    , consumerConfigRequestMaxDeliver = Nothing
+    , consumerConfigRequestMaxAckPending = Nothing
+    , consumerConfigRequestInactiveThreshold = Nothing
+    }
+
+ensureDurableConsumerConfig :: ConsumerName -> ConsumerConfigRequest -> ConsumerConfigRequest
+ensureDurableConsumerConfig durable config =
+  config
+    { consumerConfigRequestDurableName = choose (consumerConfigRequestDurableName config)
+    , consumerConfigRequestName = choose (consumerConfigRequestName config)
+    }
+  where
+    choose Nothing = Just durable
+    choose (Just existing)
+      | BS.null existing = Just durable
+      | otherwise = Just existing
+
+withConsumerDurableName :: ConsumerName -> ConsumerConfigOption
+withConsumerDurableName durable config =
+  config { consumerConfigRequestDurableName = Just durable }
+
+withConsumerName :: ConsumerName -> ConsumerConfigOption
+withConsumerName name config =
+  config { consumerConfigRequestName = Just name }
+
+withConsumerDescription :: BS.ByteString -> ConsumerConfigOption
+withConsumerDescription description config =
+  config { consumerConfigRequestDescription = Just description }
+
+withConsumerDeliverPolicy :: DeliverPolicy -> ConsumerConfigOption
+withConsumerDeliverPolicy policy config =
+  config { consumerConfigRequestDeliverPolicy = Just policy }
+
+withConsumerAckPolicy :: AckPolicy -> ConsumerConfigOption
+withConsumerAckPolicy policy config =
+  config { consumerConfigRequestAckPolicy = Just policy }
+
+withConsumerReplayPolicy :: ReplayPolicy -> ConsumerConfigOption
+withConsumerReplayPolicy policy config =
+  config { consumerConfigRequestReplayPolicy = Just policy }
+
+data ConsumerFilter = ConsumerFilterSubject Subject
+                    | ConsumerFilterSubjects [Subject]
+  deriving (Eq, Show)
+
+withConsumerFilter :: ConsumerFilter -> ConsumerConfigOption
+withConsumerFilter consumerFilter config =
+  config { consumerConfigRequestFilter = Just consumerFilter }
+
+withConsumerAckWait :: NominalDiffTime -> ConsumerConfigOption
+withConsumerAckWait ackWait config =
+  config { consumerConfigRequestAckWait = Just ackWait }
+
+withConsumerMaxDeliver :: Int -> ConsumerConfigOption
+withConsumerMaxDeliver maxDeliver config =
+  config { consumerConfigRequestMaxDeliver = Just maxDeliver }
+
+withConsumerMaxAckPending :: Int -> ConsumerConfigOption
+withConsumerMaxAckPending maxAckPending config =
+  config { consumerConfigRequestMaxAckPending = Just maxAckPending }
+
+withConsumerInactiveThreshold :: NominalDiffTime -> ConsumerConfigOption
+withConsumerInactiveThreshold inactiveThreshold config =
+  config { consumerConfigRequestInactiveThreshold = Just inactiveThreshold }
+
 data ConsumerConfig = ConsumerConfig
                         { consumerConfigDurableName :: Maybe ConsumerName
                         , consumerConfigName :: Maybe ConsumerName
                         , consumerConfigDescription :: Maybe BS.ByteString
-                        , consumerConfigDeliverPolicy :: Maybe DeliverPolicy
-                        , consumerConfigAckPolicy :: Maybe AckPolicy
-                        , consumerConfigReplayPolicy :: Maybe ReplayPolicy
+                        , consumerConfigDeliverPolicy :: DeliverPolicy
+                        , consumerConfigAckPolicy :: AckPolicy
+                        , consumerConfigReplayPolicy :: ReplayPolicy
                         , consumerConfigFilterSubject :: Maybe Subject
                         , consumerConfigFilterSubjects :: Maybe [Subject]
                         , consumerConfigAckWait :: Maybe NominalDiffTime
@@ -51,50 +165,42 @@ data ConsumerConfig = ConsumerConfig
                         }
   deriving (Eq, Show)
 
-emptyConsumerConfig :: ConsumerConfig
-emptyConsumerConfig =
-  ConsumerConfig
-    { consumerConfigDurableName = Nothing
-    , consumerConfigName = Nothing
-    , consumerConfigDescription = Nothing
-    , consumerConfigDeliverPolicy = Nothing
-    , consumerConfigAckPolicy = Nothing
-    , consumerConfigReplayPolicy = Nothing
-    , consumerConfigFilterSubject = Nothing
-    , consumerConfigFilterSubjects = Nothing
-    , consumerConfigAckWait = Nothing
-    , consumerConfigMaxDeliver = Nothing
-    , consumerConfigMaxAckPending = Nothing
-    , consumerConfigInactiveThreshold = Nothing
-    }
-
 data ConsumerInfo = ConsumerInfo
-                      { consumerInfoType           :: Maybe BS.ByteString
-                      , consumerInfoStreamName     :: Maybe StreamName
-                      , consumerInfoName           :: Maybe ConsumerName
-                      , consumerInfoCreated        :: Maybe UTCTime
-                      , consumerInfoConfig         :: Maybe ConsumerConfig
-                      , consumerInfoDelivered      :: Maybe ConsumerSequenceInfo
-                      , consumerInfoAckFloor       :: Maybe ConsumerSequenceInfo
-                      , consumerInfoNumAckPending  :: Maybe Int
-                      , consumerInfoNumRedelivered :: Maybe Int
-                      , consumerInfoNumWaiting     :: Maybe Int
-                      , consumerInfoNumPending     :: Maybe Integer
+                      { consumerInfoStreamName     :: StreamName
+                      , consumerInfoName           :: ConsumerName
+                      , consumerInfoCreated        :: UTCTime
+                      , consumerInfoConfig         :: ConsumerConfig
+                      , consumerInfoDelivered      :: ConsumerSequenceInfo
+                      , consumerInfoAckFloor       :: ConsumerSequenceInfo
+                      , consumerInfoNumAckPending  :: Int
+                      , consumerInfoNumRedelivered :: Int
+                      , consumerInfoNumWaiting     :: Int
+                      , consumerInfoNumPending     :: Integer
                       }
   deriving (Eq, Show)
 
 data ConsumerSequenceInfo = ConsumerSequenceInfo
-                              { consumerSequenceConsumer :: Maybe Integer
-                              , consumerSequenceStream   :: Maybe Integer
+                              { consumerSequenceConsumer :: Integer
+                              , consumerSequenceStream   :: Integer
                               , consumerSequenceLast     :: Maybe UTCTime
                               }
   deriving (Eq, Show)
 
-newtype DeleteConsumerResponse = DeleteConsumerResponse { deleteConsumerSuccess :: Maybe Bool }
+newtype DeleteConsumerResponse = DeleteConsumerResponse { deleteConsumerSuccess :: Bool }
   deriving (Eq, Show)
 
 newtype ConsumerListRequest = ConsumerListRequest { consumerListRequestOffset :: Maybe Int }
   deriving (Eq, Show)
+
+type ConsumerListOption = CallOption ConsumerListRequest
+
+consumerListRequest :: [ConsumerListOption] -> ConsumerListRequest
+consumerListRequest options =
+  applyCallOptions options defaultConsumerListRequest
+
+consumerNamesRequest :: [ConsumerListOption] -> ConsumerListRequest
+consumerNamesRequest =
+  consumerListRequest
 
 defaultConsumerListRequest :: ConsumerListRequest
 defaultConsumerListRequest =
@@ -102,30 +208,40 @@ defaultConsumerListRequest =
     { consumerListRequestOffset = Nothing
     }
 
-newtype ConsumerNamesRequest = ConsumerNamesRequest { consumerNamesRequestOffset :: Maybe Int }
-  deriving (Eq, Show)
-
-defaultConsumerNamesRequest :: ConsumerNamesRequest
-defaultConsumerNamesRequest =
-  ConsumerNamesRequest
-    { consumerNamesRequestOffset = Nothing
-    }
+withConsumerListOffset :: Int -> ConsumerListOption
+withConsumerListOffset offset request =
+  request { consumerListRequestOffset = Just offset }
 
 data ConsumerListResponse = ConsumerListResponse
-                              { consumerListTotal     :: Maybe Int
-                              , consumerListOffset    :: Maybe Int
-                              , consumerListLimit     :: Maybe Int
-                              , consumerListConsumers :: Maybe [ConsumerInfo]
+                              { consumerListTotal     :: Int
+                              , consumerListOffset    :: Int
+                              , consumerListLimit     :: Int
+                              , consumerListConsumers :: [ConsumerInfo]
                               }
   deriving (Eq, Show)
 
 data ConsumerNamesResponse = ConsumerNamesResponse
-                               { consumerNamesTotal     :: Maybe Int
-                               , consumerNamesOffset    :: Maybe Int
-                               , consumerNamesLimit     :: Maybe Int
-                               , consumerNamesConsumers :: Maybe [ConsumerName]
+                               { consumerNamesTotal     :: Int
+                               , consumerNamesOffset    :: Int
+                               , consumerNamesLimit     :: Int
+                               , consumerNamesConsumers :: [ConsumerName]
                                }
   deriving (Eq, Show)
+
+instance ToJSON ConsumerConfigRequest where
+  toJSON config =
+    object . catMaybes $
+      [ maybeByteStringPair "durable_name" (consumerConfigRequestDurableName config)
+      , maybeByteStringPair "name" (consumerConfigRequestName config)
+      , maybeByteStringPair "description" (consumerConfigRequestDescription config)
+      , maybePair "ack_policy" (consumerConfigRequestAckPolicy config)
+      , maybePair "replay_policy" (consumerConfigRequestReplayPolicy config)
+      , maybeJsonPair "ack_wait" (diffTimeNanosToJSON <$> consumerConfigRequestAckWait config)
+      , maybePair "max_deliver" (consumerConfigRequestMaxDeliver config)
+      , maybePair "max_ack_pending" (consumerConfigRequestMaxAckPending config)
+      , maybeJsonPair "inactive_threshold" (diffTimeNanosToJSON <$> consumerConfigRequestInactiveThreshold config)
+      ] ++ maybe [] deliverPolicyRequestPairs (consumerConfigRequestDeliverPolicy config)
+        ++ maybe [] consumerFilterPairs (consumerConfigRequestFilter config)
 
 instance ToJSON ConsumerConfig where
   toJSON config =
@@ -133,15 +249,15 @@ instance ToJSON ConsumerConfig where
       [ maybeByteStringPair "durable_name" (consumerConfigDurableName config)
       , maybeByteStringPair "name" (consumerConfigName config)
       , maybeByteStringPair "description" (consumerConfigDescription config)
-      , maybePair "ack_policy" (consumerConfigAckPolicy config)
-      , maybePair "replay_policy" (consumerConfigReplayPolicy config)
+      , Just ("ack_policy" .= consumerConfigAckPolicy config)
+      , Just ("replay_policy" .= consumerConfigReplayPolicy config)
       , maybeByteStringPair "filter_subject" (consumerConfigFilterSubject config)
       , maybeByteStringListPair "filter_subjects" (consumerConfigFilterSubjects config)
       , maybeJsonPair "ack_wait" (diffTimeNanosToJSON <$> consumerConfigAckWait config)
       , maybePair "max_deliver" (consumerConfigMaxDeliver config)
       , maybePair "max_ack_pending" (consumerConfigMaxAckPending config)
       , maybeJsonPair "inactive_threshold" (diffTimeNanosToJSON <$> consumerConfigInactiveThreshold config)
-      ] ++ deliverPolicyPairs (consumerConfigDeliverPolicy config)
+      ] ++ fmap Just (deliverPolicyPairs (consumerConfigDeliverPolicy config))
 
 instance FromJSON ConsumerConfig where
   parseJSON = withObject "ConsumerConfig" $ \obj ->
@@ -149,9 +265,9 @@ instance FromJSON ConsumerConfig where
       <$> parseOptionalByteStringField obj "durable_name"
       <*> parseOptionalByteStringField obj "name"
       <*> parseOptionalByteStringField obj "description"
-      <*> parseOptionalDeliverPolicyField obj "deliver_policy"
-      <*> obj .:? "ack_policy"
-      <*> obj .:? "replay_policy"
+      <*> parseDeliverPolicyField obj "deliver_policy"
+      <*> obj .: "ack_policy"
+      <*> obj .: "replay_policy"
       <*> parseOptionalByteStringField obj "filter_subject"
       <*> parseOptionalByteStringListField obj "filter_subjects"
       <*> parseOptionalDurationField obj "ack_wait"
@@ -162,53 +278,51 @@ instance FromJSON ConsumerConfig where
 instance FromJSON ConsumerInfo where
   parseJSON = withObject "ConsumerInfo" $ \obj ->
     ConsumerInfo
-      <$> parseOptionalByteStringField obj "type"
-      <*> parseOptionalByteStringField obj "stream_name"
-      <*> parseOptionalByteStringField obj "name"
-      <*> obj .:? "created"
-      <*> obj .:? "config"
-      <*> obj .:? "delivered"
-      <*> obj .:? "ack_floor"
-      <*> obj .:? "num_ack_pending"
-      <*> obj .:? "num_redelivered"
-      <*> obj .:? "num_waiting"
-      <*> obj .:? "num_pending"
+      <$> parseByteStringField obj "stream_name"
+      <*> parseByteStringField obj "name"
+      <*> obj .: "created"
+      <*> obj .: "config"
+      <*> obj .:? "delivered" .!= emptyConsumerSequenceInfo
+      <*> obj .:? "ack_floor" .!= emptyConsumerSequenceInfo
+      <*> obj .:? "num_ack_pending" .!= 0
+      <*> obj .:? "num_redelivered" .!= 0
+      <*> obj .:? "num_waiting" .!= 0
+      <*> obj .:? "num_pending" .!= 0
 
 instance ToJSON ConsumerInfo where
   toJSON info =
-    object . catMaybes $
-      [ maybeByteStringPair "type" (consumerInfoType info)
-      , maybeByteStringPair "stream_name" (consumerInfoStreamName info)
-      , maybeByteStringPair "name" (consumerInfoName info)
-      , maybePair "created" (consumerInfoCreated info)
-      , maybePair "config" (consumerInfoConfig info)
-      , maybePair "delivered" (consumerInfoDelivered info)
-      , maybePair "ack_floor" (consumerInfoAckFloor info)
-      , maybePair "num_ack_pending" (consumerInfoNumAckPending info)
-      , maybePair "num_redelivered" (consumerInfoNumRedelivered info)
-      , maybePair "num_waiting" (consumerInfoNumWaiting info)
-      , maybePair "num_pending" (consumerInfoNumPending info)
+    object
+      [ "stream_name" .= byteStringToJSON (consumerInfoStreamName info)
+      , "name" .= byteStringToJSON (consumerInfoName info)
+      , "created" .= consumerInfoCreated info
+      , "config" .= consumerInfoConfig info
+      , "delivered" .= consumerInfoDelivered info
+      , "ack_floor" .= consumerInfoAckFloor info
+      , "num_ack_pending" .= consumerInfoNumAckPending info
+      , "num_redelivered" .= consumerInfoNumRedelivered info
+      , "num_waiting" .= consumerInfoNumWaiting info
+      , "num_pending" .= consumerInfoNumPending info
       ]
 
 instance FromJSON ConsumerSequenceInfo where
   parseJSON = withObject "ConsumerSequenceInfo" $ \obj ->
     ConsumerSequenceInfo
-      <$> obj .:? "consumer_seq"
-      <*> obj .:? "stream_seq"
+      <$> obj .:? "consumer_seq" .!= 0
+      <*> obj .:? "stream_seq" .!= 0
       <*> obj .:? "last_active"
 
 instance ToJSON ConsumerSequenceInfo where
   toJSON info =
     object . catMaybes $
-      [ maybePair "consumer_seq" (consumerSequenceConsumer info)
-      , maybePair "stream_seq" (consumerSequenceStream info)
+      [ Just ("consumer_seq" .= consumerSequenceConsumer info)
+      , Just ("stream_seq" .= consumerSequenceStream info)
       , maybePair "last_active" (consumerSequenceLast info)
       ]
 
 instance FromJSON DeleteConsumerResponse where
   parseJSON = withObject "DeleteConsumerResponse" $ \obj ->
     DeleteConsumerResponse
-      <$> obj .:? "success"
+      <$> obj .:? "success" .!= False
 
 instance ToJSON ConsumerListRequest where
   toJSON request =
@@ -216,41 +330,29 @@ instance ToJSON ConsumerListRequest where
       [ maybePair "offset" (consumerListRequestOffset request)
       ]
 
-instance FromJSON ConsumerListRequest where
-  parseJSON = withObject "ConsumerListRequest" $ \obj ->
-    ConsumerListRequest
-      <$> obj .:? "offset"
-
-instance ToJSON ConsumerNamesRequest where
-  toJSON request =
-    object . catMaybes $
-      [ maybePair "offset" (consumerNamesRequestOffset request)
-      ]
-
-instance FromJSON ConsumerNamesRequest where
-  parseJSON = withObject "ConsumerNamesRequest" $ \obj ->
-    ConsumerNamesRequest
-      <$> obj .:? "offset"
-
 instance FromJSON ConsumerListResponse where
   parseJSON = withObject "ConsumerListResponse" $ \obj ->
     ConsumerListResponse
-      <$> obj .:? "total"
-      <*> obj .:? "offset"
-      <*> obj .:? "limit"
-      <*> obj .:? "consumers"
+      <$> obj .: "total"
+      <*> obj .: "offset"
+      <*> obj .: "limit"
+      <*> obj .:? "consumers" .!= []
 
 instance FromJSON ConsumerNamesResponse where
   parseJSON = withObject "ConsumerNamesResponse" $ \obj ->
     ConsumerNamesResponse
-      <$> obj .:? "total"
-      <*> obj .:? "offset"
-      <*> obj .:? "limit"
-      <*> parseOptionalByteStringListField obj "consumers"
+      <$> obj .: "total"
+      <*> obj .: "offset"
+      <*> obj .: "limit"
+      <*> parseOptionalByteStringListField obj "consumers" .!= []
+
+byteStringPair :: Key -> BS.ByteString -> Pair
+byteStringPair key value =
+  key .= byteStringToJSON value
 
 maybeByteStringPair :: Key -> Maybe BS.ByteString -> Maybe Pair
 maybeByteStringPair key =
-  fmap (\value -> key .= byteStringToJSON value)
+  fmap (byteStringPair key)
 
 maybeByteStringListPair :: Key -> Maybe [BS.ByteString] -> Maybe Pair
 maybeByteStringListPair key =
@@ -264,41 +366,53 @@ maybeJsonPair :: Key -> Maybe Value -> Maybe Pair
 maybeJsonPair key =
   fmap (key .=)
 
-deliverPolicyPairs :: Maybe DeliverPolicy -> [Maybe Pair]
-deliverPolicyPairs Nothing =
-  []
-deliverPolicyPairs (Just policy) =
-  maybePair "deliver_policy" (Just policy) : extraPairs policy
+consumerFilterPairs :: ConsumerFilter -> [Maybe Pair]
+consumerFilterPairs consumerFilter =
+  case consumerFilter of
+    ConsumerFilterSubject subject ->
+      [maybeByteStringPair "filter_subject" (Just subject)]
+    ConsumerFilterSubjects subjects ->
+      [maybeByteStringListPair "filter_subjects" (Just subjects)]
+
+deliverPolicyRequestPairs :: DeliverPolicy -> [Maybe Pair]
+deliverPolicyRequestPairs policy =
+  fmap Just (deliverPolicyPairs policy)
+
+deliverPolicyPairs :: DeliverPolicy -> [Pair]
+deliverPolicyPairs policy =
+  "deliver_policy" .= policy : extraPairs policy
   where
     extraPairs selectedPolicy =
       case selectedPolicy of
         DeliverByStartSequence sequenceNumber ->
-          [maybePair "opt_start_seq" (Just sequenceNumber)]
+          ["opt_start_seq" .= sequenceNumber]
         DeliverByStartTime startTime ->
-          [maybePair "opt_start_time" (Just startTime)]
+          ["opt_start_time" .= startTime]
         _ ->
           []
 
-parseOptionalDeliverPolicyField :: Object -> Key -> Parser (Maybe DeliverPolicy)
-parseOptionalDeliverPolicyField obj key = do
-  policyName <- obj .:? key :: Parser (Maybe T.Text)
+parseDeliverPolicyField :: Object -> Key -> Parser DeliverPolicy
+parseDeliverPolicyField obj key = do
+  policyName <- obj .: key :: Parser T.Text
   case policyName of
-    Nothing ->
-      pure Nothing
-    Just "all" ->
-      pure (Just DeliverAll)
-    Just "last" ->
-      pure (Just DeliverLast)
-    Just "new" ->
-      pure (Just DeliverNew)
-    Just "by_start_sequence" ->
-      fmap (Just . DeliverByStartSequence) (obj .: "opt_start_seq")
-    Just "by_start_time" ->
-      fmap (Just . DeliverByStartTime) (obj .: "opt_start_time")
-    Just "last_per_subject" ->
-      pure (Just DeliverLastPerSubject)
-    Just value ->
+    "all" ->
+      pure DeliverAll
+    "last" ->
+      pure DeliverLast
+    "new" ->
+      pure DeliverNew
+    "by_start_sequence" ->
+      fmap DeliverByStartSequence (obj .: "opt_start_seq")
+    "by_start_time" ->
+      fmap DeliverByStartTime (obj .: "opt_start_time")
+    "last_per_subject" ->
+      pure DeliverLastPerSubject
+    value ->
       fail ("unknown deliver policy: " ++ T.unpack value)
+
+parseByteStringField :: Object -> Key -> Parser BS.ByteString
+parseByteStringField obj key =
+  obj .: key >>= parseByteString
 
 parseOptionalByteStringField :: Object -> Key -> Parser (Maybe BS.ByteString)
 parseOptionalByteStringField obj key = do
@@ -317,3 +431,11 @@ parseOptionalDurationField obj key =
 nanosToDiffTime :: Integer -> NominalDiffTime
 nanosToDiffTime nanoseconds =
   fromRational (toRational nanoseconds / 1000000000)
+
+emptyConsumerSequenceInfo :: ConsumerSequenceInfo
+emptyConsumerSequenceInfo =
+  ConsumerSequenceInfo
+    { consumerSequenceConsumer = 0
+    , consumerSequenceStream = 0
+    , consumerSequenceLast = Nothing
+    }

@@ -2,6 +2,8 @@
 
 module JetStream.Message.Types
   ( AckVerb (..)
+  , FetchOption
+  , FetchWait (..)
   , Headers
   , Message (..)
   , PullRequest (..)
@@ -11,12 +13,15 @@ module JetStream.Message.Types
   , classifyStatusHeaders
   , defaultPullRequest
   , descriptionHeader
+  , pullRequest
   , inProgressPayload
   , isStatusMessage
   , nakPayload
   , pullRequestPayload
   , statusHeader
   , termPayload
+  , withFetchBatch
+  , withFetchWait
   ) where
 
 import           Data.ByteString       (ByteString)
@@ -24,22 +29,44 @@ import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as BC
 import           Data.Char             (toLower)
 import           Data.Maybe            (isJust)
-import           JetStream.Types       (Headers, Payload, Subject)
+import           JetStream.Types
+    ( CallOption
+    , Headers
+    , Payload
+    , Subject
+    , applyCallOptions
+    )
 
 data PullRequest = PullRequest
-                     { pullRequestBatch         :: Int
-                     , pullRequestTimeoutMicros :: Int
-                     , pullRequestNoWait        :: Bool
+                     { pullRequestBatch :: Int
+                     , pullRequestWait  :: FetchWait
                      }
+  deriving (Eq, Show)
+
+data FetchWait = FetchExpiresMicros Int
+               | FetchNoWaitMicros Int
   deriving (Eq, Show)
 
 defaultPullRequest :: PullRequest
 defaultPullRequest =
   PullRequest
     { pullRequestBatch = 1
-    , pullRequestTimeoutMicros = 1000000
-    , pullRequestNoWait = False
+    , pullRequestWait = FetchExpiresMicros 1000000
     }
+
+type FetchOption = CallOption PullRequest
+
+pullRequest :: [FetchOption] -> PullRequest
+pullRequest options =
+  applyCallOptions options defaultPullRequest
+
+withFetchBatch :: Int -> FetchOption
+withFetchBatch batch request =
+  request { pullRequestBatch = batch }
+
+withFetchWait :: FetchWait -> FetchOption
+withFetchWait wait request =
+  request { pullRequestWait = wait }
 
 data PullResponse = PullResponse
                       { pullResponseMessages :: [Message]
@@ -110,15 +137,18 @@ pullRequestPayload requestedBatch request =
     ]
   where
     noWaitField
-      | pullRequestNoWait request = ",\"no_wait\":true"
+      | FetchNoWaitMicros _ <- pullRequestWait request = ",\"no_wait\":true"
       | otherwise = ""
-    expiresField
-      | pullRequestNoWait request = ""
-      | pullRequestTimeoutMicros request <= 0 = ""
-      | otherwise =
+    expiresField =
+      case pullRequestWait request of
+        FetchNoWaitMicros _ ->
+          ""
+        FetchExpiresMicros timeoutMicros
+          | timeoutMicros <= 0 -> ""
+          | otherwise ->
           BS.concat
             [ ",\"expires\":"
-            , intBytes (pullRequestTimeoutMicros request * 1000)
+            , intBytes (timeoutMicros * 1000)
             ]
 
 lookupHeader :: ByteString -> Headers -> Maybe ByteString
