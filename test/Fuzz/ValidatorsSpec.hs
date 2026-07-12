@@ -3,7 +3,8 @@
 module ValidatorsSpec (spec) where
 
 import qualified Data.ByteString       as BS
-import           Data.Maybe
+import qualified Data.ByteString.Char8 as BC
+import           Data.Char             (isSpace)
 import           Test.Hspec
 import           Test.Hspec.QuickCheck (modifyMaxSuccess)
 import           Test.QuickCheck
@@ -61,15 +62,11 @@ propPub p =
 
 pubRules :: Pub -> Bool
 pubRules p
-  | Types.Pub.subject p == "" = False
-  | Types.Pub.replyTo p == Just "" = False
+  | not (subjectRules (Types.Pub.subject p)) = False
+  | not (maybe True subjectRules (Types.Pub.replyTo p)) = False
   | Types.Pub.payload p == Just "" = False
-  | headers == Just [] = False
-  | isJust headers && Prelude.any (\(k, _) -> k == "") (fromJust headers) = False
-  | isJust headers && Prelude.any (\(_, v) -> v == "") (fromJust headers) = False
+  | not (maybe True headerRules (Types.Pub.headers p)) = False
   | otherwise = True
-  where
-    headers = Types.Pub.headers p
 
 propSub :: Sub -> Bool
 propSub s =
@@ -79,8 +76,8 @@ propSub s =
 
 subRules :: Sub -> Bool
 subRules s
-  | Types.Sub.subject s == "" = False
-  | Types.Sub.queueGroup s == Just "" = False
+  | not (subjectRules (Types.Sub.subject s)) = False
+  | not (maybe True queueGroupRules (Types.Sub.queueGroup s)) = False
   | Types.Sub.sid s == "" = False
   | otherwise = True
 
@@ -94,6 +91,52 @@ unsubRules :: Unsub -> Bool
 unsubRules u
   | Types.Unsub.sid u == "" = False
   | otherwise = True
+
+subjectRules :: BS.ByteString -> Bool
+subjectRules value =
+  not (BS.null value)
+    && not (BC.any isSpace value)
+    && not (any BS.null tokens)
+    && wildcardRules tokens
+  where
+    tokens = BC.split '.' value
+
+queueGroupRules :: BS.ByteString -> Bool
+queueGroupRules value =
+  not (BS.null value) && not (BC.any isSpace value)
+
+headerRules :: [(BS.ByteString, BS.ByteString)] -> Bool
+headerRules values =
+  not (null values) && all headerPairRules values
+
+headerPairRules :: (BS.ByteString, BS.ByteString) -> Bool
+headerPairRules (key, value) =
+  not (BS.null key)
+    && not (BS.null value)
+    && not (":" `BS.isInfixOf` key)
+    && not (containsLineBreak key)
+    && not (containsLineBreak value)
+
+wildcardRules :: [BS.ByteString] -> Bool
+wildcardRules [] =
+  True
+wildcardRules [">"] =
+  True
+wildcardRules (">":_) =
+  False
+wildcardRules (token:rest)
+  | token == "*" =
+      wildcardRules rest
+  | ">" `BS.isInfixOf` token =
+      False
+  | "*" `BS.isInfixOf` token =
+      False
+  | otherwise =
+      wildcardRules rest
+
+containsLineBreak :: BS.ByteString -> Bool
+containsLineBreak value =
+  "\r" `BS.isInfixOf` value || "\n" `BS.isInfixOf` value
 
 instance Arbitrary Connect where
    arbitrary = Connect <$> arbitrary

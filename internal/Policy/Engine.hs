@@ -36,14 +36,17 @@ import           State.Store
     , incrementAttemptIndex
     , markClosed
     , markConnected
+    , markConnectionReady
     , openQueue
     , queue
     , readAttemptIndex
+    , readConnectionGeneration
     , readStatus
     , runClient
     , setClosing
     , setEndpoint
     , waitForClosed
+    , waitForConnectionGenerationAfter
     )
 import           State.Types
     ( ClientConfig (..)
@@ -124,6 +127,7 @@ runEngine connectionApi streamingApi broadcastingApi parserApi state store auth 
               pure (show err)
             Right () -> do
               resubscribeIfNeeded
+              markConnectionReady state
               connectionResult <- runConnection conn
               close connectionApi conn
               case connectionResult of
@@ -241,8 +245,16 @@ closeClient connectionApi state store =
   shutdownClient connectionApi state store ExitClosedByUser "closing client connection"
 
 resetClient :: ConnectionAPI -> ClientState -> SubscriptionStore -> IO ()
-resetClient connectionApi state store =
-  shutdownClient connectionApi state store ExitResetRequested "resetting client connection"
+resetClient connectionApi state _store = do
+  generation <- readConnectionGeneration state
+  runClient state $
+    logMessage Info "resetting client connection"
+  closeQueue state
+  closeReader (reader connectionApi) (connection state)
+  closeWriter (writer connectionApi) (connection state)
+  atomically $
+    waitForConnectionGenerationAfter state generation
+      `orElse` waitForClosed state
 
 shutdownClient
   :: ConnectionAPI

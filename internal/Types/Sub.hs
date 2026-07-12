@@ -30,12 +30,12 @@ instance Validator Sub where
 validateSubject :: Sub -> Either ByteString ()
 validateSubject s
   | subject s == "" = Left "explicit empty subject"
-  | otherwise = Right ()
+  | otherwise = validateSubjectSyntax (subject s)
 
 validateQueueGroup :: Sub -> Either ByteString ()
 validateQueueGroup s
   | queueGroup s == Just "" = Left "explicit empty queue group"
-  | otherwise = Right ()
+  | otherwise = maybe (Right ()) validateQueueGroupSyntax (queueGroup s)
 
 validateSid :: Sub -> Either ByteString ()
 validateSid s
