@@ -48,30 +48,18 @@ library
   import:         shared
   build-depends:
     natskell-internal,
+    jetstream-internal,
     stm  >= 2.5 && < 2.6,
-    bytestring  >= 0.10 && < 0.13,
-    time >= 1.9 && < 1.16
+    bytestring  >= 0.10 && < 0.13
 
   exposed-modules:
     API
     Client
-
-  hs-source-dirs:
-       client
-
-library jetstream
-  import:         shared
-  visibility:     public
-  build-depends:
-    natskell,
-    jetstream-internal
-
-  exposed-modules:
     JetStream.API
     JetStream.Client
 
   hs-source-dirs:
-    jetstream-client
+       client
 
 library jetstream-internal
   import:         shared
@@ -278,7 +266,6 @@ test-suite integration-tests
   hs-source-dirs: test/Integration
   build-depends:
     natskell,
-    natskell:jetstream,
     test-common,
     port-utils >= 0.1 && < 0.3,
     bytestring,

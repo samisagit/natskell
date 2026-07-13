@@ -1,7 +1,6 @@
 -- | Capability record for the JetStream client surface.
 module JetStream.API
-  (
-    JetStream (..)
+  ( JetStream (..)
   , AccountAPIStats (..)
   , AccountInfo (..)
   , AccountLimits (..)

@@ -29,7 +29,6 @@ test-suite test
     src
   build-depends:
     natskell,
-    natskell:jetstream,
     bytestring,
     directory,
     stm,
