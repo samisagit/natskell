@@ -35,6 +35,7 @@ import           Types.Info
     , port
     , proto
     , server_id
+    , tls_available
     , tls_required
     , version
     )
@@ -344,6 +345,7 @@ renderInfoFrame infoValue =
     , maybeField "nonce" (quote <$> nonce infoValue)
     , maybeField "auth_required" (jsonBool <$> auth_required infoValue)
     , maybeField "tls_required" (jsonBool <$> tls_required infoValue)
+    , maybeField "tls_available" (jsonBool <$> tls_available infoValue)
     , maybeField "connect_urls" (jsonArray <$> connect_urls infoValue)
     , maybeField "ldm" (jsonBool <$> ldm infoValue)
     , maybeField "headers" (jsonBool <$> headers infoValue)
