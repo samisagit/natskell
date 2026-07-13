@@ -77,6 +77,7 @@ import           Control.Monad            (forM_, void, when)
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Char8    as BC
 import           Data.Maybe               (fromMaybe)
+import           Data.Version             (showVersion)
 import           Engine                   (closeClient, resetClient, runEngine)
 import           Lib.CallOption           (CallOption, applyCallOptions)
 import           Lib.Logger
@@ -91,6 +92,7 @@ import           Lib.Logger
 import           Network.Connection       (connectionApi)
 import           Network.ConnectionAPI    (newConn)
 import           Parser.Attoparsec        (parserApi)
+import qualified Paths_natskell           as Package
 import           Pipeline.Broadcasting    (broadcastingApi)
 import           Pipeline.Streaming       (streamingApi)
 import           Publish                  (defaultPublishConfig)
@@ -370,7 +372,7 @@ defaultConnect =
     , Connect.pass = Nothing
     , Connect.name = Nothing
     , Connect.lang = "haskell"
-    , Connect.version = "0.1.0"
+    , Connect.version = BC.pack (showVersion Package.version)
     , Connect.protocol = Nothing
     , Connect.echo = Just True
     , Connect.sig = Nothing

@@ -121,30 +121,6 @@
             exit 1
           fi
           cp -R "$(dirname "$main_docs_index")" "$combined_docs"
-          chmod -R u+w "$combined_docs"
-
-          cabal haddock --haddock-for-hackage "$package:jetstream"
-          jetstream_docs="$(find dist-newstyle -type d -path "*/doc/html/$docs_root/jetstream" -print -quit)"
-          if [ -z "$jetstream_docs" ]; then
-            echo "Could not find JetStream Hackage docs"
-            find dist-newstyle -type d -path "*/doc/html/*" -print
-            exit 1
-          fi
-          cp "$jetstream_docs"/JetStream-*.html "$combined_docs"/
-          cp "$jetstream_docs"/jetstream.haddock "$combined_docs"/
-          mkdir -p "$combined_docs/src"
-          cp "$jetstream_docs"/src/JetStream.*.html "$combined_docs/src"/
-
-          haddock \
-            --gen-index \
-            --gen-contents \
-            --quickjump \
-            --title="$package-$version" \
-            --package-name="$package" \
-            --package-version="$version" \
-            -o "$combined_docs" \
-            -i "$combined_docs/$package.haddock" \
-            -i "$combined_docs/jetstream.haddock"
 
           mkdir -p $out
           tar --format=ustar -C "$TMPDIR" -czf "$out/$docs_root.tar.gz" "$docs_root"

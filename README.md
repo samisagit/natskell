@@ -24,11 +24,14 @@ import Client
 
 main :: IO ()
 main = do
-  client <- newClient [("127.0.0.1", 4222)] [withConnectName "demo"]
-  sid <- subscribe client "updates" [] print
-  publish client "updates" [withPayload "hello"]
-  unsubscribe client sid
-  close client
+  result <- newClient [("127.0.0.1", 4222)] [withConnectName "demo"]
+  case result of
+    Left err -> print err
+    Right client -> do
+      sid <- subscribe client "updates" [] print
+      publish client "updates" [withPayload "hello"]
+      unsubscribe client sid
+      close client
 ```
 
 ### Request/reply
@@ -39,6 +42,13 @@ publish client "service.echo" [withPayload "hello", withReplyCallback print]
 
 ### Authentication and TLS
 
+Static authentication is available through `withAuthToken`, `withUserPass`,
+`withNKey`, and `withJWT`. The corresponding handler options refresh secrets on
+every connection and reconnection: `withAuthTokenHandler`,
+`withUserPassHandler`, `withNKeyHandler`, and `withJWTHandlers`. NKey and JWT
+signature handlers return the raw Ed25519 signature; Natskell performs the NATS
+base64url encoding.
+
 ```haskell
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -47,17 +57,39 @@ import qualified Data.ByteString as BS
 
 main :: IO ()
 main = do
-  certPem <- BS.readFile "client.pem"
-  keyPem <- BS.readFile "client.key"
+  caPem <- BS.readFile "ca.pem"
   let opts =
         [ withUserPass ("alice", "secret")
-        , withTLSCert (certPem, keyPem)
+        , withTLSRootCA caPem
         ]
-  _ <- newClient [("127.0.0.1", 4222)] opts
-  pure ()
+  result <- newClient [("nats.internal", 4222)] opts
+  case result of
+    Left err -> print err
+    Right client -> close client
 ```
 
-Other auth helpers: `withAuthToken`, `withNKey`, `withJWT`.
+TLS verifies the server certificate against the operating-system trust store by
+default. `withTLSRootCA` adds a private CA, `withTLSServerName` overrides the
+verification/SNI name, and `withTLSCert` supplies a client certificate and key
+for mutual TLS. `withTLS` enables TLS without additional material.
+`withTLSInsecure` disables verification and should only be used in controlled
+test environments.
+
+### JetStream
+
+JetStream is part of the main `natskell` library. No separate Cabal component is
+required; import the nested `JetStream.*` modules directly.
+
+```haskell
+import JetStream.Client (newJetStream)
+
+-- Given a successfully connected NATS client:
+let jetStream = newJetStream client []
+```
+
+The capability records and types are exposed from `JetStream.API`, with stream,
+consumer, publish, and message operations under their corresponding
+`JetStream.*` modules.
 
 ### Exit handling
 
@@ -65,8 +97,15 @@ Other auth helpers: `withAuthToken`, `withNKey`, `withJWT`.
 let opts =
       [ withExitAction (\reason -> putStrLn ("client exit: " ++ show reason))
       ]
-client <- newClient [("127.0.0.1", 4222)] opts
+result <- newClient [("127.0.0.1", 4222)] opts
 ```
+
+`newClient` waits for the initial INFO/TLS/CONNECT/PING/PONG handshake and
+returns `Left ConnectError` if every configured endpoint fails. Later terminal
+disconnects are reported to `withExitAction`.
+
+Configuration options are applied in declaration order; when options overlap,
+the last option wins.
 
 ## Contributing
 Pull requests are welcome. Please open an issue first to discuss what you would like to change.
