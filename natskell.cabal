@@ -270,6 +270,7 @@ flag impure
 
 test-suite integration-tests
   import:         shared
+  ghc-options:    -threaded
   hs-source-dirs: test/Integration
   build-depends:
     natskell,
