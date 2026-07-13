@@ -23,6 +23,24 @@ spec = do
     it "returns Nothing when blocks are missing" $ do
       Jwt.parseJwtBundle "missing blocks" `shouldBe` Nothing
 
+    it "rejects a credentials bundle with a missing end marker" $ do
+      let creds =
+            "-----BEGIN NATS USER JWT-----\n\
+            \jwt-token\n\
+            \-----BEGIN USER NKEY SEED-----\n\
+            \seed-token\n\
+            \------END USER NKEY SEED------"
+      Jwt.parseJwtBundle creds `shouldBe` Nothing
+
+    it "rejects empty credential blocks" $ do
+      let creds =
+            "-----BEGIN NATS USER JWT-----\n\
+            \------END NATS USER JWT------\n\
+            \-----BEGIN USER NKEY SEED-----\n\
+            \seed-token\n\
+            \------END USER NKEY SEED------"
+      Jwt.parseJwtBundle creds `shouldBe` Nothing
+
   describe "signNonceWithSeed" $ do
     it "derives the expected public key from a seed" $ do
       let seed = "SUAHR6JNS2HKJQEAQFHYPOXFXWE4JXBPKUWFX3IMYU72UHOGXT3ZMVFHXI"

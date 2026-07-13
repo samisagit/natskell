@@ -185,10 +185,11 @@ extractBlock startMarker endMarker input = do
     then Nothing
     else do
       let afterStart = BS.drop (BS.length startMarker) rest
-          (block, _) = BS.breakSubstring endMarker afterStart
-      if BS.null block
+          (block, end) = BS.breakSubstring endMarker afterStart
+          trimmed = trimAscii block
+      if BS.null end || BS.null trimmed
         then Nothing
-        else Just (trimAscii block)
+        else Just trimmed
 
 jwtStart, jwtEnd, seedStart, seedEnd :: BS.ByteString
 jwtStart = "-----BEGIN NATS USER JWT-----"
