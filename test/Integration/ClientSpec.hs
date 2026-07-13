@@ -42,6 +42,14 @@ import           WaitGroup
 
 defaultINFO = "INFO {\"server_id\": \"some-server\", \"version\": \"semver\", \"go\": \"1.13\", \"host\": \"127.0.0.1\", \"port\": 4222, \"max_payload\": 1024, \"proto\": 3}\r\n"
 
+defaultHandshake = defaultINFO <> "PONG\r\n"
+
+newClientOrFail servers options = do
+  result <- newClient servers options
+  case result of
+    Left err     -> fail ("client failed to connect: " ++ show err)
+    Right client -> pure client
+
 tooLongMSG = "MSG a b 5000\r\n" <> BS.replicate 5000 _x <> "\r\n"
 
 headerBlock :: [(BS.ByteString, BS.ByteString)] -> BS.ByteString
@@ -355,11 +363,11 @@ startClientWith extraOptions = do
                , withConnectionAttempts 1
                , withConnectName "test-client"
                ]
-    c <- newClient [("127.0.0.1", p)] configOptions
+    c <- newClientOrFail [("127.0.0.1", p)] configOptions
     atomically $ putTMVar tvb c
 
   s <- atomically $ takeTMVar tva
-  sendAll s defaultINFO
+  sendAll s defaultHandshake
   c <- atomically $ takeTMVar tvb
   return (s, c, sock, exited)
 
@@ -701,10 +709,10 @@ spec = do
                 , withConnectionAttempts 2
                 , withConnectName "test-client"
                 ]
-          c <- newClient [("127.0.0.1", p)] configOptions
+          c <- newClientOrFail [("127.0.0.1", p)] configOptions
           putMVar clientVar c
         (firstConn, _) <- accept sock
-        sendAll firstConn defaultINFO
+        sendAll firstConn defaultHandshake
         clientResult <- timeout 1000000 (takeMVar clientVar)
         case clientResult of
           Nothing ->
@@ -719,7 +727,7 @@ spec = do
             captured <- capturePublish firstConn "SERVICE.RECONNECT"
             Network.Socket.close firstConn
             (secondConn, _) <- accept sock
-            sendAll secondConn defaultINFO
+            sendAll secondConn defaultHandshake
             let replySubCommand = BS.concat ["SUB ", capturedInbox captured]
             resubscribe <- timeout 300000 $
               recvUntil secondConn (BS.isInfixOf replySubCommand)
@@ -1089,7 +1097,7 @@ spec = do
         (firstConn, _) <- accept sock
         Network.Socket.close firstConn
         (secondConn, _) <- accept sock
-        sendAll secondConn defaultINFO
+        sendAll secondConn defaultHandshake
         atomically $ putTMVar serverConn secondConn
       void . forkIO $ do
         let configOptions =
@@ -1097,7 +1105,7 @@ spec = do
               , withConnectionAttempts 2
               , withConnectName "test-client"
               ]
-        c <- newClient [("127.0.0.1", p)] configOptions
+        c <- newClientOrFail [("127.0.0.1", p)] configOptions
         putMVar clientVar c
       clientResult <- timeout 1000000 (takeMVar clientVar)
       case clientResult of
@@ -1121,10 +1129,10 @@ spec = do
               , withConnectionAttempts 2
               , withConnectName "test-client"
               ]
-        c <- newClient [("127.0.0.1", p)] configOptions
+        c <- newClientOrFail [("127.0.0.1", p)] configOptions
         putMVar clientVar c
       (firstConn, _) <- accept sock
-      sendAll firstConn defaultINFO
+      sendAll firstConn defaultHandshake
       clientResult <- timeout 1000000 (takeMVar clientVar)
       case clientResult of
         Nothing -> expectationFailure "client did not connect"
@@ -1133,7 +1141,7 @@ spec = do
           expectQueuedSub firstConn "JOBS" "WORKERS" sid
           Network.Socket.close firstConn
           (secondConn, _) <- accept sock
-          sendAll secondConn defaultINFO
+          sendAll secondConn defaultHandshake
           expectQueuedSub secondConn "JOBS" "WORKERS" sid
           close client
           Network.Socket.close secondConn
@@ -1148,10 +1156,10 @@ spec = do
               , withConnectionAttempts 2
               , withConnectName "test-client"
               ]
-        c <- newClient [("127.0.0.1", p)] configOptions
+        c <- newClientOrFail [("127.0.0.1", p)] configOptions
         putMVar clientVar c
       (firstConn, _) <- accept sock
-      sendAll firstConn defaultINFO
+      sendAll firstConn defaultHandshake
       clientResult <- timeout 1000000 (takeMVar clientVar)
       case clientResult of
         Nothing ->
@@ -1167,7 +1175,7 @@ spec = do
           firstSub <- captureSubscription firstConn "PROTO.DELIVER"
           Network.Socket.close firstConn
           (secondConn, _) <- accept sock
-          sendAll secondConn defaultINFO
+          sendAll secondConn defaultHandshake
           secondSub <- captureSubscription secondConn "PROTO.DELIVER"
           capturedSubSid secondSub `shouldBe` capturedSubSid firstSub
           sendAll secondConn $
@@ -1192,10 +1200,10 @@ spec = do
               , withConnectionAttempts 2
               , withConnectName "test-client"
               ]
-        c <- newClient [("127.0.0.1", p)] configOptions
+        c <- newClientOrFail [("127.0.0.1", p)] configOptions
         putMVar clientVar c
       (firstConn, _) <- accept sock
-      sendAll firstConn defaultINFO
+      sendAll firstConn defaultHandshake
       clientResult <- timeout 1000000 (takeMVar clientVar)
       case clientResult of
         Nothing ->
@@ -1247,7 +1255,7 @@ spec = do
               expectationFailure ("unexpected ordered fetch result after disconnect: " ++ show other)
 
           (secondConn, _) <- accept sock
-          sendAll secondConn defaultINFO
+          sendAll secondConn defaultHandshake
           infoVar <- newEmptyMVar
           void . forkIO $ do
             result <- JetStream.orderedConsumerInfo ordered

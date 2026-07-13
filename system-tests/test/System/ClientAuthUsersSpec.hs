@@ -31,7 +31,7 @@ spec =
                 , withUserPass ("test-user", "test-pass")
                 ]
                 ++ loggerOptions
-          client <- newClient [(natsHost, natsPort)] clientOptions
+          client <- newTestClient [(natsHost, natsPort)] clientOptions
           forkIO $ do
             outcome <- atomically $ (Left <$> readTMVar pinged) `orElse` (Right <$> readTMVar exitResult)
             case outcome of
@@ -74,7 +74,7 @@ spec =
                 , withMinimumLogLevel Debug
                 , withLogAction recordLog
                 ]
-          client <- newClient [(natsHost, natsPort)] clientOptions
+          client <- newTestClient [(natsHost, natsPort)] clientOptions
           (do
               publish client "PERMISSIONS.DENIED" [withPayload "blocked"]
               flush client
@@ -91,7 +91,7 @@ spec =
                 , withMinimumLogLevel Debug
                 , withLogAction recordLog
                 ]
-          client <- newClient [(natsHost, natsPort)] clientOptions
+          client <- newTestClient [(natsHost, natsPort)] clientOptions
           (do
               _ <- subscribe client "PERMISSIONS.DENIED" [] (const (pure ()))
               flush client

@@ -20,10 +20,10 @@ spec :: Spec
 spec = do
   clientSystemTest "79b1247b-10b6-4c1c-8d78-20a9e9f30cc0" "replies are routed correctly" $ \loggerOptions (Endpoints natsHost natsPort) -> do
     let topic = "REQ.TOPIC"
-    remoteClient <- newClient [(natsHost, natsPort)] $
+    remoteClient <- newTestClient [(natsHost, natsPort)] $
       withConnectName "6eff2527-1ad5-4b0c-b4e5-4a52a7d17639"
         : loggerOptions
-    promptClient <- newClient [(natsHost, natsPort)] $
+    promptClient <- newTestClient [(natsHost, natsPort)] $
       withConnectName "6eff2527-1ad5-4b0c-b4e5-4a52a7d17639"
         : loggerOptions
     subscribe remoteClient topic [] $ \msg -> do
@@ -43,7 +43,7 @@ spec = do
     close promptClient
   clientSystemTest "bc32a4a4-91fb-4571-9c8e-5cb9c34de083" "request reports no responders" $ \loggerOptions (Endpoints natsHost natsPort) -> do
     let topic = "REQ.NO_RESPONDERS"
-    requester <- newClient [(natsHost, natsPort)] $
+    requester <- newTestClient [(natsHost, natsPort)] $
       withConnectName "no-responders-requester"
         : loggerOptions
     replyBox <- newEmptyTMVarIO

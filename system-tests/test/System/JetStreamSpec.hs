@@ -3,7 +3,7 @@
 module JetStreamSpec (spec) where
 
 import qualified API                   as Nats
-import           Client                (newClient, withConnectName)
+import           Client                (withConnectName)
 import           Control.Concurrent
     ( newEmptyMVar
     , takeMVar
@@ -132,14 +132,14 @@ jetStreamDomainSystemTest testId label scenario =
 
 withJetStreamClient :: String -> Endpoints -> (JetStream -> IO ()) -> IO ()
 withJetStreamClient testId (Endpoints natsHost natsPort) scenario = do
-  client <- newClient [(natsHost, natsPort)] $
+  client <- newTestClient [(natsHost, natsPort)] $
     withConnectName (BC.pack testId)
       : testLoggerOptions
   scenario (newJetStream client []) `finally` Nats.close client
 
 withJetStreamDomainClient :: String -> Endpoints -> (JetStream -> IO ()) -> IO ()
 withJetStreamDomainClient testId (Endpoints natsHost natsPort) scenario = do
-  client <- newClient [(natsHost, natsPort)] $
+  client <- newTestClient [(natsHost, natsPort)] $
     withConnectName (BC.pack testId)
       : testLoggerOptions
   scenario (newJetStream client [withDomain "HUB"]) `finally` Nats.close client

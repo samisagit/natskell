@@ -9,7 +9,11 @@ import           Control.Concurrent        (forkIO)
 import           Control.Concurrent.STM
 import           Control.Monad             (forM_, unless, void, when)
 import           Data.Foldable             (for_)
-import           Handshake.Nats            (performHandshake)
+import           Data.Maybe                (listToMaybe)
+import           Handshake.Nats
+    ( HandshakeError (..)
+    , performHandshake
+    )
 import           Lib.Logger                (LogLevel (..), MonadLogger (..))
 import           Network.ConnectionAPI
     ( Conn
@@ -33,6 +37,7 @@ import           State.Store
     , config
     , connection
     , enqueue
+    , failInitialConnection
     , incrementAttemptIndex
     , markClosed
     , markConnected
@@ -52,6 +57,9 @@ import           State.Types
     ( ClientConfig (..)
     , ClientExitReason (..)
     , ClientStatus (..)
+    , ConnectAttemptError (..)
+    , ConnectError (..)
+    , ConnectFailure (..)
     )
 import           Subscription.Store
     ( SubscriptionStore
@@ -75,15 +83,24 @@ runEngine
   -> Auth
   -> IO ()
 runEngine connectionApi streamingApi broadcastingApi parserApi state store auth =
-  loop (connectionAttempts (config state)) Nothing
+  case connectOptions (config state) of
+    [] -> do
+      failInitialConnection state ConnectNoServers
+      finalize (ExitRetriesExhausted (Just "No servers provided"))
+    _ ->
+      loop (connectionAttempts (config state)) []
   where
     StreamingAPI runStreaming = streamingApi
     BroadcastingAPI runBroadcasting = broadcastingApi
 
-    loop remaining lastErr
+    loop remaining attemptErrors
       | remaining <= 0 = do
           runClient state $
             logMessage Info "retries exhausted; exiting"
+          let orderedErrors = reverse attemptErrors
+              connectError = ConnectAttemptsExhausted orderedErrors
+              lastErr = show <$> listToMaybe orderedErrors
+          failInitialConnection state connectError
           finalize (ExitRetriesExhausted lastErr)
       | otherwise = do
           status <- readStatus state
@@ -97,7 +114,7 @@ runEngine connectionApi streamingApi broadcastingApi parserApi state store auth 
                     runClient state $
                       logMessage Info "retrying client connection"
                     incrementAttemptIndex state
-                  loop (remaining - 1) (Just attemptErr)
+                  loop (remaining - 1) (attemptErr : attemptErrors)
                 Closing reason ->
                   finalize reason
                 Closed _ ->
@@ -110,21 +127,27 @@ runEngine connectionApi streamingApi broadcastingApi parserApi state store auth 
     runAttempt = do
       openQueue state
       open connectionApi (connection state)
-      transportResult <- acquireTransport
+      let cfg = config state
+          endpoints = connectOptions cfg
+      attemptIndex <- readAttemptIndex state
+      let endpoint@(host, _port) =
+            endpoints !! (attemptIndex `mod` length endpoints)
+      setEndpoint state endpoint
+      transportResult <- acquireTransport endpoint
       case transportResult of
         Left err -> do
           runClient state $
             logMessage Error ("connection attempt failed: " ++ show err)
           close connectionApi (connection state)
-          pure err
-        Right (conn, (host, _port)) -> do
+          pure (ConnectAttemptError endpoint (ConnectTransportFailure err))
+        Right conn -> do
           handshakeResult <- performHandshake connectionApi parserApi state auth conn host
           case handshakeResult of
             Left err -> do
               runClient state $
                 logMessage Error ("connection initialization failed: " ++ show err)
               close connectionApi conn
-              pure (show err)
+              pure (ConnectAttemptError endpoint (handshakeFailure err))
             Right () -> do
               resubscribeIfNeeded
               markConnectionReady state
@@ -134,26 +157,22 @@ runEngine connectionApi streamingApi broadcastingApi parserApi state store auth 
                 ConnectionDisconnected -> do
                   runClient state $
                     logMessage Info "connection disconnected"
-                  pure "connection disconnected"
+                  pure (ConnectAttemptError endpoint (ConnectTransportFailure "connection disconnected"))
                 ConnectionExit reason -> do
                   setClosing state reason
-                  pure (show reason)
+                  pure (ConnectAttemptError endpoint (ConnectProtocolFailure (show reason)))
 
-    acquireTransport = do
-      let cfg = config state
-          conn = connection state
-      case connectOptions cfg of
-        [] ->
-          pure (Left "No servers provided")
-        endpoints -> do
-          attemptIndex <- readAttemptIndex state
-          let endpoint@(host, port) =
-                endpoints !! (attemptIndex `mod` length endpoints)
-          setEndpoint state endpoint
-          result <- connectTcp connectionApi conn host port
-          case result of
-            Left err -> pure (Left err)
-            Right () -> pure (Right (conn, endpoint))
+    acquireTransport (host, port) = do
+      let conn = connection state
+      result <- connectTcp connectionApi conn host port
+      case result of
+        Left err -> pure (Left err)
+        Right () -> pure (Right conn)
+
+    handshakeFailure (HandshakeTransportError err) = ConnectTransportFailure err
+    handshakeFailure (HandshakeProtocolError err) = ConnectProtocolFailure err
+    handshakeFailure (HandshakeAuthError err) = ConnectAuthenticationFailure (show err)
+    handshakeFailure HandshakeTimeout = ConnectHandshakeTimeout
 
     resubscribeIfNeeded = do
       alreadyConnected <- markConnected state

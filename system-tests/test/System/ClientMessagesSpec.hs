@@ -37,10 +37,10 @@ messageTest payload loggerOptions (Endpoints natsHost natsPort) = do
   lock <- newEmptyMVar
   sidBox <- newEmptyMVar
   wg <- newWaitGroup 1
-  assertClient <- newClient [(natsHost, natsPort)] $
+  assertClient <- newTestClient [(natsHost, natsPort)] $
     withConnectName "0dfe787e-383b-4cb8-a73f-8474f4cc0497"
       : loggerOptions
-  promptClient <- newClient [(natsHost, natsPort)] $
+  promptClient <- newTestClient [(natsHost, natsPort)] $
     withConnectName "0e81e61a-932f-4036-9cdd-9a65fb4ed829"
       : loggerOptions
   subscribe assertClient topic [] $ \msg -> do
@@ -70,13 +70,13 @@ queueGroupTest loggerOptions (Endpoints natsHost natsPort) = do
   received <- newMVar []
   expectedDone <- newEmptyMVar
   extraDelivery <- newEmptyMVar
-  assertClientA <- newClient [(natsHost, natsPort)] $
+  assertClientA <- newTestClient [(natsHost, natsPort)] $
     withConnectName "30d02187-f1c7-4b60-b4fd-3633d381b9c8"
       : loggerOptions
-  assertClientB <- newClient [(natsHost, natsPort)] $
+  assertClientB <- newTestClient [(natsHost, natsPort)] $
     withConnectName "7e2cc0b7-4d6d-4ad5-aa33-eeab0e7083c9"
       : loggerOptions
-  promptClient <- newClient [(natsHost, natsPort)] $
+  promptClient <- newTestClient [(natsHost, natsPort)] $
     withConnectName "4185b922-9a1c-4c09-82e6-8f6f06ed434b"
       : loggerOptions
   let cleanup = do
@@ -118,10 +118,10 @@ normalSubscriptionReconnectTest :: [ConfigOption] -> Endpoints -> IO ()
 normalSubscriptionReconnectTest loggerOptions (Endpoints natsHost natsPort) = do
   let topic = "RECONNECT.NORMAL"
   received <- newEmptyMVar
-  subscriber <- newClient [(natsHost, natsPort)] $
+  subscriber <- newTestClient [(natsHost, natsPort)] $
     withConnectName "reconnect-normal-subscriber"
       : loggerOptions
-  publisher <- newClient [(natsHost, natsPort)] $
+  publisher <- newTestClient [(natsHost, natsPort)] $
     withConnectName "reconnect-normal-publisher"
       : loggerOptions
   let cleanup = do
@@ -149,10 +149,10 @@ queueSubscriptionReconnectTest loggerOptions (Endpoints natsHost natsPort) = do
   let topic = "RECONNECT.QUEUE"
       queueGroup = "RECONNECT-WORKERS"
   received <- newEmptyMVar
-  subscriber <- newClient [(natsHost, natsPort)] $
+  subscriber <- newTestClient [(natsHost, natsPort)] $
     withConnectName "reconnect-queue-subscriber"
       : loggerOptions
-  publisher <- newClient [(natsHost, natsPort)] $
+  publisher <- newTestClient [(natsHost, natsPort)] $
     withConnectName "reconnect-queue-publisher"
       : loggerOptions
   let cleanup = do
@@ -185,10 +185,10 @@ headersRoundTripTest loggerOptions (Endpoints natsHost natsPort) = do
         , ("X-Multi", "blue")
         ]
   received <- newEmptyMVar
-  subscriber <- newClient [(natsHost, natsPort)] $
+  subscriber <- newTestClient [(natsHost, natsPort)] $
     withConnectName "headers-round-trip-subscriber"
       : loggerOptions
-  publisher <- newClient [(natsHost, natsPort)] $
+  publisher <- newTestClient [(natsHost, natsPort)] $
     withConnectName "headers-round-trip-publisher"
       : loggerOptions
   let cleanup = do

@@ -14,6 +14,7 @@ module Client
   , withMinimumLogLevel
   , withLogAction
   , withConnectionAttempts
+  , withConnectTimeoutMicros
   , withCallbackConcurrency
   , withBufferLimit
   , withExitAction
@@ -28,6 +29,9 @@ module Client
   , TLSPrivateKey
   , TLSCertData
   , ClientExitReason (..)
+  , ConnectError (..)
+  , ConnectAttemptError (..)
+  , ConnectFailure (..)
   ) where
 
 import qualified Auth.Jwt                 as AuthJwt
@@ -81,13 +85,16 @@ import           State.Store
     , runClient
     , setConnectName
     , waitForClosed
-    , waitForConnectionGenerationAfter
+    , waitForInitialConnection
     , waitForNotRunning
     )
 import           State.Types
     ( ClientConfig (..)
     , ClientExitReason (..)
     , ClientStatus (..)
+    , ConnectAttemptError (..)
+    , ConnectError (..)
+    , ConnectFailure (..)
     , TLSCertData
     , TLSPrivateKey
     , TLSPublicKey
@@ -122,18 +129,19 @@ data ClientAuth = ClientAuthNone
                 | ClientAuthJWT JWTTokenData
 
 data ClientOptions = ClientOptions
-                       { optionConnectConfig       :: Connect.Connect
-                       , optionAuth                :: ClientAuth
-                       , optionTlsCert             :: Maybe TLSCertData
-                       , optionLoggerConfig        :: LoggerConfig
-                       , optionConnectionAttempts  :: Int
-                       , optionCallbackConcurrency :: Int
-                       , optionBufferLimit         :: Int
-                       , optionExitAction          :: ClientExitReason -> IO ()
-                       , optionConnectOptions      :: [(String, Int)]
+                       { optionConnectConfig        :: Connect.Connect
+                       , optionAuth                 :: ClientAuth
+                       , optionTlsCert              :: Maybe TLSCertData
+                       , optionLoggerConfig         :: LoggerConfig
+                       , optionConnectionAttempts   :: Int
+                       , optionConnectTimeoutMicros :: Int
+                       , optionCallbackConcurrency  :: Int
+                       , optionBufferLimit          :: Int
+                       , optionExitAction           :: ClientExitReason -> IO ()
+                       , optionConnectOptions       :: [(String, Int)]
                        }
 
-newClient :: [(String, Int)] -> [ConfigOption] -> IO Client
+newClient :: [(String, Int)] -> [ConfigOption] -> IO (Either ConnectError Client)
 newClient servers configOptions = do
   loggerConfig' <- defaultLogger
   ctx <- newLogContext
@@ -143,6 +151,7 @@ newClient servers configOptions = do
         , optionTlsCert = Nothing
         , optionLoggerConfig = loggerConfig'
         , optionConnectionAttempts = 5
+        , optionConnectTimeoutMicros = 2 * 1000000
         , optionCallbackConcurrency = 1
         , optionBufferLimit = 4096
         , optionExitAction = const (pure ())
@@ -151,6 +160,7 @@ newClient servers configOptions = do
       clientConfig =
         ClientConfig
           { connectionAttempts = optionConnectionAttempts defaultOptions
+          , connectTimeoutMicros = optionConnectTimeoutMicros defaultOptions
           , callbackConcurrency = optionCallbackConcurrency defaultOptions
           , bufferLimit = optionBufferLimit defaultOptions
           , connectConfig = optionConnectConfig defaultOptions
@@ -190,27 +200,26 @@ newClient servers configOptions = do
       store
       configuredAuth
 
-  atomically $
-    waitForConnectionGenerationAfter clientState 0
-      `orElse` waitForClosed clientState
+  let client = Client
+        { publish = \subject publishOptions -> do
+            let cfg = applyCallOptions publishOptions defaultPublishConfig
+            publishClient clientState store subject cfg
+        , subscribe = \subject subscribeOptions callback -> do
+            let cfg = applyCallOptions subscribeOptions defaultSubscribeConfig
+            subscribeClient clientState store False subject cfg (toInternalCallback callback)
+        , request = \subject subscribeOptions callback -> do
+            let cfg = applyCallOptions subscribeOptions defaultSubscribeConfig
+            subscribeClient clientState store True subject cfg (toInternalCallback callback)
+        , unsubscribe = unsubscribeClient clientState store
+        , newInbox = nextInbox clientState
+        , ping = pingClient clientState
+        , flush = flushClient clientState
+        , reset = resetClient connectionApi clientState store
+        , close = closeClient connectionApi clientState store
+        }
 
-  pure Client
-    { publish = \subject publishOptions -> do
-        let cfg = applyCallOptions publishOptions defaultPublishConfig
-        publishClient clientState store subject cfg
-    , subscribe = \subject subscribeOptions callback -> do
-        let cfg = applyCallOptions subscribeOptions defaultSubscribeConfig
-        subscribeClient clientState store False subject cfg (toInternalCallback callback)
-    , request = \subject subscribeOptions callback -> do
-        let cfg = applyCallOptions subscribeOptions defaultSubscribeConfig
-        subscribeClient clientState store True subject cfg (toInternalCallback callback)
-    , unsubscribe = unsubscribeClient clientState store
-    , newInbox = nextInbox clientState
-    , ping = pingClient clientState
-    , flush = flushClient clientState
-    , reset = resetClient connectionApi clientState store
-    , close = closeClient connectionApi clientState store
-    }
+  initialResult <- atomically (waitForInitialConnection clientState)
+  pure (client <$ initialResult)
 
 type ConfigOption = CallOption ClientOptions
 
@@ -259,7 +268,13 @@ withLogAction logAction config =
 
 withConnectionAttempts :: Int -> ConfigOption
 withConnectionAttempts attempts config =
-  config { optionConnectionAttempts = attempts }
+  config { optionConnectionAttempts = max 1 attempts }
+
+-- | Set the maximum time for INFO, TLS, CONNECT, and PONG negotiation on each
+-- server attempt. Values below one microsecond are clamped to one.
+withConnectTimeoutMicros :: Int -> ConfigOption
+withConnectTimeoutMicros timeoutMicros config =
+  config { optionConnectTimeoutMicros = max 1 timeoutMicros }
 
 withCallbackConcurrency :: Int -> ConfigOption
 withCallbackConcurrency concurrency config =
