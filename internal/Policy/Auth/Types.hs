@@ -1,25 +1,44 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications  #-}
 
 module Auth.Types
   ( User
   , Pass
   , UserPassData
   , NKeyData
+  , NKeyPublicKey
   , AuthTokenData
   , JWTTokenData
+  , Nonce
+  , Signature
+  , AuthTokenHandler
+  , UserPassHandler
+  , JWTHandler
+  , SignatureHandler
   , JwtBundle (..)
   , AuthError (..)
   , AuthContext (..)
   , AuthPatch (..)
   , Auth (..)
+  , ChallengeAuth (..)
+  , emptyAuth
+  , mergeAuth
+  , authMethods
   , emptyAuthPatch
-  , validateAuth
   , buildAuthPatch
   , applyAuthPatch
   , parseJwtBundle
   , signNonceWithSeed
   ) where
 
+import           Control.Exception
+    ( SomeAsyncException
+    , SomeException
+    , displayException
+    , fromException
+    , throwIO
+    , try
+    )
 import qualified Crypto.Error          as Crypto
 import qualified Crypto.PubKey.Ed25519 as Ed25519
 import qualified Data.Bits             as Bits
@@ -35,10 +54,19 @@ type Pass = BS.ByteString
 type UserPassData = (User, Pass)
 
 type NKeyData = BS.ByteString
+type NKeyPublicKey = BS.ByteString
 
 type AuthTokenData = BS.ByteString
 
 type JWTTokenData = BS.ByteString
+
+type Nonce = BS.ByteString
+type Signature = BS.ByteString
+
+type AuthTokenHandler = IO (Either AuthError AuthTokenData)
+type UserPassHandler = IO (Either AuthError UserPassData)
+type JWTHandler = IO (Either AuthError JWTTokenData)
+type SignatureHandler = Nonce -> IO (Either AuthError Signature)
 
 data JwtBundle = JwtBundle
                    { jwtToken :: BS.ByteString
@@ -62,12 +90,48 @@ data AuthPatch = AuthPatch
                    }
   deriving (Eq, Show)
 
-data Auth = AuthNone
-          | AuthToken AuthTokenData
-          | AuthUserPass UserPassData
-          | AuthNKey NKeyData
-          | AuthJWT JWTTokenData
-  deriving (Eq, Show)
+data ChallengeAuth = AuthNKeySeed NKeyData
+                   | AuthNKeyHandler NKeyPublicKey SignatureHandler
+                   | AuthJWTBundle JWTTokenData
+                   | AuthJWTHandlers JWTHandler SignatureHandler
+
+data Auth = Auth
+              { authTokenHandler    :: Maybe AuthTokenHandler
+              , authUserPassHandler :: Maybe UserPassHandler
+              , authChallenge       :: Maybe ChallengeAuth
+              }
+
+emptyAuth :: Auth
+emptyAuth = Auth Nothing Nothing Nothing
+
+-- | Merge auth configuration while preserving independent token and user/pass
+-- methods. Challenge auth (NKey or JWT) remains mutually exclusive and the
+-- right-hand configuration wins.
+mergeAuth :: Auth -> Auth -> Auth
+mergeAuth left right =
+  Auth
+    { authTokenHandler = preferRight (authTokenHandler left) (authTokenHandler right)
+    , authUserPassHandler = preferRight (authUserPassHandler left) (authUserPassHandler right)
+    , authChallenge = preferRight (authChallenge left) (authChallenge right)
+    }
+
+preferRight :: Maybe a -> Maybe a -> Maybe a
+preferRight left Nothing     = left
+preferRight _ right@(Just _) = right
+
+authMethods :: Auth -> [String]
+authMethods auth =
+  tokenMethod ++ userPassMethod ++ challengeMethod
+  where
+    tokenMethod = ["auth token" | Just _ <- [authTokenHandler auth]]
+    userPassMethod = ["user/pass" | Just _ <- [authUserPassHandler auth]]
+    challengeMethod =
+      case authChallenge auth of
+        Nothing                    -> []
+        Just (AuthNKeySeed _)      -> ["nkey"]
+        Just (AuthNKeyHandler _ _) -> ["nkey"]
+        Just (AuthJWTBundle _)     -> ["jwt"]
+        Just (AuthJWTHandlers _ _) -> ["jwt"]
 
 emptyAuthPatch :: AuthPatch
 emptyAuthPatch =
@@ -80,56 +144,98 @@ emptyAuthPatch =
     , patchSig = Nothing
     }
 
-validateAuth :: Auth -> Either AuthError ()
-validateAuth auth =
-  case auth of
-    AuthNone ->
-      Right ()
-    AuthToken token ->
-      validateToken token
-    AuthUserPass userPass ->
-      validateUserPass userPass
-    AuthNKey seed ->
-      validateNKey seed
-    AuthJWT creds ->
-      validateJwt creds
+buildAuthPatch :: Auth -> AuthContext -> IO (Either AuthError AuthPatch)
+buildAuthPatch auth ctx = do
+  tokenResult <- resolveOptional "auth token" validateToken (authTokenHandler auth)
+  userPassResult <- resolveOptional "user/pass" validateUserPass (authUserPassHandler auth)
+  challengeResult <- buildChallengePatch (authChallenge auth) ctx
+  pure $ do
+    token <- tokenResult
+    userPass <- userPassResult
+    challengePatch <- challengeResult
+    pure challengePatch
+      { patchAuthToken = token
+      , patchUser = fst <$> userPass
+      , patchPass = snd <$> userPass
+      }
 
-buildAuthPatch :: Auth -> AuthContext -> Either AuthError AuthPatch
-buildAuthPatch auth ctx =
-  case auth of
-    AuthNone ->
-      Right emptyAuthPatch
-    AuthToken token -> do
-      validateToken token
-      Right emptyAuthPatch
-        { patchAuthToken = Just token
-        }
-    AuthUserPass (user, pass) -> do
-      validateUserPass (user, pass)
-      Right emptyAuthPatch
-        { patchUser = Just user
-        , patchPass = Just pass
-        }
-    AuthNKey seed -> do
-      validateNKey seed
-      nonce <- requireNonce ctx
-      (publicKey, signature) <- either (Left . AuthError) Right (signNonceWithSeed seed nonce)
-      Right emptyAuthPatch
-        { patchNKey = Just publicKey
-        , patchSig = Just signature
-        }
-    AuthJWT creds -> do
-      validateJwt creds
-      bundle <-
-        case parseJwtBundle creds of
-          Nothing     -> Left (AuthError "jwt credentials bundle is invalid")
-          Just parsed -> Right parsed
-      nonce <- requireNonce ctx
-      (_, signature) <- either (Left . AuthError) Right (signNonceWithSeed (jwtSeed bundle) nonce)
-      Right emptyAuthPatch
-        { patchJwt = Just (jwtToken bundle)
-        , patchSig = Just signature
-        }
+resolveOptional
+  :: String
+  -> (a -> Either AuthError ())
+  -> Maybe (IO (Either AuthError a))
+  -> IO (Either AuthError (Maybe a))
+resolveOptional _ _ Nothing = pure (Right Nothing)
+resolveOptional label validate (Just handler) = do
+  result <- runAuthHandler label handler
+  pure $ do
+    value <- result
+    validate value
+    pure (Just value)
+
+buildChallengePatch :: Maybe ChallengeAuth -> AuthContext -> IO (Either AuthError AuthPatch)
+buildChallengePatch Nothing _ = pure (Right emptyAuthPatch)
+buildChallengePatch (Just challenge) ctx =
+  case requireNonce ctx of
+    Left err -> pure (Left err)
+    Right nonce ->
+      case challenge of
+        AuthNKeySeed seed ->
+          pure $ do
+            validateNKey seed
+            (publicKey, signature) <- either (Left . AuthError) Right (signNonceWithSeed seed nonce)
+            pure emptyAuthPatch
+              { patchNKey = Just publicKey
+              , patchSig = Just signature
+              }
+        AuthNKeyHandler publicKey signatureHandler -> do
+          signatureResult <- resolveSignature signatureHandler nonce
+          pure $ do
+            validatePublicKey publicKey
+            signature <- signatureResult
+            pure emptyAuthPatch
+              { patchNKey = Just publicKey
+              , patchSig = Just signature
+              }
+        AuthJWTBundle creds ->
+          pure $ do
+            validateJwt creds
+            bundle <-
+              maybe (Left (AuthError "jwt credentials bundle is invalid")) Right (parseJwtBundle creds)
+            (_, signature) <- either (Left . AuthError) Right (signNonceWithSeed (jwtSeed bundle) nonce)
+            pure emptyAuthPatch
+              { patchJwt = Just (jwtToken bundle)
+              , patchSig = Just signature
+              }
+        AuthJWTHandlers jwtHandler signatureHandler -> do
+          jwtResult <- runAuthHandler "jwt" jwtHandler
+          signatureResult <- resolveSignature signatureHandler nonce
+          pure $ do
+            jwt <- jwtResult
+            validateRawJwt jwt
+            signature <- signatureResult
+            pure emptyAuthPatch
+              { patchJwt = Just jwt
+              , patchSig = Just signature
+              }
+
+resolveSignature :: SignatureHandler -> Nonce -> IO (Either AuthError BS.ByteString)
+resolveSignature handler nonce = do
+  result <- runAuthHandler "nonce signature" (handler nonce)
+  pure $ do
+    signature <- result
+    if BS.length signature == 64
+      then Right (encodeBase64Url signature)
+      else Left (AuthError "nonce signature must contain 64 raw bytes")
+
+runAuthHandler :: String -> IO (Either AuthError a) -> IO (Either AuthError a)
+runAuthHandler label action = do
+  result <- try @SomeException action
+  case result of
+    Right value -> pure value
+    Left err ->
+      case fromException err :: Maybe SomeAsyncException of
+        Just _  -> throwIO err
+        Nothing -> pure (Left (AuthError (label ++ " handler failed: " ++ displayException err)))
 
 applyAuthPatch :: AuthPatch -> Connect.Connect -> Connect.Connect
 applyAuthPatch patch connect =
@@ -158,11 +264,21 @@ validateNKey seed
   | BS.null seed = Left (AuthError "nkey seed must not be empty")
   | otherwise = Right ()
 
+validatePublicKey :: NKeyPublicKey -> Either AuthError ()
+validatePublicKey publicKey
+  | BS.null publicKey = Left (AuthError "nkey public key must not be empty")
+  | otherwise = Right ()
+
 validateJwt :: JWTTokenData -> Either AuthError ()
 validateJwt creds =
   case parseJwtBundle creds of
     Nothing -> Left (AuthError "jwt credentials bundle is invalid")
     Just _  -> Right ()
+
+validateRawJwt :: JWTTokenData -> Either AuthError ()
+validateRawJwt token
+  | BS.null token = Left (AuthError "jwt must not be empty")
+  | otherwise = Right ()
 
 requireNonce :: AuthContext -> Either AuthError BS.ByteString
 requireNonce (AuthContext maybeNonce) =

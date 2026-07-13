@@ -77,26 +77,23 @@ performHandshake connectionApi parserApi state auth conn host = do
                     (connectConfig cfg)
                       { Connect.tls_required = tlsRequired || tlsRequested
                       }
-              case validateAuth auth of
+              authResult <- buildAuthPatch auth authContext
+              case authResult of
                 Left err ->
                   pure (Left (HandshakeAuthError err))
-                Right () ->
-                  case buildAuthPatch auth authContext of
+                Right patch -> do
+                  writeResult <-
+                    writeDataLazy
+                      (writer connectionApi)
+                      conn
+                      ( transform (applyAuthPatch patch connectPayload)
+                          <> transform Ping
+                      )
+                  case writeResult of
                     Left err ->
-                      pure (Left (HandshakeAuthError err))
-                    Right patch -> do
-                      writeResult <-
-                        writeDataLazy
-                          (writer connectionApi)
-                          conn
-                          ( transform (applyAuthPatch patch connectPayload)
-                              <> transform Ping
-                          )
-                      case writeResult of
-                        Left err ->
-                          pure (Left (HandshakeTransportError err))
-                        Right () ->
-                          awaitPong mempty
+                      pure (Left (HandshakeTransportError err))
+                    Right () ->
+                      awaitPong mempty
 
     readInitialInfo :: IO (Either HandshakeError (I.Info, BS.ByteString))
     readInitialInfo = go mempty

@@ -7,9 +7,13 @@ module Client
   , withConnectName
   , withEcho
   , withAuthToken
+  , withAuthTokenHandler
   , withUserPass
+  , withUserPassHandler
   , withNKey
+  , withNKeyHandler
   , withJWT
+  , withJWTHandlers
   , withTLSCert
   , withMinimumLogLevel
   , withLogAction
@@ -22,9 +26,15 @@ module Client
   , LogEntry (..)
   , renderLogEntry
   , AuthTokenData
+  , AuthTokenHandler
   , UserPassData
+  , UserPassHandler
   , NKeyData
+  , NKeyPublicKey
   , JWTTokenData
+  , JWTHandler
+  , SignatureHandler
+  , AuthError (..)
   , TLSPublicKey
   , TLSPrivateKey
   , TLSCertData
@@ -40,17 +50,25 @@ import qualified Auth.None                as AuthNone
 import qualified Auth.Token               as AuthToken
 import           Auth.Types
     ( Auth
+    , AuthError (..)
     , AuthTokenData
+    , AuthTokenHandler
+    , JWTHandler
     , JWTTokenData
     , NKeyData
+    , NKeyPublicKey
+    , SignatureHandler
     , UserPassData
+    , UserPassHandler
+    , authMethods
+    , mergeAuth
     )
 import qualified Auth.UserPass            as AuthUserPass
 import           Client.API               (Client (..), MsgView (..))
 import           Control.Concurrent       (forkIO)
 import           Control.Concurrent.STM
 import           Control.Exception        (SomeException, displayException)
-import           Control.Monad            (void, when)
+import           Control.Monad            (forM_, void, when)
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Char8    as BC
 import           Engine                   (closeClient, resetClient, runEngine)
@@ -122,15 +140,9 @@ import qualified Types.Sub                as Sub
 import qualified Types.Unsub              as Unsub
 import           Validators.Validators    (validate)
 
-data ClientAuth = ClientAuthNone
-                | ClientAuthToken AuthTokenData
-                | ClientAuthUserPass UserPassData
-                | ClientAuthNKey NKeyData
-                | ClientAuthJWT JWTTokenData
-
 data ClientOptions = ClientOptions
                        { optionConnectConfig        :: Connect.Connect
-                       , optionAuth                 :: ClientAuth
+                       , optionAuth                 :: Auth
                        , optionTlsCert              :: Maybe TLSCertData
                        , optionLoggerConfig         :: LoggerConfig
                        , optionConnectionAttempts   :: Int
@@ -147,7 +159,7 @@ newClient servers configOptions = do
   ctx <- newLogContext
   let defaultOptions = applyCallOptions configOptions ClientOptions
         { optionConnectConfig = defaultConnect
-        , optionAuth = ClientAuthNone
+        , optionAuth = AuthNone.auth
         , optionTlsCert = Nothing
         , optionLoggerConfig = loggerConfig'
         , optionConnectionAttempts = 5
@@ -169,7 +181,7 @@ newClient servers configOptions = do
           , exitAction = optionExitAction defaultOptions
           , connectOptions = optionConnectOptions defaultOptions
           }
-      configuredAuth = selectAuth (optionAuth defaultOptions)
+      configuredAuth = optionAuth defaultOptions
 
   queue <- newQueue
   conn <- newConn connectionApi
@@ -238,16 +250,39 @@ withEcho enabled config =
     }
 
 withAuthToken :: AuthTokenData -> ConfigOption
-withAuthToken token config = config { optionAuth = ClientAuthToken token }
+withAuthToken token = addAuth (AuthToken.auth token)
+
+-- | Fetch a token for every connection and reconnection attempt.
+withAuthTokenHandler :: AuthTokenHandler -> ConfigOption
+withAuthTokenHandler handler = addAuth (AuthToken.authHandler handler)
 
 withUserPass :: UserPassData -> ConfigOption
-withUserPass userPass config = config { optionAuth = ClientAuthUserPass userPass }
+withUserPass userPass = addAuth (AuthUserPass.auth userPass)
+
+-- | Fetch a username and password for every connection and reconnection attempt.
+withUserPassHandler :: UserPassHandler -> ConfigOption
+withUserPassHandler handler = addAuth (AuthUserPass.authHandler handler)
 
 withNKey :: NKeyData -> ConfigOption
-withNKey nkey config = config { optionAuth = ClientAuthNKey nkey }
+withNKey seed = addAuth (AuthNKey.auth seed)
+
+-- | Authenticate with a public NKey and a handler that signs the server nonce.
+-- The handler returns the raw 64-byte Ed25519 signature; natskell performs the
+-- protocol's base64url encoding.
+withNKeyHandler :: NKeyPublicKey -> SignatureHandler -> ConfigOption
+withNKeyHandler publicKey handler = addAuth (AuthNKey.authHandler publicKey handler)
 
 withJWT :: JWTTokenData -> ConfigOption
-withJWT jwt config = config { optionAuth = ClientAuthJWT jwt }
+withJWT creds = addAuth (AuthJwt.auth creds)
+
+-- | Fetch a user JWT and sign the server nonce for every connection attempt.
+withJWTHandlers :: JWTHandler -> SignatureHandler -> ConfigOption
+withJWTHandlers jwtHandler signatureHandler =
+  addAuth (AuthJwt.authHandlers jwtHandler signatureHandler)
+
+addAuth :: Auth -> ConfigOption
+addAuth auth config =
+  config { optionAuth = mergeAuth (optionAuth config) auth }
 
 withTLSCert :: TLSCertData -> ConfigOption
 withTLSCert cert config = config { optionTlsCert = Just cert }
@@ -311,34 +346,13 @@ defaultConnect =
 defaultSubscribeConfig :: SubscribeConfig
 defaultSubscribeConfig = SubscribeConfig Nothing Nothing
 
-selectAuth :: ClientAuth -> Auth
-selectAuth authSelection =
-  case authSelection of
-    ClientAuthNone ->
-      AuthNone.auth
-    ClientAuthToken token ->
-      AuthToken.auth token
-    ClientAuthUserPass userPass ->
-      AuthUserPass.auth userPass
-    ClientAuthNKey seed ->
-      AuthNKey.auth seed
-    ClientAuthJWT creds ->
-      AuthJwt.auth creds
-
 logStaticConfiguration :: ClientState -> ClientOptions -> IO ()
 logStaticConfiguration client options =
   runClient client $ do
-    case optionAuth options of
-      ClientAuthNone ->
-        logMessage Info "no authentication method provided"
-      ClientAuthToken _ ->
-        logMessage Info "using auth token"
-      ClientAuthUserPass (user, _) ->
-        logMessage Info ("using user/pass: " ++ show user)
-      ClientAuthNKey _ ->
-        logMessage Info "using nkey"
-      ClientAuthJWT _ ->
-        logMessage Info "using jwt"
+    case authMethods (optionAuth options) of
+      [] -> logMessage Info "no authentication method provided"
+      methods -> forM_ methods $ \method ->
+        logMessage Info ("using " ++ method)
     case optionTlsCert options of
       Nothing ->
         pure ()

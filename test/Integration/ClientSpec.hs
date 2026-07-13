@@ -1088,6 +1088,41 @@ spec = do
         case result of
           Nothing -> expectationFailure "close blocked after reply"
           Just () -> pure ()
+    it "refreshes auth handlers after a rejected connection attempt" $ do
+      (p, sock) <- openFreePort
+      listen sock 2
+      captures <- newEmptyTMVarIO
+      secondConnection <- newEmptyTMVarIO
+      void . forkIO $ do
+        (firstConn, _) <- accept sock
+        sendAll firstConn defaultINFO
+        firstConnect <- recv firstConn 4096
+        sendAll firstConn "-ERR 'Authorization Violation'\r\n"
+        (secondConn, _) <- accept sock
+        sendAll secondConn defaultHandshake
+        secondConnect <- recv secondConn 4096
+        atomically $ do
+          putTMVar captures (firstConnect, secondConnect)
+          putTMVar secondConnection secondConn
+      handlerCalls <- newIORef (0 :: Int)
+      let tokenHandler = do
+            call <- atomicModifyIORef' handlerCalls $ \current ->
+              let next = current + 1
+              in (next, next)
+            pure (Right ("token-" <> C.pack (show call)))
+          configOptions =
+            [ withAuthTokenHandler tokenHandler
+            , withConnectionAttempts 2
+            , withConnectName "rotating-auth-client"
+            ]
+      client <- newClientOrFail [("127.0.0.1", p)] configOptions
+      (firstConnect, secondConnect) <- atomically $ takeTMVar captures
+      firstConnect `shouldSatisfy` BS.isInfixOf "\"token-1\""
+      secondConnect `shouldSatisfy` BS.isInfixOf "\"token-2\""
+      close client
+      Network.Socket.close =<< atomically (takeTMVar secondConnection)
+      Network.Socket.close sock
+
     it "retries when the server disconnects before INFO" $ do
       (p, sock) <- openFreePort
       listen sock 2

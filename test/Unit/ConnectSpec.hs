@@ -15,8 +15,8 @@ import           Validators.Validators
 
 spec :: Spec
 spec = do
-  describe "call options" $
-    it "applies options from left to right so the last override wins" $
+  describe "call options" $ do
+    it "applies options from left to right so the last override wins" $ do
       applyCallOptions [(+ 1), (* 2)] (3 :: Int) `shouldBe` 8
   transformationCases
   validationCases
