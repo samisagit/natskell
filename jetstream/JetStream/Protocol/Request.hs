@@ -8,7 +8,7 @@ module JetStream.Protocol.Request
   , decodeJetStreamResponse
   ) where
 
-import qualified API                        as Nats
+import qualified Client.API                 as Nats
 import           Control.Concurrent.STM
 import           Control.Monad              (void)
 import           Data.Aeson

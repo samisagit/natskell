@@ -30,7 +30,6 @@ module Client
   , ClientExitReason (..)
   ) where
 
-import           API                      (Client (..), MsgView (..))
 import qualified Auth.Jwt                 as AuthJwt
 import qualified Auth.NKey                as AuthNKey
 import qualified Auth.None                as AuthNone
@@ -43,6 +42,7 @@ import           Auth.Types
     , UserPassData
     )
 import qualified Auth.UserPass            as AuthUserPass
+import           Client.API               (Client (..), MsgView (..))
 import           Control.Concurrent       (forkIO)
 import           Control.Concurrent.STM
 import           Control.Exception        (SomeException, displayException)

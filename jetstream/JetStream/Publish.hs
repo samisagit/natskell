@@ -3,7 +3,7 @@ module JetStream.Publish
   , module JetStream.Publish.API
   ) where
 
-import qualified API                        as Nats
+import qualified Client.API                 as Nats
 import           JetStream.Error            (JetStreamError (JetStreamNoReply))
 import           JetStream.Options          (JetStreamContext)
 import           JetStream.Protocol.Headers (statusError)

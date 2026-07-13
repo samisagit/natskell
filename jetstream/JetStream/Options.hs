@@ -8,7 +8,7 @@ module JetStream.Options
   , withRequestTimeoutMicros
   ) where
 
-import qualified API             as Nats
+import qualified Client.API      as Nats
 import qualified Data.ByteString as BS
 
 data JetStreamConfig = JetStreamConfig

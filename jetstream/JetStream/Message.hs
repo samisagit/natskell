@@ -7,7 +7,7 @@ module JetStream.Message
   , termMessage
   ) where
 
-import qualified API                        as Nats
+import qualified Client.API                 as Nats
 import           Control.Concurrent.STM
 import           Control.Exception          (bracket)
 import           Control.Monad              (unless, void)
