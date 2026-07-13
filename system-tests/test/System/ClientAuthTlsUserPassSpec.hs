@@ -14,6 +14,7 @@ spec :: Spec
 spec =
   systemTest . describe "client auth" $ do
       let loggerOptions = testLoggerOptions
+      tlsRoot <- runIO (readFixtureBytesRaw "tls/ca.crt")
       tlsHostDir <- runIO (fixturePath "tls")
       let tlsContainerDir = "/etc/nats/certs"
       let tlsConfig =
@@ -39,6 +40,7 @@ spec =
                 [ withConnectName "auth-tls-user-pass"
                 , withExitAction (atomically . putTMVar exitResult)
                 , withUserPass ("test-user", "test-pass")
+                , withTLSRootCA tlsRoot
                 , withConnectionAttempts 1
                 ]
                 ++ loggerOptions

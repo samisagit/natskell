@@ -18,6 +18,7 @@ spec =
       accountJwt <- runIO (readFixtureText "jwt/account.jwt")
       accountPub <- runIO (readFixtureText "jwt/account.pub")
       userCreds <- runIO (readFixtureBytesRaw "jwt/user.creds")
+      tlsRoot <- runIO (readFixtureBytesRaw "tls/ca.crt")
       tlsHostDir <- runIO (fixturePath "tls")
       let tlsContainerDir = "/etc/nats/certs"
       let tlsConfig =
@@ -46,6 +47,7 @@ spec =
                 [ withConnectName "auth-tls-jwt-creds"
                 , withExitAction (atomically . putTMVar exitResult)
                 , withJWT userCreds
+                , withTLSRootCA tlsRoot
                 , withConnectionAttempts 1
                 ]
                 ++ loggerOptions

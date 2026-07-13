@@ -36,8 +36,10 @@ import qualified Types.Err                 as Err
 import qualified Types.Info                as I
 import           Types.Ping                (Ping (Ping))
 import           Types.Pong                (Pong (Pong))
+import           Types.TLS                 (defaultTLSConfig)
 
 data HandshakeError = HandshakeTransportError String
+                    | HandshakeTLSError String
                     | HandshakeProtocolError String
                     | HandshakeAuthError AuthError
                     | HandshakeTimeout
@@ -55,45 +57,53 @@ performHandshake connectionApi parserApi state auth conn host = do
           pure (Left err)
         Right (info, rest) -> do
           let cfg = config state
-              tlsRequested = isJust (tlsCert cfg) || Connect.tls_required (connectConfig cfg)
+              tlsRequested = isJust (tlsConfig cfg) || Connect.tls_required (connectConfig cfg)
               tlsRequired = fromMaybe False (I.tls_required info)
+              tlsAvailable = fromMaybe False (I.tls_available info)
+              useTls = tlsRequired || (tlsRequested && tlsAvailable)
               transportOption =
                 TransportOption
                   { transportHost = host
                   , transportTlsRequired = tlsRequired
-                  , transportTlsRequested = tlsRequested
-                  , transportTlsCert = tlsCert cfg
+                  , transportTlsRequested = tlsRequested && tlsAvailable
+                  , transportTlsConfig =
+                      if useTls
+                        then Just (fromMaybe defaultTLSConfig (tlsConfig cfg))
+                        else Nothing
                   , transportInitialBytes = rest
                   }
-          transportResult <- configure connectionApi conn transportOption
-          case transportResult of
-            Left err ->
-              pure (Left (HandshakeTransportError err))
-            Right () -> do
-              setServerInfo state info
-              updateLogContextFromInfo state info
-              let authContext = AuthContext { authNonce = I.nonce info }
-                  connectPayload =
-                    (connectConfig cfg)
-                      { Connect.tls_required = tlsRequired || tlsRequested
-                      }
-              authResult <- buildAuthPatch auth authContext
-              case authResult of
+          if tlsRequested && not (tlsRequired || tlsAvailable)
+            then pure (Left (HandshakeTLSError "server does not offer TLS"))
+            else do
+              transportResult <- configure connectionApi conn transportOption
+              case transportResult of
                 Left err ->
-                  pure (Left (HandshakeAuthError err))
-                Right patch -> do
-                  writeResult <-
-                    writeDataLazy
-                      (writer connectionApi)
-                      conn
-                      ( transform (applyAuthPatch patch connectPayload)
-                          <> transform Ping
-                      )
-                  case writeResult of
+                  pure (Left (HandshakeTLSError err))
+                Right () -> do
+                  setServerInfo state info
+                  updateLogContextFromInfo state info
+                  let authContext = AuthContext { authNonce = I.nonce info }
+                      connectPayload =
+                        (connectConfig cfg)
+                          { Connect.tls_required = useTls
+                          }
+                  authResult <- buildAuthPatch auth authContext
+                  case authResult of
                     Left err ->
-                      pure (Left (HandshakeTransportError err))
-                    Right () ->
-                      awaitPong mempty
+                      pure (Left (HandshakeAuthError err))
+                    Right patch -> do
+                      writeResult <-
+                        writeDataLazy
+                          (writer connectionApi)
+                          conn
+                          ( transform (applyAuthPatch patch connectPayload)
+                              <> transform Ping
+                          )
+                      case writeResult of
+                        Left err ->
+                          pure (Left (HandshakeTransportError err))
+                        Right () ->
+                          awaitPong mempty
 
     readInitialInfo :: IO (Either HandshakeError (I.Info, BS.ByteString))
     readInitialInfo = go mempty

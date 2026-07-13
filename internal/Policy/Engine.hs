@@ -170,6 +170,7 @@ runEngine connectionApi streamingApi broadcastingApi parserApi state store auth 
         Right () -> pure (Right conn)
 
     handshakeFailure (HandshakeTransportError err) = ConnectTransportFailure err
+    handshakeFailure (HandshakeTLSError err) = ConnectTLSFailure err
     handshakeFailure (HandshakeProtocolError err) = ConnectProtocolFailure err
     handshakeFailure (HandshakeAuthError err) = ConnectAuthenticationFailure (show err)
     handshakeFailure HandshakeTimeout = ConnectHandshakeTimeout

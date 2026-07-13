@@ -14,7 +14,11 @@ module Client
   , withNKeyHandler
   , withJWT
   , withJWTHandlers
+  , withTLS
   , withTLSCert
+  , withTLSRootCA
+  , withTLSServerName
+  , withTLSInsecure
   , withMinimumLogLevel
   , withLogAction
   , withConnectionAttempts
@@ -38,6 +42,7 @@ module Client
   , TLSPublicKey
   , TLSPrivateKey
   , TLSCertData
+  , TLSConfig (..)
   , ClientExitReason (..)
   , ConnectError (..)
   , ConnectAttemptError (..)
@@ -71,6 +76,7 @@ import           Control.Exception        (SomeException, displayException)
 import           Control.Monad            (forM_, void, when)
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Char8    as BC
+import           Data.Maybe               (fromMaybe)
 import           Engine                   (closeClient, resetClient, runEngine)
 import           Lib.CallOption           (CallOption, applyCallOptions)
 import           Lib.Logger
@@ -114,8 +120,10 @@ import           State.Types
     , ConnectError (..)
     , ConnectFailure (..)
     , TLSCertData
+    , TLSConfig (..)
     , TLSPrivateKey
     , TLSPublicKey
+    , defaultTLSConfig
     )
 import           Subscription.Store
     ( SubscriptionStore
@@ -143,7 +151,7 @@ import           Validators.Validators    (validate)
 data ClientOptions = ClientOptions
                        { optionConnectConfig        :: Connect.Connect
                        , optionAuth                 :: Auth
-                       , optionTlsCert              :: Maybe TLSCertData
+                       , optionTlsConfig            :: Maybe TLSConfig
                        , optionLoggerConfig         :: LoggerConfig
                        , optionConnectionAttempts   :: Int
                        , optionConnectTimeoutMicros :: Int
@@ -160,7 +168,7 @@ newClient servers configOptions = do
   let defaultOptions = applyCallOptions configOptions ClientOptions
         { optionConnectConfig = defaultConnect
         , optionAuth = AuthNone.auth
-        , optionTlsCert = Nothing
+        , optionTlsConfig = Nothing
         , optionLoggerConfig = loggerConfig'
         , optionConnectionAttempts = 5
         , optionConnectTimeoutMicros = 2 * 1000000
@@ -177,7 +185,7 @@ newClient servers configOptions = do
           , bufferLimit = optionBufferLimit defaultOptions
           , connectConfig = optionConnectConfig defaultOptions
           , loggerConfig = optionLoggerConfig defaultOptions
-          , tlsCert = optionTlsCert defaultOptions
+          , tlsConfig = optionTlsConfig defaultOptions
           , exitAction = optionExitAction defaultOptions
           , connectOptions = optionConnectOptions defaultOptions
           }
@@ -284,8 +292,37 @@ addAuth :: Auth -> ConfigOption
 addAuth auth config =
   config { optionAuth = mergeAuth (optionAuth config) auth }
 
+-- | Require TLS using the operating system trust store.
+withTLS :: ConfigOption
+withTLS = modifyTLSConfig id
+
 withTLSCert :: TLSCertData -> ConfigOption
-withTLSCert cert config = config { optionTlsCert = Just cert }
+withTLSCert cert =
+  modifyTLSConfig $ \tls -> tls { tlsClientCertificate = Just cert }
+
+-- | Add PEM-encoded root certificates to the operating system trust store.
+withTLSRootCA :: BS.ByteString -> ConfigOption
+withTLSRootCA root =
+  modifyTLSConfig $ \tls ->
+    tls { tlsRootCertificates = tlsRootCertificates tls ++ [root] }
+
+-- | Override the host name used for certificate verification and SNI.
+withTLSServerName :: String -> ConfigOption
+withTLSServerName serverName =
+  modifyTLSConfig $ \tls -> tls { tlsServerName = Just serverName }
+
+-- | Disable server certificate verification. This is unsafe and should only
+-- be used when the peer is trusted by some mechanism outside TLS.
+withTLSInsecure :: ConfigOption
+withTLSInsecure =
+  modifyTLSConfig $ \tls -> tls { tlsInsecure = True }
+
+modifyTLSConfig :: (TLSConfig -> TLSConfig) -> ConfigOption
+modifyTLSConfig update config =
+  config
+    { optionTlsConfig =
+        Just (update (fromMaybe defaultTLSConfig (optionTlsConfig config)))
+    }
 
 withMinimumLogLevel :: LogLevel -> ConfigOption
 withMinimumLogLevel minimumLogLevel config =
@@ -353,11 +390,13 @@ logStaticConfiguration client options =
       [] -> logMessage Info "no authentication method provided"
       methods -> forM_ methods $ \method ->
         logMessage Info ("using " ++ method)
-    case optionTlsCert options of
+    case optionTlsConfig options of
       Nothing ->
         pure ()
-      Just _ ->
-        logMessage Info "using tls certificate"
+      Just tls -> do
+        logMessage Info "using tls"
+        when (tlsInsecure tls) $
+          logMessage Warn "tls certificate verification is disabled"
 
 handleCallbackError :: ClientState -> SomeException -> IO ()
 handleCallbackError client err =

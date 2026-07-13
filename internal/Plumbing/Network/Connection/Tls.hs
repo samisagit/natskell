@@ -7,9 +7,11 @@ module Network.Connection.Tls
 
 import           Control.Exception
 import           Control.Monad
-import           Data.ByteString           (ByteString)
-import qualified Data.ByteString.Char8     as BC
-import qualified Data.ByteString.Lazy      as LBS
+import qualified Data.ByteString.Char8      as BC
+import qualified Data.ByteString.Lazy       as LBS
+import           Data.Maybe                 (fromMaybe)
+import           Data.X509.CertificateStore (makeCertificateStore)
+import           Data.X509.Memory           (readSignedObjectFromMemory)
 import           Network.Connection.Core
     ( bufferRead
     , currentTransport
@@ -21,9 +23,11 @@ import           Network.Connection.Types
     , Transport (..)
     , TransportOption (..)
     )
-import qualified Network.Socket            as NS
-import qualified Network.Socket.ByteString as NSB
-import qualified Network.TLS               as TLS
+import qualified Network.Socket             as NS
+import qualified Network.Socket.ByteString  as NSB
+import qualified Network.TLS                as TLS
+import           System.X509                (getSystemCertificateStore)
+import           Types.TLS                  (TLSConfig (..))
 
 tlsTransport :: TLS.Context -> Transport
 tlsTransport ctx =
@@ -61,7 +65,7 @@ upgradeToTLS conn params = do
     Nothing -> return $ Left "Transport not initialized"
     Just currentTransport' ->
       case transportUpgrade currentTransport' of
-        Nothing -> return $ Right ()
+        Nothing -> return $ Left "Transport does not support TLS"
         Just upgrade -> do
           result <- upgrade params
           case result of
@@ -70,7 +74,7 @@ upgradeToTLS conn params = do
               pointTransport conn newTransport
               return $ Right ()
 
-upgradeToTLSWithConfig :: Conn -> String -> Maybe (ByteString, ByteString) -> IO (Either String ())
+upgradeToTLSWithConfig :: Conn -> String -> TLSConfig -> IO (Either String ())
 upgradeToTLSWithConfig conn host tlsConfig = do
   paramsResult <- buildTlsParams host tlsConfig
   case paramsResult of
@@ -82,29 +86,62 @@ configureTransport conn transportOption = do
   let useTls = transportTlsRequested transportOption || transportTlsRequired transportOption
   if useTls
     then do
-      result <- upgradeToTLSWithConfig conn (transportHost transportOption) (transportTlsCert transportOption)
-      case result of
-        Left err -> return (Left err)
-        Right () -> do
-          enableReadWorker conn
-          return (Right ())
+      case transportTlsConfig transportOption of
+        Nothing -> return (Left "TLS transport requested without TLS configuration")
+        Just tlsConfig -> do
+          result <- upgradeToTLSWithConfig conn (transportHost transportOption) tlsConfig
+          case result of
+            Left err -> return (Left err)
+            Right () -> do
+              enableReadWorker conn
+              return (Right ())
     else do
       bufferRead conn (transportInitialBytes transportOption)
       enableReadWorker conn
       return (Right ())
 
-buildTlsParams :: String -> Maybe (ByteString, ByteString) -> IO (Either String TLS.ClientParams)
+buildTlsParams :: String -> TLSConfig -> IO (Either String TLS.ClientParams)
 buildTlsParams host tlsConfig = do
-  let base = TLS.defaultParamsClient host (BC.pack host)
-      hooks = TLS.clientHooks base
-      shared = TLS.clientShared base
-      acceptAny = hooks { TLS.onServerCertificate = \_ _ _ _ -> return [] }
-  case tlsConfig of
-    Just (certPem, keyPem) ->
-      case TLS.credentialLoadX509FromMemory certPem keyPem of
-        Left err -> return (Left err)
-        Right cred ->
-          let hooks' = acceptAny { TLS.onCertificateRequest = \_ -> return (Just cred) }
-              shared' = shared { TLS.sharedCredentials = TLS.Credentials [cred] }
-          in return (Right base { TLS.clientHooks = hooks', TLS.clientShared = shared' })
-    Nothing -> return (Right base { TLS.clientHooks = acceptAny })
+  result <- try @SomeException $ do
+    systemStore <- getSystemCertificateStore
+    let verificationHost = fromMaybe host (tlsServerName tlsConfig)
+        base = TLS.defaultParamsClient verificationHost (BC.pack verificationHost)
+        hooks = TLS.clientHooks base
+        shared = TLS.clientShared base
+        parsedRoots = map readSignedObjectFromMemory (tlsRootCertificates tlsConfig)
+        invalidRoot = any null parsedRoots
+        caStore = systemStore <> makeCertificateStore (concat parsedRoots)
+        verificationHooks =
+          if tlsInsecure tlsConfig
+            then hooks { TLS.onServerCertificate = \_ _ _ _ -> return [] }
+            else hooks
+        sharedWithRoots = shared { TLS.sharedCAStore = caStore }
+    if invalidRoot
+      then fail "TLS root certificate PEM is invalid"
+      else
+        case tlsClientCertificate tlsConfig of
+          Nothing ->
+            pure base
+              { TLS.clientHooks = verificationHooks
+              , TLS.clientShared = sharedWithRoots
+              }
+          Just (certPem, keyPem) ->
+            case TLS.credentialLoadX509FromMemory certPem keyPem of
+              Left err -> fail err
+              Right cred ->
+                pure base
+                  { TLS.clientHooks =
+                      verificationHooks
+                        { TLS.onCertificateRequest = \_ -> return (Just cred)
+                        }
+                  , TLS.clientShared =
+                      sharedWithRoots
+                        { TLS.sharedCredentials = TLS.Credentials [cred]
+                        }
+                  }
+  case result of
+    Left err ->
+      case fromException err :: Maybe SomeAsyncException of
+        Just _  -> throwIO err
+        Nothing -> pure (Left (displayException err))
+    Right params -> pure (Right params)

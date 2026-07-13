@@ -16,6 +16,7 @@ spec =
       let loggerOptions = testLoggerOptions
       clientCert <- runIO (readFixtureBytesRaw "tls/client.crt")
       clientKey <- runIO (readFixtureBytesRaw "tls/client.key")
+      tlsRoot <- runIO (readFixtureBytesRaw "tls/ca.crt")
       tlsHostDir <- runIO (fixturePath "tls")
       let tlsContainerDir = "/etc/nats/certs"
       let tlsConfig =
@@ -41,6 +42,7 @@ spec =
                 [ withConnectName "auth-tls"
                 , withExitAction (atomically . putTMVar exitResult)
                 , withTLSCert (clientCert, clientKey)
+                , withTLSRootCA tlsRoot
                 , withConnectionAttempts 1
                 ]
                 ++ loggerOptions
@@ -58,6 +60,7 @@ spec =
           let clientOptions =
                 [ withConnectName "auth-tls-missing-client-cert"
                 , withExitAction (atomically . putTMVar exitResult)
+                , withTLSRootCA tlsRoot
                 , withConnectionAttempts 1
                 ]
                 ++ loggerOptions

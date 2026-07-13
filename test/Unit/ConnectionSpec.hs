@@ -10,7 +10,7 @@ import qualified Data.ByteString           as BS
 import qualified Data.ByteString.Lazy      as LBS
 import           Data.IORef                (newIORef, readIORef, writeIORef)
 import           Handshake.Nats
-    ( HandshakeError (HandshakeAuthError, HandshakeTimeout)
+    ( HandshakeError (HandshakeAuthError, HandshakeTLSError, HandshakeTimeout)
     , performHandshake
     )
 import           Lib.Logger
@@ -53,6 +53,7 @@ import qualified Types.Connect             as Connect
 import           Types.Info                (Info (Info))
 import           Types.Ping                (Ping (Ping))
 import           Types.Pong                (Pong (Pong))
+import           Types.TLS                 (defaultTLSConfig)
 
 spec :: Spec
 spec = do
@@ -199,15 +200,32 @@ spec = do
         Left (HandshakeAuthError _) -> pure ()
         other -> expectationFailure ("expected auth error, got: " ++ show other)
 
+    it "rejects requested TLS when the server does not advertise it" $ do
+      state <- newTestStateWithConfig $ \cfg ->
+        cfg { tlsConfig = Just defaultTLSConfig }
+      conn <- newConn connectionApi
+      writes <- newTVarIO []
+      transport <- newScriptedTransport [infoFrame] writes
+      pointTransport conn transport
+
+      result <- performHandshake connectionApi Attoparsec.parserApi state auth conn "127.0.0.1"
+
+      case result of
+        Left (HandshakeTLSError _) -> pure ()
+        other -> expectationFailure ("expected TLS error, got: " ++ show other)
+
 newTestState = do
-  newTestStateWithTimeout 1000000
+  newTestStateWithConfig id
 
 newTestStateWithTimeout timeoutMicros = do
+  newTestStateWithConfig $ \cfg -> cfg { connectTimeoutMicros = timeoutMicros }
+
+newTestStateWithConfig updateConfig = do
   queue <- newQueue
   ctx <- newLogContext
   conn <- newConn connectionApi
   logger <- newSilentLogger
-  newClientState ((testConfig logger) { connectTimeoutMicros = timeoutMicros }) queue conn ctx
+  newClientState (updateConfig (testConfig logger)) queue conn ctx
 
 newSilentLogger :: IO LoggerConfig
 newSilentLogger = do
@@ -223,7 +241,7 @@ testConfig logger =
     , bufferLimit = 4096
     , connectConfig = testConnect
     , loggerConfig = logger
-    , tlsCert = Nothing
+    , tlsConfig = Nothing
     , exitAction = const (pure ())
     , connectOptions = []
     }
@@ -259,6 +277,7 @@ testInfo =
     4222
     1024
     1
+    Nothing
     Nothing
     Nothing
     Nothing

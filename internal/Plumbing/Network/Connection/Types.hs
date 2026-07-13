@@ -10,6 +10,7 @@ import           Control.Concurrent.STM
 import           Data.ByteString        (ByteString)
 import qualified Data.ByteString.Lazy   as LBS
 import qualified Network.TLS            as TLS
+import           Types.TLS              (TLSConfig)
 
 type ReadError = String
 type WriteError = String
@@ -24,10 +25,10 @@ data Transport = Transport
                    }
 
 data TransportOption = TransportOption
-                         { transportHost :: String
-                         , transportTlsRequired :: Bool
+                         { transportHost         :: String
+                         , transportTlsRequired  :: Bool
                          , transportTlsRequested :: Bool
-                         , transportTlsCert :: Maybe (ByteString, ByteString)
+                         , transportTlsConfig    :: Maybe TLSConfig
                          , transportInitialBytes :: ByteString
                          }
 

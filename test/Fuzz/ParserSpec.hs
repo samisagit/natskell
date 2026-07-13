@@ -189,6 +189,7 @@ genInfo =
     <*> frequency [(2, pure Nothing), (3, Just <$> genSafeText 1 16)]
     <*> genOptional arbitrary
     <*> genOptional arbitrary
+    <*> genOptional arbitrary
     <*> genOptional (listOf1 (genSafeText 1 24))
     <*> genOptional arbitrary
     <*> genOptional arbitrary

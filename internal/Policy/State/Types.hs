@@ -4,6 +4,8 @@ module State.Types
   ( TLSPublicKey
   , TLSPrivateKey
   , TLSCertData
+  , TLSConfig (..)
+  , defaultTLSConfig
   , ClientConfig (..)
   , ConnectError (..)
   , ConnectAttemptError (..)
@@ -12,14 +14,10 @@ module State.Types
   , ClientStatus (..)
   ) where
 
-import qualified Data.ByteString  as BS
 import           Lib.Logger.Types (LoggerConfig)
 import           Types.Connect    (Connect)
 import qualified Types.Err        as Err
-
-type TLSPublicKey = BS.ByteString
-type TLSPrivateKey = BS.ByteString
-type TLSCertData = (TLSPublicKey, TLSPrivateKey)
+import           Types.TLS
 
 data ClientConfig = ClientConfig
                       { connectionAttempts   :: Int
@@ -28,7 +26,7 @@ data ClientConfig = ClientConfig
                       , bufferLimit          :: Int
                       , connectConfig        :: Connect
                       , loggerConfig         :: LoggerConfig
-                      , tlsCert              :: Maybe TLSCertData
+                      , tlsConfig            :: Maybe TLSConfig
                       , exitAction           :: ClientExitReason -> IO ()
                       , connectOptions       :: [(String, Int)]
                       }

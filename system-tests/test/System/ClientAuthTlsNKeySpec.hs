@@ -16,6 +16,7 @@ spec =
       let loggerOptions = testLoggerOptions
       nkeyPub <- runIO (readFixtureText "nkey/user.pub")
       nkeySeed <- runIO (readFixtureBytesTrim "nkey/user.seed")
+      tlsRoot <- runIO (readFixtureBytesRaw "tls/ca.crt")
       tlsHostDir <- runIO (fixturePath "tls")
       let tlsContainerDir = "/etc/nats/certs"
       let tlsConfig =
@@ -41,6 +42,7 @@ spec =
                 [ withConnectName "auth-tls-nkey"
                 , withExitAction (atomically . putTMVar exitResult)
                 , withNKey nkeySeed
+                , withTLSRootCA tlsRoot
                 , withConnectionAttempts 1
                 ]
                 ++ loggerOptions

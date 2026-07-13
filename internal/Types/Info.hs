@@ -21,6 +21,7 @@ data Info = Info
               , nonce         :: Maybe BS.ByteString
               , auth_required :: Maybe Bool
               , tls_required  :: Maybe Bool
+              , tls_available :: Maybe Bool
               , connect_urls  :: Maybe [BS.ByteString]
               , ldm           :: Maybe Bool
               , headers       :: Maybe Bool
@@ -53,6 +54,7 @@ data InfoJSON = InfoJSON
                   , infoJSON_nonce         :: Maybe Utf8ByteString
                   , infoJSON_auth_required :: Maybe Bool
                   , infoJSON_tls_required  :: Maybe Bool
+                  , infoJSON_tls_available :: Maybe Bool
                   , infoJSON_connect_urls  :: Maybe [Utf8ByteString]
                   , infoJSON_ldm           :: Maybe Bool
                   , infoJSON_headers       :: Maybe Bool
@@ -73,6 +75,7 @@ fromInfoJSON infoJson =
     , nonce = unUtf8ByteString <$> infoJSON_nonce infoJson
     , auth_required = infoJSON_auth_required infoJson
     , tls_required = infoJSON_tls_required infoJson
+    , tls_available = infoJSON_tls_available infoJson
     , connect_urls = fmap (map unUtf8ByteString) (infoJSON_connect_urls infoJson)
     , ldm = infoJSON_ldm infoJson
     , headers = infoJSON_headers infoJson
