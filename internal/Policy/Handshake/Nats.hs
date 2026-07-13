@@ -174,6 +174,9 @@ performHandshake connectionApi parserApi state auth conn host = do
       | BS.null rest = awaitPong mempty
       | otherwise = consumePongFrames rest
 
-    isAuthenticationError (Err.ErrAuthViolation _) = True
-    isAuthenticationError (Err.ErrAuthTimeout _)   = True
-    isAuthenticationError _                        = False
+    isAuthenticationError (Err.ErrAuthViolation _)      = True
+    isAuthenticationError (Err.ErrAuthTimeout _)        = True
+    isAuthenticationError (Err.ErrAuthExpired _)        = True
+    isAuthenticationError (Err.ErrAuthRevoked _)        = True
+    isAuthenticationError (Err.ErrAccountAuthExpired _) = True
+    isAuthenticationError _                             = False

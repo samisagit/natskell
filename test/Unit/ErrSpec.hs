@@ -21,6 +21,9 @@ explicitCases = [
   ("-ERR 'Attempted To Connect To Route Port'\r\n", ErrRoutePortConn "Attempted To Connect To Route Port"),
   ("-ERR 'Authorization Violation'\r\n", ErrAuthViolation "Authorization Violation"),
   ("-ERR 'Authorization Timeout'\r\n", ErrAuthTimeout "Authorization Timeout"),
+  ("-ERR 'User Authentication Expired: jwt is expired'\r\n", ErrAuthExpired "User Authentication Expired: jwt is expired"),
+  ("-ERR 'User Authentication Revoked'\r\n", ErrAuthRevoked "User Authentication Revoked"),
+  ("-ERR 'Account Authentication Expired'\r\n", ErrAccountAuthExpired "Account Authentication Expired"),
   ("-ERR 'Invalid Client Protocol'\r\n", ErrInvalidProtocol "Invalid Client Protocol"),
   ("-ERR 'Maximum Control Line Exceeded'\r\n", ErrMaxControlLineEx "Maximum Control Line Exceeded"),
   ("-ERR 'Secure Connection - TLS Required'\r\n", ErrTlsRequired "Secure Connection - TLS Required"),
@@ -30,7 +33,8 @@ explicitCases = [
   ("-ERR 'Maximum Payload Violation'\r\n", ErrMaxPayload "Maximum Payload Violation"),
   ("-ERR 'Invalid Subject'\r\n", ErrInvalidSubject "Invalid Subject"),
   ("-ERR 'Permissions Violation For Subscription To FOO.'\r\n", ErrPermViolation "Permissions Violation For Subscription To FOO."),
-  ("-ERR 'Permissions Violation For Publish To FOO.'\r\n", ErrPermViolation "Permissions Violation For Publish To FOO.")
+  ("-ERR 'Permissions Violation For Publish To FOO.'\r\n", ErrPermViolation "Permissions Violation For Publish To FOO."),
+  ("-ERR 'A New Server Error'\r\n", ErrErr "A New Server Error")
   ]
 
 generatedCases =

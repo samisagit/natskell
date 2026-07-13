@@ -11,6 +11,7 @@ import qualified Data.Attoparsec.ByteString.Char8 as AC
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Char8            as B8
 import qualified Data.ByteString.Lazy             as BSL
+import           Data.Char                        (toLower)
 import           Data.Word                        (Word8)
 import           Parser.API
     ( ParseStep (DropPrefix, Emit, NeedMore)
@@ -18,7 +19,7 @@ import           Parser.API
     , ParserAPI (ParserAPI)
     )
 import           Types.Err
-    ( Err (ErrAuthTimeout, ErrAuthViolation, ErrErr, ErrInvalidProtocol, ErrInvalidSubject, ErrMaxConnsEx, ErrMaxControlLineEx, ErrMaxPayload, ErrPermViolation, ErrRoutePortConn, ErrSlowConsumer, ErrStaleConn, ErrTlsRequired, ErrUnknownOp)
+    ( Err (ErrAccountAuthExpired, ErrAuthExpired, ErrAuthRevoked, ErrAuthTimeout, ErrAuthViolation, ErrErr, ErrInvalidProtocol, ErrInvalidSubject, ErrMaxConnsEx, ErrMaxControlLineEx, ErrMaxPayload, ErrPermViolation, ErrRoutePortConn, ErrSlowConsumer, ErrStaleConn, ErrTlsRequired, ErrUnknownOp)
     )
 import           Types.Msg                        (Msg (Msg))
 import           Types.Ok                         (Ok (Ok))
@@ -247,10 +248,16 @@ classifyErr reason
       Right (ErrUnknownOp reason)
   | reason == "Attempted To Connect To Route Port" =
       Right (ErrRoutePortConn reason)
-  | reason == "Authorization Violation" =
+  | "authorization violation" `BS.isPrefixOf` normalized =
       Right (ErrAuthViolation reason)
-  | reason == "Authorization Timeout" =
+  | "authorization timeout" `BS.isPrefixOf` normalized =
       Right (ErrAuthTimeout reason)
+  | "user authentication expired" `BS.isPrefixOf` normalized =
+      Right (ErrAuthExpired reason)
+  | "user authentication revoked" `BS.isPrefixOf` normalized =
+      Right (ErrAuthRevoked reason)
+  | "account authentication expired" `BS.isPrefixOf` normalized =
+      Right (ErrAccountAuthExpired reason)
   | reason == "Invalid Client Protocol" =
       Right (ErrInvalidProtocol reason)
   | reason == "Maximum Control Line Exceeded" =
@@ -272,7 +279,9 @@ classifyErr reason
   | "Permissions Violation" `BS.isPrefixOf` reason =
       Right (ErrPermViolation reason)
   | otherwise =
-      Left ("unknown -ERR reason: " ++ B8.unpack reason)
+      Right (ErrErr reason)
+  where
+    normalized = B8.map toLower reason
 
 lineParser :: A.Parser BS.ByteString
 lineParser = do

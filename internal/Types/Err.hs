@@ -12,6 +12,9 @@ data Err = ErrUnknownOp Reason
          | ErrRoutePortConn Reason
          | ErrAuthViolation Reason
          | ErrAuthTimeout Reason
+         | ErrAuthExpired Reason
+         | ErrAuthRevoked Reason
+         | ErrAccountAuthExpired Reason
          | ErrInvalidProtocol Reason
          | ErrMaxControlLineEx Reason
          | ErrErr Reason
