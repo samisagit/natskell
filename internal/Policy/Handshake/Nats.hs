@@ -3,6 +3,7 @@ module Handshake.Nats
   , performHandshake
   ) where
 
+import           Auth.Resolver             (applyAuthPatch, buildAuthPatch)
 import           Auth.Types
 import qualified Data.ByteString           as BS
 import           Data.Maybe                (fromMaybe, isJust)

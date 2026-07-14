@@ -49,6 +49,7 @@ module Client
   , ConnectFailure (..)
   ) where
 
+import           Auth.Config              (authMethods, mergeAuth)
 import qualified Auth.Jwt                 as AuthJwt
 import qualified Auth.NKey                as AuthNKey
 import qualified Auth.None                as AuthNone
@@ -65,8 +66,6 @@ import           Auth.Types
     , SignatureHandler
     , UserPassData
     , UserPassHandler
-    , authMethods
-    , mergeAuth
     )
 import qualified Auth.UserPass            as AuthUserPass
 import           Client.API               (Client (..), MsgView (..))

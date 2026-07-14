@@ -5,6 +5,7 @@ module Auth.Jwt
   , parseJwtBundle
   ) where
 
+import           Auth.Credentials (JwtBundle (..), parseJwtBundle)
 import           Auth.Types
 
 auth :: JWTTokenData -> Auth
