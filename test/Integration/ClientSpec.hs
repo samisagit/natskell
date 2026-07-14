@@ -695,6 +695,32 @@ spec = do
           atomically (readTMVar exited)
             `shouldReturn` ExitInboundMessageTooLarge 5 4
 
+      around (withClientWith [withPendingDeliveryLimits 1 1024]) $ do
+        it "fails a request promptly when the global callback backlog is full" $ \(serv, client, _, _) -> do
+          callbackStarted <- newEmptyMVar
+          releaseCallback <- newEmptyMVar
+          Right subscription <- subscribe client "SLOW.CALLBACK" [] $ \_ -> do
+            putMVar callbackStarted ()
+            takeMVar releaseCallback
+          let sid = subscriptionSid subscription
+          expectClientCommand serv (BS.concat ["SUB SLOW.CALLBACK ", sid, "\r\n"])
+          sendAll serv (msgFrame "SLOW.CALLBACK" sid "busy")
+          expectMVar "blocking callback did not start" callbackStarted
+
+          replyBox <- newEmptyMVar
+          void . forkIO $
+            request client "SERVICE.OVERLOADED" "request" [withRequestTimeout 2]
+              >>= putMVar replyBox
+          captured <- capturePublish serv "SERVICE.OVERLOADED"
+          sendAll serv $
+            msgFrame (capturedInbox captured) (capturedSid captured) "reply"
+          expectMVar "overloaded request did not fail promptly" replyBox
+            `shouldReturn` Left NatsSlowConsumer
+
+          sendAll serv "PING\r\n"
+          expectClientCommand serv "PONG\r\n"
+          putMVar releaseCallback ()
+
       it "cleans up no responders replies for expiring requests" $ do
         bracket startClient stopClientSafely $ \(serv, client, _, _) -> do
           replyBox <- newEmptyMVar

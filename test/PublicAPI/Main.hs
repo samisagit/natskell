@@ -23,6 +23,8 @@ connect =
     [ Client.withConnectName "public-api-compile-test"
     , Client.withConnectionAttempts 1
     , Client.withMessageLimit (1024 * 1024)
+    , Client.withPendingDeliveryLimits 65536 (64 * 1024 * 1024)
+    , Client.withErrorHandler (const (pure ()))
     ]
 
 configuredServer :: Client.Server

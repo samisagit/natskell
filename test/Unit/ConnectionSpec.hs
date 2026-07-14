@@ -46,6 +46,7 @@ import           State.Store
     )
 import           State.Types               (ClientConfig (..))
 import           Subscription.Store        (newSubscriptionStore)
+import           Subscription.Types        (defaultPendingLimits)
 import           System.Timeout            (timeout)
 import           Test.Hspec
 import           Transformers.Transformers (Transformer (transform))
@@ -91,7 +92,7 @@ spec = do
   describe "Router ping lifecycle" $ do
     it "responds to server PING by enqueueing PONG" $ do
       state <- newTestState
-      store <- newSubscriptionStore
+      store <- newSubscriptionStore defaultPendingLimits (pure ())
 
       directive <- routeMessage state store (ParsedPing Ping)
 
@@ -105,7 +106,7 @@ spec = do
 
     it "runs the next pending ping action when PONG is routed" $ do
       state <- newTestState
-      store <- newSubscriptionStore
+      store <- newSubscriptionStore defaultPendingLimits (pure ())
       actionRan <- newIORef False
       pushPingAction state (writeIORef actionRan True)
 

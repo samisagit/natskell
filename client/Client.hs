@@ -32,6 +32,8 @@ module Client
   , withConnectTimeoutMicros
   , withCallbackConcurrency
   , withMessageLimit
+  , withPendingDeliveryLimits
+  , withErrorHandler
   , withBufferLimit
   , withExitAction
   , LogLevel (..)
@@ -168,8 +170,10 @@ import           Subscription.Store
     , unregister
     )
 import           Subscription.Types
-    ( SubscribeConfig (..)
+    ( PendingLimits (..)
+    , SubscribeConfig (..)
     , SubscriptionMeta (SubscriptionMeta)
+    , defaultPendingLimits
     )
 import qualified Types.Connect            as Connect
 import qualified Types.Info               as Info
@@ -189,6 +193,8 @@ data ClientOptions = ClientOptions
                        , optionConnectTimeoutMicros :: Int
                        , optionCallbackConcurrency  :: Int
                        , optionMessageLimit         :: Int
+                       , optionPendingLimits        :: PendingLimits
+                       , optionErrorHandler         :: NatsError -> IO ()
                        , optionExitAction           :: ClientExitReason -> IO ()
                        , optionConnectOptions       :: [(String, Int)]
                        }
@@ -240,6 +246,8 @@ newClient servers configOptions = do
         , optionConnectTimeoutMicros = 2 * 1000000
         , optionCallbackConcurrency = 1
         , optionMessageLimit = 1024 * 1024
+        , optionPendingLimits = defaultPendingLimits
+        , optionErrorHandler = const (pure ())
         , optionExitAction = const (pure ())
         , optionConnectOptions = servers
         }
@@ -260,7 +268,10 @@ newClient servers configOptions = do
   queue <- newQueue
   conn <- newConn connectionApi
   clientState <- newClientState clientConfig queue conn ctx
-  store <- newSubscriptionStore
+  store <-
+    newSubscriptionStore
+      (optionPendingLimits defaultOptions)
+      (handleSlowConsumer clientState (optionErrorHandler defaultOptions))
 
   setConnectName clientState (Connect.name (optionConnectConfig defaultOptions))
   logStaticConfiguration clientState defaultOptions
@@ -439,6 +450,24 @@ withMessageLimit :: Int -> ConfigOption
 withMessageLimit limit config =
   config { optionMessageLimit = max 1 limit }
 
+-- | Bound callback deliveries pending across the entire client. The first
+-- limit is a message count and the second is encoded message bytes.
+withPendingDeliveryLimits :: Int -> Int -> ConfigOption
+withPendingDeliveryLimits maximumMessages maximumBytes config =
+  config
+    { optionPendingLimits =
+        PendingLimits
+          { pendingMessageLimit = max 1 maximumMessages
+          , pendingByteLimit = max 1 maximumBytes
+          }
+    }
+
+-- | Receive asynchronous client errors such as slow-consumer notifications.
+-- The handler runs on the callback worker pool, never the socket reader.
+withErrorHandler :: (NatsError -> IO ()) -> ConfigOption
+withErrorHandler handler config =
+  config { optionErrorHandler = handler }
+
 -- | Compatibility alias for 'withMessageLimit'.
 withBufferLimit :: Int -> ConfigOption
 withBufferLimit = withMessageLimit
@@ -494,6 +523,12 @@ handleCallbackError :: ClientState -> SomeException -> IO ()
 handleCallbackError client err =
   runClient client $
     logMessage Error ("callback failed: " ++ displayException err)
+
+handleSlowConsumer :: ClientState -> (NatsError -> IO ()) -> IO ()
+handleSlowConsumer client handler = do
+  runClient client $
+    logMessage Error "slow consumer: global pending delivery limit reached"
+  handler NatsSlowConsumer
 
 shouldStopExpiryWorker :: ClientState -> SubscriptionStore -> IO Bool
 shouldStopExpiryWorker client store = do
@@ -591,6 +626,25 @@ subscribeRawClient
   -> (Maybe Msg.Msg -> IO ())
   -> IO (Either NatsError Subscription)
 subscribeRawClient client store isReply subject cfg callback = do
+  subscribeRawClientWithOverflow
+    client
+    store
+    isReply
+    subject
+    cfg
+    callback
+    (pure ())
+
+subscribeRawClientWithOverflow
+  :: ClientState
+  -> SubscriptionStore
+  -> Bool
+  -> Msg.Subject
+  -> SubscribeConfig
+  -> (Maybe Msg.Msg -> IO ())
+  -> IO ()
+  -> IO (Either NatsError Subscription)
+subscribeRawClientWithOverflow client store isReply subject cfg callback onDropped = do
   runClient client $
     logMessage Debug ("subscribing to subject: " ++ show subject)
   statusResult <- runningResult client
@@ -613,7 +667,7 @@ subscribeRawClient client store isReply subject cfg callback = do
       Right () -> do
         let meta =
               SubscriptionMeta subject queueGroup isReply
-        register store sid meta cfg callback
+        register store sid meta cfg callback onDropped
         enqueue client $
           QueueItem
             subscriptionMessage
@@ -646,8 +700,17 @@ requestClient client store requestSubject requestPayload cfg =
             in if isNoResponders message
                  then Left NatsNoResponders
                  else Right message
+        rejectSlowConsumer =
+          atomically (void (tryPutTMVar response (Left NatsSlowConsumer)))
     subscriptionResult <-
-      subscribeRawClient client store True inbox subscriptionConfig deliver
+      subscribeRawClientWithOverflow
+        client
+        store
+        True
+        inbox
+        subscriptionConfig
+        deliver
+        rejectSlowConsumer
     case subscriptionResult of
       Left err -> pure (Left err)
       Right subscription -> do

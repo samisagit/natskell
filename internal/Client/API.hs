@@ -99,6 +99,7 @@ subscriptionSid (Subscription value) = value
 -- | Failures reported by core NATS operations.
 data NatsError = NatsValidationError BS.ByteString
                | NatsPayloadTooLarge Int Int
+               | NatsSlowConsumer
                | NatsConnectionClosed ClientExitReason
                | NatsRequestTimedOut
                | NatsNoResponders

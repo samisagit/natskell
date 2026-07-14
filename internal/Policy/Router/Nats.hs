@@ -21,7 +21,11 @@ import           State.Types
     ( ClientExitReason (ExitInboundMessageTooLarge, ExitServerError)
     , serverErrorFromProtocol
     )
-import           Subscription.Store     (SubscriptionStore, dispatchMessage)
+import           Subscription.Store
+    ( DispatchResult (DispatchDropped, DispatchMissing, DispatchQueued)
+    , SubscriptionStore
+    , dispatchMessage
+    )
 import qualified Types.Err              as Err
 import qualified Types.Msg              as Msg
 import           Types.Pong             (Pong (..))
@@ -36,10 +40,18 @@ routeMessage state store parsed =
     case parsed of
       ParsedMsg msg -> do
         logMessage Debug ("routing MSG: " ++ show msg)
-        handled <- liftIO $ dispatchMessage store msg
-        if handled
-          then pure RouteContinue
-          else do
+        result <- liftIO $ dispatchMessage store msg
+        case result of
+          DispatchQueued ->
+            pure RouteContinue
+          DispatchDropped reportSlowConsumer -> do
+            if reportSlowConsumer
+              then
+                logMessage Error "slow consumer: global pending delivery limit reached"
+              else
+                logMessage Debug "dropping delivery while client remains a slow consumer"
+            pure RouteContinue
+          DispatchMissing -> do
             logMessage Error ("callback missing for SID: " ++ show (Msg.sid msg))
             pure RouteContinue
       ParsedMessageTooLarge actual maximumSize -> do
