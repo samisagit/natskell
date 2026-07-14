@@ -31,12 +31,11 @@ parser bufferLimit parserApi = loop empty
               if bsLen > bufferLimit
                 then do
                   lift . logMessage Error $
-                    "overloaded buffer: "
+                    "closing connection: incomplete protocol frame buffered "
                       ++ show bsLen
                       ++ " bytes exceeds limit "
                       ++ show bufferLimit
-                  lift . logMessage Debug $ ("invalid prefix: " ++ show (take bufferLimit bs))
-                  handleChunk (drop bufferLimit bs)
+                  return ()
                 else do
                   lift . logMessage Debug $ "message spans frame, waiting for more data"
                   loop bs
@@ -49,15 +48,5 @@ parser bufferLimit parserApi = loop empty
               lift . logMessage Error $ ("parser rejected inbound data: " ++ reason)
             Emit message rest -> do
               lift . logMessage Debug $ "parsed message"
-              let consumedBytes = length bs - length rest
-              if consumedBytes > bufferLimit
-                then do
-                  lift . logMessage Error $
-                    "dropping inbound message: "
-                      ++ show consumedBytes
-                      ++ " bytes exceeds limit "
-                      ++ show bufferLimit
-                  handleChunk rest
-                else do
-                  yield message
-                  handleChunk rest
+              yield message
+              handleChunk rest

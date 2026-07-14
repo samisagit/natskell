@@ -27,7 +27,7 @@ data ClientConfig = ClientConfig
                       { connectionAttempts   :: Int
                       , connectTimeoutMicros :: Int
                       , callbackConcurrency  :: Int
-                      , bufferLimit          :: Int
+                      , messageLimit         :: Int
                       , connectConfig        :: Connect
                       , loggerConfig         :: LoggerConfig
                       , tlsConfig            :: Maybe TLSConfig
@@ -71,6 +71,7 @@ serverErrorFromProtocol = ServerError . Err.errReason
 data ClientExitReason = ExitClosedByUser
                       | ExitRetriesExhausted (Maybe String)
                       | ExitServerError ServerError
+                      | ExitInboundMessageTooLarge Int Int
                       | ExitResetRequested
   deriving (Eq, Show)
 

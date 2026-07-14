@@ -520,7 +520,7 @@ spec = do
         case result of
           ExitRetriesExhausted _ -> return ()
           other                  -> expectationFailure $ "Unexpected exit reason: " ++ show other
-      it "drops messages too long for processing" $ \(serv, client, _, _) -> do
+      it "processes messages larger than the old parser buffer" $ \(serv, client, _, _) -> do
         wg <- newWaitGroup 1
         pingWithCallback client $ done wg
         sendAll serv tooLongMSG
@@ -657,6 +657,43 @@ spec = do
             serv
             (\sent -> BS.isInfixOf "PUB " sent || BS.isInfixOf "HPUB " sent)
             "invalid publish reached server"
+
+      around (withClientWith [withMessageLimit 4]) $ do
+        it "does not write publishes above the client message limit" $ \(serv, client, _, _) -> do
+          expectClientCommand serv "CONNECT "
+          publish client "BOUNDARY.CLIENT" "12345" []
+            `shouldReturn` Left (NatsPayloadTooLarge 5 4)
+          expectNoClientBytes
+            serv
+            (BS.isInfixOf "PUB BOUNDARY.CLIENT")
+            "publish above the client limit reached server"
+          pingBox <- newEmptyMVar
+          pingWithCallback client (putMVar pingBox ())
+          expectClientCommand serv "PING\r\n"
+          sendAll serv "PONG\r\n"
+          expectMVar "PING failed after a rejected publish" pingBox
+
+        it "accepts a publish exactly at the client message limit" $ \(serv, client, _, _) -> do
+          publish client "BOUNDARY.EXACT" "1234" [] `shouldReturn` Right ()
+          expectClientCommand serv "PUB BOUNDARY.EXACT 4\r\n1234\r\n"
+
+        it "counts headers toward the client message limit" $ \(serv, client, _, _) -> do
+          let messageHeaders = [("X", "Y")]
+              actualSize = BS.length (headerBlock messageHeaders)
+          publish client "BOUNDARY.HEADERS" "" [withHeaders messageHeaders]
+            `shouldReturn` Left (NatsPayloadTooLarge actualSize 4)
+          expectNoClientBytes
+            serv
+            (BS.isInfixOf "HPUB BOUNDARY.HEADERS")
+            "publish whose headers exceed the client limit reached server"
+
+        it "terminates the connection when an inbound message exceeds the client limit" $ \(serv, client, _, exited) -> do
+          Right subscription <- subscribe client "BOUNDARY.INBOUND" [] (const (pure ()))
+          let sid = subscriptionSid subscription
+          expectClientCommand serv (BS.concat ["SUB BOUNDARY.INBOUND ", sid, "\r\n"])
+          sendAll serv (msgFrame "BOUNDARY.INBOUND" sid "12345")
+          atomically (readTMVar exited)
+            `shouldReturn` ExitInboundMessageTooLarge 5 4
 
       it "cleans up no responders replies for expiring requests" $ do
         bracket startClient stopClientSafely $ \(serv, client, _, _) -> do
@@ -1304,7 +1341,7 @@ spec = do
           close client []
           Network.Socket.close secondConn
       Network.Socket.close sock
-    around (withClientWith [withBufferLimit (64 * 1024), withCallbackConcurrency 4]) $ do
+    around (withClientWith [withMessageLimit (64 * 1024), withCallbackConcurrency 4]) $ do
       it "soak: parses a large buffer of MSG and HMSG frames" $ \(serv, client, _, _) -> do
         let subject = "SOAK.SUBJECT"
             smallPayloadSize = 512

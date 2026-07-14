@@ -68,6 +68,7 @@ module Nats.Client
   , withConnectionAttempts
   , withConnectTimeoutMicros
   , withCallbackConcurrency
+  , withMessageLimit
   , withBufferLimit
   , withExitAction
   , LogLevel (..)
@@ -190,6 +191,7 @@ import           Client
     , withJWT
     , withJWTHandlers
     , withLogAction
+    , withMessageLimit
     , withMinimumLogLevel
     , withNKey
     , withNKeyHandler

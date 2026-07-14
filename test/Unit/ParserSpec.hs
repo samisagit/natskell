@@ -4,10 +4,10 @@ module ParserSpec (spec) where
 
 import           Parser.API
     ( ParseStep (DropPrefix, Emit, NeedMore)
-    , ParsedMessage (ParsedMsg, ParsedPing)
+    , ParsedMessage (ParsedMessageTooLarge, ParsedMsg, ParsedPing)
     , parse
     )
-import           Parser.Attoparsec (parserApi)
+import           Parser.Attoparsec (parserApi, parserApiWithMessageLimit)
 import           Test.Hspec
 import qualified Types.Msg         as Msg
 import           Types.Ping        (Ping (Ping))
@@ -20,6 +20,21 @@ spec = do
 
     it "suggests pulling more data for truncated input" $ do
       parse parserApi "MSG FOO 1 5\r\nHEL" `shouldBe` NeedMore
+
+    it "rejects an oversized MSG before waiting for its payload" $ do
+      parse (parserApiWithMessageLimit 4) "MSG FOO 1 5\r\n"
+        `shouldBe` Emit (ParsedMessageTooLarge 5 4) ""
+
+    it "rejects an oversized HMSG before waiting for its body" $ do
+      parse (parserApiWithMessageLimit 15) "HMSG FOO 1 12 16\r\n"
+        `shouldBe` Emit (ParsedMessageTooLarge 16 15) ""
+
+    it "accepts a message exactly at the configured limit" $ do
+      parse (parserApiWithMessageLimit 5) "MSG FOO 1 5\r\nHELLO\r\n"
+        `shouldBe`
+          Emit
+            (ParsedMsg (Msg.Msg "FOO" "1" Nothing (Just "HELLO") Nothing))
+            ""
 
     it "suggests dropping invalid prefix bytes" $ do
       case parse parserApi "LOL" of

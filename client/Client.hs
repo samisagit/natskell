@@ -31,6 +31,7 @@ module Client
   , withConnectionAttempts
   , withConnectTimeoutMicros
   , withCallbackConcurrency
+  , withMessageLimit
   , withBufferLimit
   , withExitAction
   , LogLevel (..)
@@ -117,7 +118,7 @@ import           Lib.Logger
     )
 import           Network.Connection       (connectionApi)
 import           Network.ConnectionAPI    (newConn)
-import           Parser.Attoparsec        (parserApi)
+import           Parser.Attoparsec        (parserApiWithMessageLimit)
 import qualified Paths_natskell           as Package
 import           Pipeline.Broadcasting    (broadcastingApi)
 import           Pipeline.Streaming       (streamingApi)
@@ -127,6 +128,7 @@ import           Queue.API                (QueueItem (QueueItem))
 import           Queue.TransactionalQueue (newQueue)
 import           State.Store
     ( ClientState
+    , config
     , enqueue
     , newClientState
     , nextInbox
@@ -186,7 +188,7 @@ data ClientOptions = ClientOptions
                        , optionConnectionAttempts   :: Int
                        , optionConnectTimeoutMicros :: Int
                        , optionCallbackConcurrency  :: Int
-                       , optionBufferLimit          :: Int
+                       , optionMessageLimit         :: Int
                        , optionExitAction           :: ClientExitReason -> IO ()
                        , optionConnectOptions       :: [(String, Int)]
                        }
@@ -237,7 +239,7 @@ newClient servers configOptions = do
         , optionConnectionAttempts = 5
         , optionConnectTimeoutMicros = 2 * 1000000
         , optionCallbackConcurrency = 1
-        , optionBufferLimit = 4096
+        , optionMessageLimit = 1024 * 1024
         , optionExitAction = const (pure ())
         , optionConnectOptions = servers
         }
@@ -246,7 +248,7 @@ newClient servers configOptions = do
           { connectionAttempts = optionConnectionAttempts defaultOptions
           , connectTimeoutMicros = optionConnectTimeoutMicros defaultOptions
           , callbackConcurrency = optionCallbackConcurrency defaultOptions
-          , bufferLimit = optionBufferLimit defaultOptions
+          , messageLimit = optionMessageLimit defaultOptions
           , connectConfig = optionConnectConfig defaultOptions
           , loggerConfig = optionLoggerConfig defaultOptions
           , tlsConfig = optionTlsConfig defaultOptions
@@ -279,7 +281,7 @@ newClient servers configOptions = do
       connectionApi
       streamingApi
       broadcastingApi
-      parserApi
+      (parserApiWithMessageLimit (messageLimit clientConfig))
       clientState
       store
       configuredAuth
@@ -430,9 +432,18 @@ withCallbackConcurrency :: Int -> ConfigOption
 withCallbackConcurrency concurrency config =
   config { optionCallbackConcurrency = concurrency }
 
+-- | Set the largest encoded message body this client accepts. For messages
+-- with headers, the encoded header block and payload both count toward the
+-- limit. Outbound messages are also constrained by the server's max_payload.
+withMessageLimit :: Int -> ConfigOption
+withMessageLimit limit config =
+  config { optionMessageLimit = max 1 limit }
+
+-- | Compatibility alias for 'withMessageLimit'.
 withBufferLimit :: Int -> ConfigOption
-withBufferLimit limit config =
-  config { optionBufferLimit = max 1 limit }
+withBufferLimit = withMessageLimit
+
+{-# DEPRECATED withBufferLimit "Use withMessageLimit instead." #-}
 
 withExitAction :: (ClientExitReason -> IO ()) -> ConfigOption
 withExitAction action config = config { optionExitAction = action }
@@ -540,19 +551,24 @@ canPublish client publishMessage =
         Left err -> pure (Left err)
         Right () -> do
           serverInfo <- readServerInfo client
-          case serverInfo of
-            Just info
-              | Pub.messageSize publishMessage > Info.max_payload info -> do
-                  let actual = Pub.messageSize publishMessage
-                      maximumSize = Info.max_payload info
-                  runClient client $
-                    logMessage Error
-                      ("rejecting publish: payload size "
-                         ++ show actual
-                         ++ " exceeds server max_payload "
-                         ++ show maximumSize)
-                  pure (Left (NatsPayloadTooLarge actual maximumSize))
-            _ ->
+          let actual = Pub.messageSize publishMessage
+              clientMaximum = messageLimit (config client)
+              maximumSize =
+                maybe
+                  clientMaximum
+                  (min clientMaximum . Info.max_payload)
+                  serverInfo
+          if actual > maximumSize
+            then do
+              runClient client $
+                logMessage Error
+                  ( "rejecting publish: message size "
+                      ++ show actual
+                      ++ " exceeds effective limit "
+                      ++ show maximumSize
+                  )
+              pure (Left (NatsPayloadTooLarge actual maximumSize))
+            else
               pure (Right ())
 
 subscribeClient

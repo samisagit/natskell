@@ -24,6 +24,7 @@ data ParsedMessage = ParsedPing Ping
                    | ParsedErr Err
                    | ParsedInfo Info
                    | ParsedMsg Msg
+                   | ParsedMessageTooLarge Int Int
   deriving (Eq, Show)
 
 newtype ParserAPI a = ParserAPI { parse :: ByteString -> ParseStep a }

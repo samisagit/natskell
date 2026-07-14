@@ -12,9 +12,9 @@ import           Pipeline.Broadcasting.Transformer
 import           Queue.API                         (Queue)
 
 runBroadcasting :: (MonadLogger m , MonadIO m)
-  => Int -> Queue -> WriterAPI writer -> writer -> m ()
-runBroadcasting bufferLimit q writerApi writer = do
-  runConduit $ source q .| transformer bufferLimit .| sink writerApi writer
+  => Queue -> WriterAPI writer -> writer -> m ()
+runBroadcasting q writerApi writer = do
+  runConduit $ source q .| transformer .| sink writerApi writer
 
 broadcastingApi :: BroadcastingAPI
 broadcastingApi = BroadcastingAPI

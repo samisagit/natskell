@@ -6,7 +6,7 @@ module Router.Nats
 import           Control.Monad.IO.Class (liftIO)
 import           Lib.Logger             (LogLevel (..), MonadLogger (..))
 import           Parser.API
-    ( ParsedMessage (ParsedErr, ParsedInfo, ParsedMsg, ParsedOk, ParsedPing, ParsedPong)
+    ( ParsedMessage (ParsedErr, ParsedInfo, ParsedMessageTooLarge, ParsedMsg, ParsedOk, ParsedPing, ParsedPong)
     )
 import           Queue.API              (QueueItem (QueueItem))
 import           State.Store
@@ -18,7 +18,7 @@ import           State.Store
     , updateLogContextFromInfo
     )
 import           State.Types
-    ( ClientExitReason (ExitServerError)
+    ( ClientExitReason (ExitInboundMessageTooLarge, ExitServerError)
     , serverErrorFromProtocol
     )
 import           Subscription.Store     (SubscriptionStore, dispatchMessage)
@@ -42,6 +42,14 @@ routeMessage state store parsed =
           else do
             logMessage Error ("callback missing for SID: " ++ show (Msg.sid msg))
             pure RouteContinue
+      ParsedMessageTooLarge actual maximumSize -> do
+        logMessage Error
+          ( "inbound message size "
+              ++ show actual
+              ++ " exceeds client limit "
+              ++ show maximumSize
+          )
+        pure (RouteExit (ExitInboundMessageTooLarge actual maximumSize))
       ParsedInfo info -> do
         logMessage Debug ("routing INFO: " ++ show info)
         liftIO $ setServerInfo state info

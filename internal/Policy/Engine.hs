@@ -213,7 +213,6 @@ runEngine connectionApi streamingApi broadcastingApi parserApi state store auth 
         runClient state $ do
           logMessage Debug "starting broadcasting thread"
           runBroadcasting
-            (bufferLimit (config state))
             (queue state)
             (writer connectionApi)
             conn
@@ -226,7 +225,7 @@ runEngine connectionApi streamingApi broadcastingApi parserApi state store auth 
         runClient state $ do
           logMessage Debug "starting streaming thread"
           runStreaming
-            (bufferLimit (config state))
+            (streamBufferLimit (messageLimit (config state)))
             (reader connectionApi)
             conn
             parserApi
@@ -259,6 +258,13 @@ runEngine connectionApi streamingApi broadcastingApi parserApi state store auth 
 
     isResumable :: (a, SubscriptionMeta) -> Bool
     isResumable (_, SubscriptionMeta _ _ isReply) = not isReply
+
+    streamBufferLimit :: Int -> Int
+    streamBufferLimit maximumMessageSize
+      | maximumMessageSize > maxBound - controlLineAllowance = maxBound
+      | otherwise = maximumMessageSize + controlLineAllowance
+
+    controlLineAllowance = 64 * 1024
 
 closeClient :: ConnectionAPI -> ClientState -> SubscriptionStore -> IO ()
 closeClient connectionApi state store =

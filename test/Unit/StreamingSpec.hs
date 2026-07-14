@@ -143,7 +143,7 @@ spec = do
         hClose server
         hClose client
   describe "Broadcasting" $ do
-      it "drops messages larger than the buffer limit" $ do
+      it "writes transformed messages without applying a parser buffer limit" $ do
         dl <- defaultLogger'
         ctx <- newLogContext
         q <- newQueue
@@ -152,8 +152,8 @@ spec = do
         let BroadcastingAPI runBroadcasting = broadcastingApi
         enqueue q (QueueItem pub) `shouldReturn` Right ()
         close q
-        runWithLogger dl ctx (runBroadcasting 5 q captureWriterApi (CaptureWriter output) :: AppM ())
-        readTVarIO output `shouldReturn` []
+        runWithLogger dl ctx (runBroadcasting q captureWriterApi (CaptureWriter output) :: AppM ())
+        readTVarIO output `shouldReturn` ["PUB FOO 10\r\n0123456789\r\n"]
 
 ensureTVarIsEmpty :: TVar ByteString -> STM ()
 ensureTVarIsEmpty tvar = do
