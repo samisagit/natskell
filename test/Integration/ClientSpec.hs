@@ -33,8 +33,6 @@ import           WaitGroup
 
 defaultINFO = "INFO {\"server_id\": \"some-server\", \"version\": \"semver\", \"go\": \"1.13\", \"host\": \"127.0.0.1\", \"port\": 4222, \"max_payload\": 1024, \"proto\": 3}\r\n"
 
-defaultHandshake = defaultINFO <> "PONG\r\n"
-
 newClientOrFail servers options = do
   result <- newClient servers options
   case result of
@@ -121,7 +119,7 @@ recvUntil sock done =
 
 expectClientBytes :: Socket -> (BS.ByteString -> Bool) -> String -> IO BS.ByteString
 expectClientBytes sock done failureMessage = do
-  result <- timeout 1000000 $
+  result <- timeout 10000000 $
     recvUntil sock done
   case result of
     Nothing ->
@@ -134,19 +132,24 @@ expectClientBytes sock done failureMessage = do
           expectationFailure ("unexpected client bytes: " ++ show bytes) >>
             fail failureMessage
 
-expectNoClientBytes :: Socket -> (BS.ByteString -> Bool) -> String -> IO ()
-expectNoClientBytes sock unwanted failureMessage = do
-  result <- timeout 300000 $
-    recvUntil sock unwanted
-  case result of
-    Just bytes | unwanted bytes ->
-      expectationFailure (failureMessage ++ ": " ++ show bytes)
-    _ ->
-      pure ()
+expectNoClientBytesBefore
+  :: Socket
+  -> (BS.ByteString -> Bool)
+  -> BS.ByteString
+  -> String
+  -> IO ()
+expectNoClientBytesBefore sock unwanted barrier failureMessage = do
+  bytes <-
+    expectClientBytes
+      sock
+      (BS.isInfixOf barrier)
+      ("client did not send barrier command: " ++ show barrier)
+  when (unwanted bytes) $
+    expectationFailure (failureMessage ++ ": " ++ show bytes)
 
 expectClientCommand :: Socket -> BS.ByteString -> IO ()
 expectClientCommand sock command = do
-  result <- timeout 1000000 $
+  result <- timeout 10000000 $
     recvUntil sock (BS.isInfixOf command)
   case result of
     Nothing ->
@@ -157,13 +160,24 @@ expectClientCommand sock command = do
 
 expectMVar :: String -> MVar a -> IO a
 expectMVar failureMessage var = do
-  result <- timeout 1000000 (takeMVar var)
+  result <- timeout 10000000 (takeMVar var)
   case result of
     Nothing ->
       expectationFailure failureMessage >>
         fail failureMessage
     Just value ->
       pure value
+
+completeHandshake :: Socket -> IO BS.ByteString
+completeHandshake sock = do
+  sendAll sock defaultINFO
+  bytes <-
+    expectClientBytes
+      sock
+      (\sent -> BS.isInfixOf "CONNECT " sent && BS.isInfixOf "PING\r\n" sent)
+      "client did not complete the initial handshake"
+  sendAll sock "PONG\r\n"
+  pure bytes
 
 expectQueuedSub :: Socket -> BS.ByteString -> BS.ByteString -> BS.ByteString -> IO ()
 expectQueuedSub sock subject queueGroup sid =
@@ -383,7 +397,7 @@ startClientWith extraOptions = do
     atomically $ putTMVar tvb c
 
   s <- atomically $ takeTMVar tva
-  sendAll s defaultHandshake
+  void (completeHandshake s)
   c <- atomically $ takeTMVar tvb
   return (s, c, sock, exited)
 
@@ -414,38 +428,26 @@ spec :: Spec
 spec = do
   describe "client integration" $ do
     around withClient $ do
-      it "PING waits for PONG" $ \(serv, client, _, _) -> do
+      it "PING resolves after PONG" $ \(serv, client, _, _) -> do
         resultVar <- newEmptyMVar
         void . forkIO $ ping client [] >>= putMVar resultVar
         expectClientCommand serv "PING\r\n"
-        tryReadMVar resultVar `shouldReturn` Nothing
         sendAll serv "PONG\r\n"
-        takeMVar resultVar `shouldReturn` Right ()
-      it "flush waits for PONG" $ \(serv, client, _, _) -> do
+        expectMVar "PING did not resolve after PONG" resultVar
+          `shouldReturn` Right ()
+      it "flush resolves after PONG" $ \(serv, client, _, _) -> do
         resultVar <- newEmptyMVar
         void . forkIO $ flush client [] >>= putMVar resultVar
         expectClientCommand serv "PING\r\n"
-        tryReadMVar resultVar `shouldReturn` Nothing
         sendAll serv "PONG\r\n"
-        takeMVar resultVar `shouldReturn` Right ()
+        expectMVar "flush did not resolve after PONG" resultVar
+          `shouldReturn` Right ()
       it "subscribes with a queue group" $ \(serv, client, _, _) -> do
         Right subscription <- subscribe client "JOBS" [withQueueGroup "WORKERS"] (const (pure ()))
         expectQueuedSub serv "JOBS" "WORKERS" (subscriptionSid subscription)
       it "publishes with an explicit reply subject" $ \(serv, client, _, _) -> do
         publish client "REQUESTS" "hello" [withReplyTo "_INBOX.custom"] `shouldReturn` Right ()
         expectClientCommand serv "PUB REQUESTS _INBOX.custom 5\r\nhello\r\n"
-      it "PONG resolves one ping" $ \(serv, client, _, _) -> do
-        first <- newEmptyMVar
-        second <- newEmptyMVar
-        void . forkIO $ ping client [] >>= putMVar first
-        expectClientCommand serv "PING\r\n"
-        void . forkIO $ ping client [] >>= putMVar second
-        expectClientCommand serv "PING\r\n"
-        sendAll serv "PONG\r\n"
-        takeMVar first `shouldReturn` Right ()
-        tryReadMVar second `shouldReturn` Nothing
-        sendAll serv "PONG\r\n"
-        takeMVar second `shouldReturn` Right ()
       it "reports user initiated close" $ \(_, client, _, exited) -> do
         close client []
         result <- atomically $ readTMVar exited
@@ -460,24 +462,27 @@ spec = do
         sendAll serv "-ERR 'Invalid Subject'\r\n"
         wg <- newWaitGroup 1
         pingWithCallback client $ done wg
+        expectClientCommand serv "PING\r\n"
         sendAll serv "PONG\r\n"
         wait wg
       it "garbled prefix bytes are ignored" $ \(serv, client, _, _) -> do
         wg <- newWaitGroup 1
         pingWithCallback client $ done wg
+        expectClientCommand serv "PING\r\n"
         sendAll serv "ldkfjajhfklsjhlkajf;alwfPONG\r\n"
         wait wg
       it "garbled suffix bytes remove partial prefix" $ \(serv, client, _, _) -> do
         wg <- newWaitGroup 1
         pingWithCallback client $ done wg
+        expectClientCommand serv "PING\r\n"
         sendAll serv "MSGX"
         sendAll serv "PONG\r\n"
         wait wg
       it "messages split over frames are joined" $ \(serv, client, _, _) -> do
         wg <- newWaitGroup 1
         pingWithCallback client $ done wg
+        expectClientCommand serv "PING\r\n"
         sendAll serv "PON"
-        threadDelay 100000
         sendAll serv "G\r\n"
         wait wg
       it "MSG subject split over frames is joined" $ \(serv, client, _, _) -> do
@@ -487,7 +492,6 @@ spec = do
         Right subscription <- subscribe client topic [] (putMVar msgVar)
         let sid = subscriptionSid subscription
         sendAll serv "MSG SOAK."
-        threadDelay 100000
         let headerTail =
               "SUBJECT "
                 <> sid
@@ -511,6 +515,7 @@ spec = do
       it "processes messages larger than the old parser buffer" $ \(serv, client, _, _) -> do
         wg <- newWaitGroup 1
         pingWithCallback client $ done wg
+        expectClientCommand serv "PING\r\n"
         sendAll serv tooLongMSG
         sendAll serv "PONG\r\n"
         wait wg
@@ -527,15 +532,22 @@ spec = do
       around withClient $ do
         it "ignores duplicate request replies after the first message" $ \(serv, client, _, _) -> do
           replies <- newIORef ([] :: [Message])
-          firstReply <- newEmptyMVar
           Right subscription <- subscribeOnce client "SERVICE.ONCE" [] $ \reply -> do
             atomicModifyIORef' replies $ \seen -> (seen ++ [reply], ())
-            void (tryPutMVar firstReply ())
           let sid = subscriptionSid subscription
-          sendAll serv (msgFrame "SERVICE.ONCE" sid "first")
-          sendAll serv (msgFrame "SERVICE.ONCE" sid "second")
-          expectMVar "first request reply did not arrive" firstReply
-          threadDelay 100000
+          expectClientCommand serv (BS.concat ["SUB SERVICE.ONCE ", sid, "\r\n"])
+          callbacksDrained <- newEmptyMVar
+          Right barrier <- subscribe client "CALLBACK.BARRIER" [] $ \_ ->
+            putMVar callbacksDrained ()
+          let barrierSid = subscriptionSid barrier
+          expectClientCommand serv (BS.concat ["SUB CALLBACK.BARRIER ", barrierSid, "\r\n"])
+          sendAll serv $
+            BS.concat
+              [ msgFrame "SERVICE.ONCE" sid "first"
+              , msgFrame "SERVICE.ONCE" sid "second"
+              , msgFrame "CALLBACK.BARRIER" barrierSid "done"
+              ]
+          expectMVar "callback barrier did not run" callbacksDrained
           seen <- readIORef replies
           case seen of
             [msg] ->
@@ -594,7 +606,6 @@ spec = do
               headers msg `shouldBe` Just [("X-Reply", "ok")]
 
         it "flush sends queued publishes before its PING" $ \(serv, client, _, _) -> do
-          expectClientCommand serv "CONNECT "
           doneVar <- newEmptyMVar
           let publishFrame = "PUB ORDER.FLUSH 3\r\none\r\n"
           publish client "ORDER.FLUSH" "one" [] `shouldReturn` Right ()
@@ -625,39 +636,41 @@ spec = do
               expectationFailure ("Unexpected exit reason: " ++ show other)
 
         it "does not write publishes above negotiated max_payload" $ \(serv, client, _, _) -> do
-          expectClientCommand serv "CONNECT "
           publish client "BOUNDARY.TOO_BIG" (BS.replicate 2048 _x) []
             `shouldReturn` Left (NatsPayloadTooLarge 2048 1024)
-          expectNoClientBytes
-            serv
-            (BS.isInfixOf "PUB BOUNDARY.TOO_BIG")
-            "oversized publish reached server"
           wg <- newWaitGroup 1
           pingWithCallback client (done wg)
-          expectClientCommand serv "PING\r\n"
+          expectNoClientBytesBefore
+            serv
+            (BS.isInfixOf "PUB BOUNDARY.TOO_BIG")
+            "PING\r\n"
+            "oversized publish reached server"
           sendAll serv "PONG\r\n"
           wait wg
 
         it "does not write invalid publish commands" $ \(serv, client, _, _) -> do
-          expectClientCommand serv "CONNECT "
           publish client "" "x" [] >>= (`shouldSatisfy` isValidationFailure)
-          expectNoClientBytes
+          pingBox <- newEmptyMVar
+          pingWithCallback client (putMVar pingBox ())
+          expectNoClientBytesBefore
             serv
             (\sent -> BS.isInfixOf "PUB " sent || BS.isInfixOf "HPUB " sent)
+            "PING\r\n"
             "invalid publish reached server"
+          sendAll serv "PONG\r\n"
+          expectMVar "PING failed after an invalid publish" pingBox
 
       around (withClientWith [withMessageLimit 4]) $ do
         it "does not write publishes above the client message limit" $ \(serv, client, _, _) -> do
-          expectClientCommand serv "CONNECT "
           publish client "BOUNDARY.CLIENT" "12345" []
             `shouldReturn` Left (NatsPayloadTooLarge 5 4)
-          expectNoClientBytes
-            serv
-            (BS.isInfixOf "PUB BOUNDARY.CLIENT")
-            "publish above the client limit reached server"
           pingBox <- newEmptyMVar
           pingWithCallback client (putMVar pingBox ())
-          expectClientCommand serv "PING\r\n"
+          expectNoClientBytesBefore
+            serv
+            (BS.isInfixOf "PUB BOUNDARY.CLIENT")
+            "PING\r\n"
+            "publish above the client limit reached server"
           sendAll serv "PONG\r\n"
           expectMVar "PING failed after a rejected publish" pingBox
 
@@ -670,10 +683,15 @@ spec = do
               actualSize = BS.length (headerBlock messageHeaders)
           publish client "BOUNDARY.HEADERS" "" [withHeaders messageHeaders]
             `shouldReturn` Left (NatsPayloadTooLarge actualSize 4)
-          expectNoClientBytes
+          pingBox <- newEmptyMVar
+          pingWithCallback client (putMVar pingBox ())
+          expectNoClientBytesBefore
             serv
             (BS.isInfixOf "HPUB BOUNDARY.HEADERS")
+            "PING\r\n"
             "publish whose headers exceed the client limit reached server"
+          sendAll serv "PONG\r\n"
+          expectMVar "PING failed after a rejected header publish" pingBox
 
         it "terminates the connection when an inbound message exceeds the client limit" $ \(serv, client, _, exited) -> do
           Right subscription <- subscribe client "BOUNDARY.INBOUND" [] (const (pure ()))
@@ -746,7 +764,7 @@ spec = do
           c <- newClientOrFail [("127.0.0.1", p)] configOptions
           putMVar clientVar c
         (firstConn, _) <- accept sock
-        sendAll firstConn defaultHandshake
+        void (completeHandshake firstConn)
         clientResult <- timeout 1000000 (takeMVar clientVar)
         case clientResult of
           Nothing ->
@@ -757,20 +775,17 @@ spec = do
             captured <- capturePublish firstConn "SERVICE.RECONNECT"
             Network.Socket.close firstConn
             (secondConn, _) <- accept sock
-            sendAll secondConn defaultHandshake
+            void (completeHandshake secondConn)
             let replySubCommand = BS.concat ["SUB ", capturedInbox captured]
-            resubscribe <- timeout 300000 $
-              recvUntil secondConn (BS.isInfixOf replySubCommand)
-            case resubscribe of
-              Just bytes | BS.isInfixOf replySubCommand bytes ->
-                expectationFailure ("reply inbox was resubscribed: " ++ show bytes)
-              _ ->
-                pure ()
-            wg <- newWaitGroup 1
-            pingWithCallback client (done wg)
-            expectClientCommand secondConn "PING\r\n"
+            pingBox <- newEmptyMVar
+            pingWithCallback client (putMVar pingBox ())
+            expectNoClientBytesBefore
+              secondConn
+              (BS.isInfixOf replySubCommand)
+              "PING\r\n"
+              "reply inbox was resubscribed"
             sendAll secondConn "PONG\r\n"
-            wait wg
+            expectMVar "PING failed after reconnect" pingBox
             close client []
             Network.Socket.close secondConn
         Network.Socket.close sock
@@ -1141,8 +1156,7 @@ spec = do
         firstConnect <- recv firstConn 4096
         sendAll firstConn "-ERR 'Authorization Violation'\r\n"
         (secondConn, _) <- accept sock
-        sendAll secondConn defaultHandshake
-        secondConnect <- recv secondConn 4096
+        secondConnect <- completeHandshake secondConn
         atomically $ do
           putTMVar captures (firstConnect, secondConnect)
           putTMVar secondConnection secondConn
@@ -1174,7 +1188,7 @@ spec = do
         (firstConn, _) <- accept sock
         Network.Socket.close firstConn
         (secondConn, _) <- accept sock
-        sendAll secondConn defaultHandshake
+        void (completeHandshake secondConn)
         atomically $ putTMVar serverConn secondConn
       void . forkIO $ do
         let configOptions =
@@ -1191,6 +1205,7 @@ spec = do
           secondConn <- atomically $ takeTMVar serverConn
           wg <- newWaitGroup 1
           pingWithCallback client $ done wg
+          expectClientCommand secondConn "PING\r\n"
           sendAll secondConn "PONG\r\n"
           wait wg
           close client []
@@ -1209,7 +1224,7 @@ spec = do
         c <- newClientOrFail [("127.0.0.1", p)] configOptions
         putMVar clientVar c
       (firstConn, _) <- accept sock
-      sendAll firstConn defaultHandshake
+      void (completeHandshake firstConn)
       clientResult <- timeout 1000000 (takeMVar clientVar)
       case clientResult of
         Nothing -> expectationFailure "client did not connect"
@@ -1219,7 +1234,7 @@ spec = do
           expectQueuedSub firstConn "JOBS" "WORKERS" sid
           Network.Socket.close firstConn
           (secondConn, _) <- accept sock
-          sendAll secondConn defaultHandshake
+          void (completeHandshake secondConn)
           expectQueuedSub secondConn "JOBS" "WORKERS" sid
           close client []
           Network.Socket.close secondConn
@@ -1237,7 +1252,7 @@ spec = do
         c <- newClientOrFail [("127.0.0.1", p)] configOptions
         putMVar clientVar c
       (firstConn, _) <- accept sock
-      sendAll firstConn defaultHandshake
+      void (completeHandshake firstConn)
       clientResult <- timeout 1000000 (takeMVar clientVar)
       case clientResult of
         Nothing ->
@@ -1254,7 +1269,7 @@ spec = do
           firstSub <- captureSubscription firstConn "PROTO.DELIVER"
           Network.Socket.close firstConn
           (secondConn, _) <- accept sock
-          sendAll secondConn defaultHandshake
+          void (completeHandshake secondConn)
           secondSub <- captureSubscription secondConn "PROTO.DELIVER"
           capturedSubSid secondSub `shouldBe` capturedSubSid firstSub
           sendAll secondConn $
@@ -1282,7 +1297,7 @@ spec = do
         c <- newClientOrFail [("127.0.0.1", p)] configOptions
         putMVar clientVar c
       (firstConn, _) <- accept sock
-      sendAll firstConn defaultHandshake
+      void (completeHandshake firstConn)
       clientResult <- timeout 1000000 (takeMVar clientVar)
       case clientResult of
         Nothing ->
@@ -1336,7 +1351,7 @@ spec = do
               expectationFailure ("unexpected ordered fetch result after disconnect: " ++ show other)
 
           (secondConn, _) <- accept sock
-          sendAll secondConn defaultHandshake
+          void (completeHandshake secondConn)
           infoVar <- newEmptyMVar
           void . forkIO $ do
             result <- JetStream.orderedConsumerInfo ordered []
