@@ -15,3 +15,4 @@ Workarounds in this environment:
 - `nix develop` may need to update `~/.cache/nix/fetcher-cache-v3.sqlite` after dependency changes; if the workspace sandbox makes that cache read-only, rerun the command with escalated permissions.
 - The `tls` 2.x dependency uses the `crypton-x509-*` package family. Use `crypton-x509-system`, not `x509-system`, so its `CertificateStore` type matches `TLS.sharedCAStore`.
 - Socket-heavy reconnect tests can make a non-threaded GHC test executable fail with `file descriptor ... out of range for select`; compile the integration suite with `-threaded` so it uses the scalable I/O manager.
+- `gh pr edit` can fail while querying deprecated classic project cards; update the pull request with `gh api --method PATCH repos/<owner>/<repo>/pulls/<number> -F body=@<file>` instead.
