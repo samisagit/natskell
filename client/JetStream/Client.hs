@@ -10,10 +10,11 @@ module JetStream.Client
   , withRequestTimeoutMicros
   ) where
 
-import qualified API                        as Nats
-import           JetStream.API              (JetStream)
-import qualified JetStream.Consumer         as Consumer
-import qualified JetStream.Message          as Message
+import qualified API                  as Nats
+import           JetStream.API        (JetStream)
+import qualified JetStream.Consumer   as Consumer
+import qualified JetStream.Management as Management
+import qualified JetStream.Message    as Message
 import           JetStream.Options
     ( JetStream (..)
     , JetStreamConfigError (..)
@@ -23,11 +24,9 @@ import           JetStream.Options
     , withRequestTimeout
     , withRequestTimeoutMicros
     )
-import qualified JetStream.Protocol.Request as Request
-import qualified JetStream.Protocol.Subject as Subject
-import qualified JetStream.Publish          as Publish
-import qualified JetStream.Stream           as Stream
-import           JetStream.Types            (JetStreamRequestOption)
+import qualified JetStream.Publish    as Publish
+import qualified JetStream.Stream     as Stream
+import           JetStream.Types      (JetStreamRequestOption)
 
 -- | Build JetStream capabilities from an existing NATS client.
 newJetStream :: Nats.Client -> [JetStreamOption] -> Either JetStreamConfigError JetStream
@@ -39,6 +38,5 @@ newJetStream client options = do
     , consumers = consumerAPI
     , publisher = Publish.publishAPI ctx
     , messages = Message.messageAPI ctx consumerAPI
-    , accountInfo =
-        Request.requestJSON ctx (Subject.accountInfoSubject ctx) Nothing
+    , management = Management.managementAPI ctx
     }

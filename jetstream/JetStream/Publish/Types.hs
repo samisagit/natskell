@@ -21,11 +21,8 @@ import           JetStream.Error       (JetStreamError)
 import           JetStream.Types
     ( JetStreamRequestOption
     , Payload
-    , Sequence
     , StreamName
     , Subject
-    , sequenceFromWord64
-    , sequenceToWord64
     )
 
 -- | Publish operations. The public API hides the constructor so additional
@@ -34,21 +31,21 @@ newtype PublishAPI = PublishAPI { publish :: Subject -> Payload -> [PublishOptio
 
 data PublishAck = PublishAck
                     { publishAckStream    :: StreamName
-                    , publishAckSequence  :: Sequence
+                    , publishAckSequence  :: Word64
                     , publishAckDuplicate :: Maybe Bool
                     , publishAckDomain    :: Maybe BS.ByteString
                     }
   deriving (Eq, Show)
 
-data PublishExpectation = ExpectedLastSequence Sequence
-                        | ExpectedLastSubjectSequence Sequence
+data PublishExpectation = ExpectedLastSequence Word64
+                        | ExpectedLastSubjectSequence Word64
                         | ExpectedLastMsgId BS.ByteString
   deriving (Eq, Show)
 
 instance FromJSON PublishAck where
   parseJSON = withObject "PublishAck" $ \object -> do
     streamName <- object .: "stream"
-    sequence <- sequenceFromWord64 <$> (object .: "seq")
+    sequence <- object .: "seq"
     duplicate <- object .:? "duplicate"
     domainName <- object .:? "domain"
     pure PublishAck
@@ -127,6 +124,5 @@ renderWord64 :: Word64 -> BS.ByteString
 renderWord64 =
   BC.pack . show
 
-renderSequence :: Sequence -> BS.ByteString
-renderSequence =
-  renderWord64 . sequenceToWord64
+renderSequence :: Word64 -> BS.ByteString
+renderSequence = renderWord64

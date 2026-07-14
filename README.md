@@ -19,29 +19,30 @@ Subjects and payloads are `ByteString`. Enable `OverloadedStrings` or use `Data.
 ```haskell
 {-# LANGUAGE OverloadedStrings #-}
 
-import Nats
+import qualified API as Nats
+import qualified Client
 
 main :: IO ()
 main = do
-  endpoint <- either (fail . show) pure (server "127.0.0.1" 4222)
-  result <- connect [endpoint] [withConnectName "demo"]
+  endpoint <- either (fail . show) pure (Client.server "127.0.0.1" 4222)
+  result <- Client.connect [endpoint] [Client.withConnectName "demo"]
   case result of
     Left err -> print err
     Right client -> do
-      subscription <- subscribe client "updates" [] print
-      _ <- publish client "updates" "hello" []
+      subscription <- Nats.subscribe client "updates" [] print
+      _ <- Nats.publish client "updates" "hello" []
       case subscription of
         Left err     -> print err
         Right handle -> do
-          _ <- unsubscribe client handle []
+          _ <- Nats.unsubscribe client handle []
           pure ()
-      close client []
+      Nats.close client []
 ```
 
 ### Request/reply
 
 ```haskell
-reply <- request client "service.echo" "hello" [withRequestTimeout 2]
+reply <- Nats.request client "service.echo" "hello" [Nats.withRequestTimeout 2]
 ```
 
 `request` creates an inbox subscription, publishes the payload, waits for one
@@ -60,21 +61,22 @@ base64url encoding.
 ```haskell
 {-# LANGUAGE OverloadedStrings #-}
 
-import Nats
+import qualified API as Nats
+import qualified Client
 import qualified Data.ByteString as BS
 
 main :: IO ()
 main = do
   caPem <- BS.readFile "ca.pem"
-  endpoint <- either (fail . show) pure (server "nats.internal" 4222)
+  endpoint <- either (fail . show) pure (Client.server "nats.internal" 4222)
   let opts =
-        [ withUserPass ("alice", "secret")
-        , withTLSRootCA caPem
+        [ Client.withUserPass ("alice", "secret")
+        , Client.withTLSRootCA caPem
         ]
-  result <- connect [endpoint] opts
+  result <- Client.connect [endpoint] opts
   case result of
     Left err -> print err
-    Right client -> close client []
+    Right client -> Nats.close client []
 ```
 
 TLS verifies the server certificate against the operating-system trust store by
@@ -89,33 +91,34 @@ test environments.
 ### JetStream
 
 JetStream is part of the main `natskell` library. No separate package is
-required; import it through the nested `Nats.JetStream.*` modules.
+required. `JetStream.API` reexports the complete JetStream contract; its child
+modules are available when narrower imports are preferable.
 
 ```haskell
-import qualified Nats.JetStream as JetStream
+import qualified JetStream.API as JetStream
+import qualified JetStream.Client as JetStreamClient
 
 -- Given a successfully connected NATS client:
-case JetStream.newJetStream client [] of
+case JetStreamClient.newJetStream client [] of
   Left configError -> print configError
   Right jetStream  -> do
-    account <- JetStream.accountInfo jetStream []
+    account <- JetStream.accountInfo (JetStream.management jetStream) []
     print account
 ```
 
-Stream, consumer, publish, and message operations live under
-`Nats.JetStream.Stream`, `Nats.JetStream.Consumer`,
-`Nats.JetStream.Publish`, and `Nats.JetStream.Message`. Every network operation
-has a final request-options argument, so future call options can be added
-without changing its type.
+The focused contracts live under `JetStream.API.Stream`,
+`JetStream.API.Consumer`, `JetStream.API.Publish`, `JetStream.API.Message`, and
+`JetStream.API.Management`. Every network operation has a final request-options
+argument, so future call options can be added without changing its type.
 
 ### Exit handling
 
 ```haskell
 let opts =
-      [ withExitAction (\reason -> putStrLn ("client exit: " ++ show reason))
+      [ Client.withExitAction (\reason -> putStrLn ("client exit: " ++ show reason))
       ]
-endpoint <- either (fail . show) pure (server "127.0.0.1" 4222)
-result <- connect [endpoint] opts
+endpoint <- either (fail . show) pure (Client.server "127.0.0.1" 4222)
+result <- Client.connect [endpoint] opts
 ```
 
 `connect` waits for the initial INFO/TLS/CONNECT/PING/PONG handshake and
@@ -127,18 +130,16 @@ the last option wins.
 
 ### Public API stability
 
-New code should use the canonical `Nats.*` modules. Public clients,
-subscriptions, capability groups, resource handles, messages, and response
-records are abstract and are inspected through accessors. Core message payloads
-are strict `ByteString` values; an empty NATS payload is represented by an empty
-`ByteString`, not `Nothing`.
+The public package deliberately exposes only `API`, `Client`, `JetStream.API`,
+the five focused `JetStream.API.*` contracts, and `JetStream.Client`. Public
+clients, subscriptions, capability groups, resource handles, messages, and
+response records are abstract and are inspected through accessors. Core message
+payloads are strict `ByteString` values; an empty NATS payload is represented by
+an empty `ByteString`, not `Nothing`.
 
 Operations return explicit `Either` errors and reserve final option-list
-arguments for additive evolution. Sequence numbers use the abstract
-`Sequence` type backed by `Word64`, and server-defined JetStream enums preserve
-unknown wire values. The historical `API`, `Client`, and `JetStream.*` imports
-remain available as compatibility module paths, while `Nats.*` is the preferred
-public namespace.
+arguments for additive evolution. JetStream sequence numbers use `Word64`, and
+server-defined JetStream enums preserve unknown wire values.
 
 ## Contributing
 Pull requests are welcome. Please open an issue first to discuss what you would like to change.

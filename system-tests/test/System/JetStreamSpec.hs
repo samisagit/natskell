@@ -18,7 +18,13 @@ import           Data.IORef            (atomicModifyIORef', newIORef, readIORef)
 import           Data.List             (sort)
 import           Data.Maybe            (fromMaybe)
 import           Data.Time.Clock       (addUTCTime, getCurrentTime)
-import           JetStream.API         (JetStream (..))
+import           JetStream.API
+    ( JetStream
+    , consumers
+    , messages
+    , publisher
+    , streams
+    )
 import qualified JetStream.API         as JetStream
 import           JetStream.Client      (newJetStream, withDomain)
 import           NatsServerConfig
@@ -502,7 +508,7 @@ deleteLifecycleTest jetStream = do
 streamAdministrationTest :: JetStream -> IO ()
 streamAdministrationTest jetStream = do
   account <- expectRight "account info" $
-    JetStream.accountInfo jetStream []
+    JetStream.accountInfo (JetStream.management jetStream) []
   JetStream.accountTierStreams (JetStream.accountInfoTier account) `shouldSatisfy` (>= 0)
 
   let stream = "NATSKELL_JS_ADMIN_STREAM"
@@ -900,7 +906,7 @@ orderedConsumerGracefulShutdownTest jetStream = do
 domainJetStreamTest :: JetStream -> IO ()
 domainJetStreamTest jetStream = do
   account <- expectRight "domain account info" $
-    JetStream.accountInfo jetStream []
+    JetStream.accountInfo (JetStream.management jetStream) []
   JetStream.accountInfoDomain account `shouldBe` Just "HUB"
 
   let stream = "NATSKELL_JS_DOMAIN"

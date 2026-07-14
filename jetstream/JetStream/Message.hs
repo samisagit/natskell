@@ -17,6 +17,7 @@ import qualified Data.ByteString            as BS
 import qualified Data.ByteString.Char8      as BC
 import           Data.Char                  (isAlphaNum)
 import           Data.Maybe                 (catMaybes, fromMaybe)
+import           Data.Word                  (Word64)
 import           JetStream.Consumer.API
     ( ConsumerAPI
     , consumerInfo
@@ -54,7 +55,6 @@ import           JetStream.Types
     , ConsumerName
     , DeliverPolicy (DeliverByStartSequence)
     , JetStreamRequestOption
-    , Sequence
     , StreamName
     , Subject
     )
@@ -103,7 +103,7 @@ data OrderedState = OrderedState
                       , orderedStateConfig       :: OrderedConsumerConfig
                       , orderedStateNamePrefix   :: ConsumerName
                       , orderedStateSerial       :: TVar Int
-                      , orderedStateNextSequence :: TVar (Maybe Sequence)
+                      , orderedStateNextSequence :: TVar (Maybe Word64)
                       , orderedStateCurrentName  :: TVar (Maybe ConsumerName)
                       , orderedStateStopped      :: TVar Bool
                       }
@@ -229,7 +229,7 @@ stopOrdered state requestOptions = do
 
 orderedConsumerOptions
   :: OrderedConsumerConfig
-  -> Maybe Sequence
+  -> Maybe Word64
   -> [ConsumerConfigOption]
 orderedConsumerOptions config nextSequence =
   catMaybes
@@ -254,7 +254,7 @@ orderedConsumerOptions config nextSequence =
     inactiveThreshold =
       fromMaybe 300 (orderedConsumerInactiveThreshold config)
 
-orderedResponseNextSequence :: PullResponse -> Either JetStreamError (Maybe Sequence)
+orderedResponseNextSequence :: PullResponse -> Either JetStreamError (Maybe Word64)
 orderedResponseNextSequence response =
   case reverse (pullResponseMessages response) of
     [] ->
