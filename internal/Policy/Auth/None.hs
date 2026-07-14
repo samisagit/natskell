@@ -5,4 +5,4 @@ module Auth.None
 import           Auth.Types
 
 auth :: Auth
-auth = AuthNone
+auth = emptyAuth

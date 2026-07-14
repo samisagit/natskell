@@ -2,6 +2,7 @@
 
 module Parser.Attoparsec
   ( parserApi
+  , parserApiWithMessageLimit
   ) where
 
 import           Control.Applicative              ((<|>))
@@ -11,14 +12,15 @@ import qualified Data.Attoparsec.ByteString.Char8 as AC
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Char8            as B8
 import qualified Data.ByteString.Lazy             as BSL
+import           Data.Char                        (toLower)
 import           Data.Word                        (Word8)
 import           Parser.API
     ( ParseStep (DropPrefix, Emit, NeedMore)
-    , ParsedMessage (ParsedErr, ParsedInfo, ParsedMsg, ParsedOk, ParsedPing, ParsedPong)
+    , ParsedMessage (ParsedErr, ParsedInfo, ParsedMessageTooLarge, ParsedMsg, ParsedOk, ParsedPing, ParsedPong)
     , ParserAPI (ParserAPI)
     )
 import           Types.Err
-    ( Err (ErrAuthTimeout, ErrAuthViolation, ErrErr, ErrInvalidProtocol, ErrInvalidSubject, ErrMaxConnsEx, ErrMaxControlLineEx, ErrMaxPayload, ErrPermViolation, ErrRoutePortConn, ErrSlowConsumer, ErrStaleConn, ErrTlsRequired, ErrUnknownOp)
+    ( Err (ErrAccountAuthExpired, ErrAuthExpired, ErrAuthRevoked, ErrAuthTimeout, ErrAuthViolation, ErrErr, ErrInvalidProtocol, ErrInvalidSubject, ErrMaxConnsEx, ErrMaxControlLineEx, ErrMaxPayload, ErrPermViolation, ErrRoutePortConn, ErrSlowConsumer, ErrStaleConn, ErrTlsRequired, ErrUnknownOp)
     )
 import           Types.Msg                        (Msg (Msg))
 import           Types.Ok                         (Ok (Ok))
@@ -26,11 +28,15 @@ import           Types.Ping                       (Ping (Ping))
 import           Types.Pong                       (Pong (Pong))
 
 parserApi :: ParserAPI ParsedMessage
-parserApi = ParserAPI parseStep
+parserApi = parserApiWithMessageLimit maxBound
 
-parseStep :: BS.ByteString -> ParseStep ParsedMessage
-parseStep bytes =
-  case A.parse parsedMessageParser bytes of
+parserApiWithMessageLimit :: Int -> ParserAPI ParsedMessage
+parserApiWithMessageLimit maximumMessageSize =
+  ParserAPI (parseStep (max 1 maximumMessageSize))
+
+parseStep :: Int -> BS.ByteString -> ParseStep ParsedMessage
+parseStep maximumMessageSize bytes =
+  case A.parse (parsedMessageParser maximumMessageSize) bytes of
     A.Done rest parsedMessage ->
       Emit parsedMessage rest
     A.Partial _ ->
@@ -38,8 +44,8 @@ parseStep bytes =
     A.Fail rest _ reason ->
       DropPrefix (dropBytes bytes rest) reason
 
-parsedMessageParser :: A.Parser ParsedMessage
-parsedMessageParser = do
+parsedMessageParser :: Int -> A.Parser ParsedMessage
+parsedMessageParser maximumMessageSize = do
   prefix <- A.peekWord8'
   case prefix of
     43 ->
@@ -47,11 +53,11 @@ parsedMessageParser = do
     45 ->
       errParser
     72 ->
-      hmsgParser
+      hmsgParser maximumMessageSize
     73 ->
       infoParser
     77 ->
-      msgParser
+      msgParser maximumMessageSize
     80 ->
       pingOrPongParser
     _ ->
@@ -87,29 +93,29 @@ infoParser = do
     Right info ->
       pure (ParsedInfo info)
 
-msgParser :: A.Parser ParsedMessage
-msgParser = do
+msgParser :: Int -> A.Parser ParsedMessage
+msgParser maximumMessageSize = do
   _ <- A.string "MSG"
   skipHorizontalSpace1
   controlLine <- lineParser
   case B8.words controlLine of
     [subjectName, sidValue, payloadSizeBytes] ->
-      parseMsgPayload subjectName sidValue Nothing payloadSizeBytes
+      parseMsgPayload maximumMessageSize subjectName sidValue Nothing payloadSizeBytes
     [subjectName, sidValue, replySubject, payloadSizeBytes] ->
-      parseMsgPayload subjectName sidValue (Just replySubject) payloadSizeBytes
+      parseMsgPayload maximumMessageSize subjectName sidValue (Just replySubject) payloadSizeBytes
     _ ->
       fail ("invalid MSG control line: " ++ B8.unpack controlLine)
 
-hmsgParser :: A.Parser ParsedMessage
-hmsgParser = do
+hmsgParser :: Int -> A.Parser ParsedMessage
+hmsgParser maximumMessageSize = do
   _ <- A.string "HMSG"
   skipHorizontalSpace1
   controlLine <- lineParser
   case B8.words controlLine of
     [subjectName, sidValue, headerSizeBytes, totalSizeBytes] ->
-      parseHMsgPayload subjectName sidValue Nothing headerSizeBytes totalSizeBytes
+      parseHMsgPayload maximumMessageSize subjectName sidValue Nothing headerSizeBytes totalSizeBytes
     [subjectName, sidValue, replySubject, headerSizeBytes, totalSizeBytes] ->
-      parseHMsgPayload subjectName sidValue (Just replySubject) headerSizeBytes totalSizeBytes
+      parseHMsgPayload maximumMessageSize subjectName sidValue (Just replySubject) headerSizeBytes totalSizeBytes
     _ ->
       fail ("invalid HMSG control line: " ++ B8.unpack controlLine)
 
@@ -127,27 +133,30 @@ pongParser = do
   _ <- A.string "PONG\r\n"
   pure (ParsedPong Pong)
 
-parseMsgPayload :: BS.ByteString -> BS.ByteString -> Maybe BS.ByteString -> BS.ByteString -> A.Parser ParsedMessage
-parseMsgPayload subjectName sidValue replySubject payloadSizeBytes =
+parseMsgPayload :: Int -> BS.ByteString -> BS.ByteString -> Maybe BS.ByteString -> BS.ByteString -> A.Parser ParsedMessage
+parseMsgPayload maximumMessageSize subjectName sidValue replySubject payloadSizeBytes =
   case integerBytes "MSG payload size" payloadSizeBytes of
     Left parseReason ->
       fail parseReason
-    Right payloadSize -> do
-      payloadBytes <- A.take payloadSize
-      _ <- A.string "\r\n"
-      pure
-        ( ParsedMsg
-            ( Msg
-                subjectName
-                sidValue
-                replySubject
-                (nonEmpty payloadBytes)
-                Nothing
+    Right payloadSize
+      | payloadSize > maximumMessageSize ->
+          pure (ParsedMessageTooLarge payloadSize maximumMessageSize)
+      | otherwise -> do
+          payloadBytes <- A.take payloadSize
+          _ <- A.string "\r\n"
+          pure
+            ( ParsedMsg
+                ( Msg
+                    subjectName
+                    sidValue
+                    replySubject
+                    (nonEmpty payloadBytes)
+                    Nothing
+                )
             )
-        )
 
-parseHMsgPayload :: BS.ByteString -> BS.ByteString -> Maybe BS.ByteString -> BS.ByteString -> BS.ByteString -> A.Parser ParsedMessage
-parseHMsgPayload subjectName sidValue replySubject headerSizeBytes totalSizeBytes =
+parseHMsgPayload :: Int -> BS.ByteString -> BS.ByteString -> Maybe BS.ByteString -> BS.ByteString -> BS.ByteString -> A.Parser ParsedMessage
+parseHMsgPayload maximumMessageSize subjectName sidValue replySubject headerSizeBytes totalSizeBytes =
   case (integerBytes "HMSG header size" headerSizeBytes, integerBytes "HMSG total size" totalSizeBytes) of
     (Left parseReason, _) ->
       fail parseReason
@@ -161,6 +170,8 @@ parseHMsgPayload subjectName sidValue replySubject headerSizeBytes totalSizeByte
                 ++ " is smaller than header size "
                 ++ show headerSize
             )
+      | totalSize > maximumMessageSize ->
+          pure (ParsedMessageTooLarge totalSize maximumMessageSize)
       | otherwise -> do
           headerBytes <- A.take headerSize
           payloadBytes <- A.take (totalSize - headerSize)
@@ -247,10 +258,16 @@ classifyErr reason
       Right (ErrUnknownOp reason)
   | reason == "Attempted To Connect To Route Port" =
       Right (ErrRoutePortConn reason)
-  | reason == "Authorization Violation" =
+  | "authorization violation" `BS.isPrefixOf` normalized =
       Right (ErrAuthViolation reason)
-  | reason == "Authorization Timeout" =
+  | "authorization timeout" `BS.isPrefixOf` normalized =
       Right (ErrAuthTimeout reason)
+  | "user authentication expired" `BS.isPrefixOf` normalized =
+      Right (ErrAuthExpired reason)
+  | "user authentication revoked" `BS.isPrefixOf` normalized =
+      Right (ErrAuthRevoked reason)
+  | "account authentication expired" `BS.isPrefixOf` normalized =
+      Right (ErrAccountAuthExpired reason)
   | reason == "Invalid Client Protocol" =
       Right (ErrInvalidProtocol reason)
   | reason == "Maximum Control Line Exceeded" =
@@ -272,7 +289,9 @@ classifyErr reason
   | "Permissions Violation" `BS.isPrefixOf` reason =
       Right (ErrPermViolation reason)
   | otherwise =
-      Left ("unknown -ERR reason: " ++ B8.unpack reason)
+      Right (ErrErr reason)
+  where
+    normalized = B8.map toLower reason
 
 lineParser :: A.Parser BS.ByteString
 lineParser = do

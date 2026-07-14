@@ -8,7 +8,12 @@ import qualified Data.ByteString.Lazy      as LBS
 import           Data.Maybe
 import           Prelude                   hiding (concat, length, null)
 import           Transformers.Transformers (Transformer (..))
-import           Types.Msg                 (Headers, Payload, Subject)
+import           Types.Msg
+    ( Headers
+    , Payload
+    , Subject
+    , messageContentSize
+    )
 import           Validators.Validators
 
 data Pub = Pub
@@ -73,11 +78,7 @@ validateHeaders p
 
 messageSize :: Pub -> Int
 messageSize pubMsg =
-  case headers pubMsg of
-    Nothing ->
-      length (payloadChunk (payload pubMsg))
-    Just headerList ->
-      length (headerString headerList) + length (payloadChunk (payload pubMsg))
+  messageContentSize (headers pubMsg) (payload pubMsg)
 
 headerString :: Headers -> ByteString
 headerString hs =

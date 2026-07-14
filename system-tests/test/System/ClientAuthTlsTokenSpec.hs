@@ -2,7 +2,7 @@
 
 module ClientAuthTlsTokenSpec (spec) where
 
-import           API                    (Client (..))
+import           API
 import           Client
 import           Control.Concurrent     (forkIO)
 import           Control.Concurrent.STM
@@ -14,6 +14,7 @@ spec :: Spec
 spec =
   systemTest . describe "client auth" $ do
       let loggerOptions = testLoggerOptions
+      tlsRoot <- runIO (readFixtureBytesRaw "tls/ca.crt")
       tlsHostDir <- runIO (fixturePath "tls")
       let tlsContainerDir = "/etc/nats/certs"
       let tlsConfig =
@@ -39,15 +40,30 @@ spec =
                 [ withConnectName "auth-tls-token"
                 , withExitAction (atomically . putTMVar exitResult)
                 , withAuthToken "test-token"
+                , withTLSRootCA tlsRoot
                 , withConnectionAttempts 1
                 ]
                 ++ loggerOptions
-          client <- newClient [(natsHost, natsPort)] clientOptions
+          client <- newTestClient [(natsHost, natsPort)] clientOptions
           forkIO $ do
             outcome <- atomically $ (Left <$> readTMVar pinged) `orElse` (Right <$> readTMVar exitResult)
             case outcome of
-              Left _  -> close client
+              Left _  -> close client []
               Right _ -> pure ()
-          ping client (atomically (putTMVar pinged ()))
+          _ <- ping client []
+          atomically (putTMVar pinged ())
           result <- atomically $ readTMVar exitResult
           result `shouldBe` ExitClosedByUser
+        it "rejects an untrusted tls server" $ \(Endpoints natsHost natsPort) -> do
+          connectResult <- newClient [(natsHost, natsPort)]
+            [ withAuthToken "test-token"
+            , withConnectionAttempts 1
+            ]
+          case connectResult of
+            Left (ConnectAttemptsExhausted [ConnectAttemptError _ (ConnectTLSFailure _)]) ->
+              pure ()
+            Left err ->
+              expectationFailure ("unexpected connection error: " ++ show err)
+            Right client -> do
+              close client []
+              expectationFailure "connected to an untrusted tls server"

@@ -2,7 +2,7 @@
 
 module ClientAuthTlsNKeySpec (spec) where
 
-import           API                    (Client (..))
+import           API
 import           Client
 import           Control.Concurrent     (forkIO)
 import           Control.Concurrent.STM
@@ -16,6 +16,7 @@ spec =
       let loggerOptions = testLoggerOptions
       nkeyPub <- runIO (readFixtureText "nkey/user.pub")
       nkeySeed <- runIO (readFixtureBytesTrim "nkey/user.seed")
+      tlsRoot <- runIO (readFixtureBytesRaw "tls/ca.crt")
       tlsHostDir <- runIO (fixturePath "tls")
       let tlsContainerDir = "/etc/nats/certs"
       let tlsConfig =
@@ -41,15 +42,17 @@ spec =
                 [ withConnectName "auth-tls-nkey"
                 , withExitAction (atomically . putTMVar exitResult)
                 , withNKey nkeySeed
+                , withTLSRootCA tlsRoot
                 , withConnectionAttempts 1
                 ]
                 ++ loggerOptions
-          client <- newClient [(natsHost, natsPort)] clientOptions
+          client <- newTestClient [(natsHost, natsPort)] clientOptions
           forkIO $ do
             outcome <- atomically $ (Left <$> readTMVar pinged) `orElse` (Right <$> readTMVar exitResult)
             case outcome of
-              Left _  -> close client
+              Left _  -> close client []
               Right _ -> pure ()
-          ping client (atomically (putTMVar pinged ()))
+          _ <- ping client []
+          atomically (putTMVar pinged ())
           result <- atomically $ readTMVar exitResult
           result `shouldBe` ExitClosedByUser

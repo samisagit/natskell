@@ -1,33 +1,40 @@
 -- | High-level client implementation for JetStream.
 module JetStream.Client
   ( newJetStream
-  , JetStream (..)
+  , JetStream
   , JetStreamOption
+  , JetStreamRequestOption
+  , JetStreamConfigError (..)
   , withDomain
+  , withRequestTimeout
   , withRequestTimeoutMicros
   ) where
 
 import qualified API                        as Nats
-import           JetStream.API              (JetStream (..))
+import           JetStream.API              (JetStream)
 import qualified JetStream.Consumer         as Consumer
 import qualified JetStream.Message          as Message
 import           JetStream.Options
-    ( JetStreamOption
-    , newJetStreamContext
+    ( JetStream (..)
+    , JetStreamConfigError (..)
+    , JetStreamOption
+    , tryNewJetStreamContext
     , withDomain
+    , withRequestTimeout
     , withRequestTimeoutMicros
     )
 import qualified JetStream.Protocol.Request as Request
 import qualified JetStream.Protocol.Subject as Subject
 import qualified JetStream.Publish          as Publish
 import qualified JetStream.Stream           as Stream
+import           JetStream.Types            (JetStreamRequestOption)
 
--- | Build a JetStream capability record from an existing NATS client.
-newJetStream :: Nats.Client -> [JetStreamOption] -> JetStream
-newJetStream client options =
-  let ctx = newJetStreamContext client options
-      consumerAPI = Consumer.consumerAPI ctx
-  in JetStream
+-- | Build JetStream capabilities from an existing NATS client.
+newJetStream :: Nats.Client -> [JetStreamOption] -> Either JetStreamConfigError JetStream
+newJetStream client options = do
+  ctx <- tryNewJetStreamContext client options
+  let consumerAPI = Consumer.consumerAPI ctx
+  pure JetStream
     { streams = Stream.streamAPI ctx
     , consumers = consumerAPI
     , publisher = Publish.publishAPI ctx

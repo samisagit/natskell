@@ -1,9 +1,35 @@
 module JetStream.Stream.API
-  ( StreamAPI (..)
+  ( StreamAPI
+  , create
+  , createOrUpdate
+  , update
+  , info
+  , getMessage
+  , deleteMessage
+  , delete
+  , purge
+  , list
+  , names
+  , Stream
+  , streamName
+  , lookupStream
+  , createStream
+  , getStreamInfo
   , RetentionPolicy (..)
   , StorageType (..)
   , DiscardPolicy (..)
-  , StreamConfig (..)
+  , StreamConfig
+  , streamConfigName
+  , streamConfigSubjects
+  , streamConfigRetention
+  , streamConfigStorage
+  , streamConfigDiscard
+  , streamConfigMaxMessages
+  , streamConfigMaxBytes
+  , streamConfigMaxAge
+  , streamConfigReplicas
+  , streamConfigDuplicateWindow
+  , streamConfigAllowDirect
   , StreamConfigOption
   , withRetention
   , withStorage
@@ -21,45 +47,100 @@ module JetStream.Stream.API
   , StreamListOption
   , withStreamListOffset
   , withStreamListSubject
-  , StreamMessage (..)
+  , StreamMessage
+  , streamMessageSubject
+  , streamMessageSequence
+  , streamMessageHeadersRaw
+  , streamMessagePayload
+  , streamMessageTime
   , StreamMessageSelector (..)
   , StreamMessageDeleteMode (..)
-  , DeleteStreamMessageResponse (..)
-  , StreamInfo (..)
-  , StreamState (..)
-  , StreamCluster (..)
-  , StreamPeer (..)
-  , StreamSourceInfo (..)
-  , DeleteStreamResponse (..)
-  , PurgeStreamResponse (..)
-  , StreamListResponse (..)
-  , StreamNamesResponse (..)
+  , DeleteStreamMessageResponse
+  , deleteStreamMessageSuccess
+  , StreamInfo
+  , streamInfoConfig
+  , streamInfoCreated
+  , streamInfoState
+  , streamInfoCluster
+  , streamInfoMirror
+  , streamInfoSources
+  , StreamState
+  , streamStateMessages
+  , streamStateBytes
+  , streamStateFirstSequence
+  , streamStateFirstTime
+  , streamStateLastSequence
+  , streamStateLastTime
+  , streamStateConsumerCount
+  , streamStateDeleted
+  , streamStateNumDeleted
+  , streamStateNumSubjects
+  , StreamCluster
+  , streamClusterName
+  , streamClusterLeader
+  , streamClusterReplicas
+  , StreamPeer
+  , streamPeerName
+  , streamPeerCurrent
+  , streamPeerOffline
+  , streamPeerActive
+  , streamPeerLag
+  , StreamSourceInfo
+  , streamSourceInfoName
+  , streamSourceInfoFilterSubject
+  , streamSourceInfoLag
+  , streamSourceInfoActive
+  , DeleteStreamResponse
+  , deleteStreamSuccess
+  , PurgeStreamResponse
+  , purgeStreamSuccess
+  , purgeStreamPurged
+  , StreamListResponse
+  , streamListTotal
+  , streamListOffset
+  , streamListLimit
+  , streamListStreams
+  , StreamNamesResponse
+  , streamNamesTotal
+  , streamNamesOffset
+  , streamNamesLimit
+  , streamNamesStreams
   ) where
 
 import           JetStream.Error        (JetStreamError)
 import           JetStream.Stream.Types
-import           JetStream.Types        (StreamName, Subject)
+import           JetStream.Types
+    ( JetStreamRequestOption
+    , StreamName
+    , Subject
+    )
 
--- | Stream management operations.
-data StreamAPI = StreamAPI
-                   { create :: StreamName -> [Subject] -> [StreamConfigOption] -> IO (Either JetStreamError StreamInfo)
-                     -- ^ Create a stream.
-                   , createOrUpdate :: StreamName -> [Subject] -> [StreamConfigOption] -> IO (Either JetStreamError StreamInfo)
-                     -- ^ Create a stream or update it if it already exists.
-                   , update :: StreamName -> [Subject] -> [StreamConfigOption] -> IO (Either JetStreamError StreamInfo)
-                     -- ^ Update an existing stream configuration.
-                   , info :: StreamName -> IO (Either JetStreamError StreamInfo)
-                     -- ^ Fetch stream configuration and state.
-                   , getMessage :: StreamName -> StreamMessageSelector -> IO (Either JetStreamError StreamMessage)
-                     -- ^ Fetch a stored stream message by selector.
-                   , deleteMessage :: StreamName -> Integer -> StreamMessageDeleteMode -> IO (Either JetStreamError DeleteStreamMessageResponse)
-                     -- ^ Delete or securely erase a stored stream message.
-                   , delete :: StreamName -> IO (Either JetStreamError DeleteStreamResponse)
-                     -- ^ Delete a stream.
-                   , purge :: StreamName -> [PurgeStreamOption] -> IO (Either JetStreamError PurgeStreamResponse)
-                     -- ^ Purge messages from a stream.
-                   , list :: [StreamListOption] -> IO (Either JetStreamError StreamListResponse)
-                     -- ^ List streams and their metadata.
-                   , names :: [StreamListOption] -> IO (Either JetStreamError StreamNamesResponse)
-                   -- ^ List stream names.
-                   }
+-- | Look up a stream and return a stable resource handle.
+lookupStream
+  :: StreamAPI
+  -> StreamName
+  -> [JetStreamRequestOption]
+  -> IO (Either JetStreamError Stream)
+lookupStream api name requestOptions =
+  fmap (fmap (const (Stream name))) (info api name requestOptions)
+
+-- | Create a stream and return a stable resource handle.
+createStream
+  :: StreamAPI
+  -> StreamName
+  -> [Subject]
+  -> [StreamConfigOption]
+  -> [JetStreamRequestOption]
+  -> IO (Either JetStreamError Stream)
+createStream api name subjects configOptions requestOptions =
+  fmap (fmap (const (Stream name)))
+    (create api name subjects configOptions requestOptions)
+
+-- | Read the current info for a stream handle.
+getStreamInfo
+  :: StreamAPI
+  -> Stream
+  -> [JetStreamRequestOption]
+  -> IO (Either JetStreamError StreamInfo)
+getStreamInfo api stream =
+  info api (streamName stream)

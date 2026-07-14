@@ -6,7 +6,7 @@ module Router.Nats
 import           Control.Monad.IO.Class (liftIO)
 import           Lib.Logger             (LogLevel (..), MonadLogger (..))
 import           Parser.API
-    ( ParsedMessage (ParsedErr, ParsedInfo, ParsedMsg, ParsedOk, ParsedPing, ParsedPong)
+    ( ParsedMessage (ParsedErr, ParsedInfo, ParsedMessageTooLarge, ParsedMsg, ParsedOk, ParsedPing, ParsedPong)
     )
 import           Queue.API              (QueueItem (QueueItem))
 import           State.Store
@@ -17,8 +17,15 @@ import           State.Store
     , setServerInfo
     , updateLogContextFromInfo
     )
-import           State.Types            (ClientExitReason (ExitServerError))
-import           Subscription.Store     (SubscriptionStore, dispatchMessage)
+import           State.Types
+    ( ClientExitReason (ExitInboundMessageTooLarge, ExitServerError)
+    , serverErrorFromProtocol
+    )
+import           Subscription.Store
+    ( DispatchResult (DispatchDropped, DispatchMissing, DispatchQueued)
+    , SubscriptionStore
+    , dispatchMessage
+    )
 import qualified Types.Err              as Err
 import qualified Types.Msg              as Msg
 import           Types.Pong             (Pong (..))
@@ -33,12 +40,28 @@ routeMessage state store parsed =
     case parsed of
       ParsedMsg msg -> do
         logMessage Debug ("routing MSG: " ++ show msg)
-        handled <- liftIO $ dispatchMessage store msg
-        if handled
-          then pure RouteContinue
-          else do
+        result <- liftIO $ dispatchMessage store msg
+        case result of
+          DispatchQueued ->
+            pure RouteContinue
+          DispatchDropped reportSlowConsumer -> do
+            if reportSlowConsumer
+              then
+                logMessage Error "slow consumer: global pending delivery limit reached"
+              else
+                logMessage Debug "dropping delivery while client remains a slow consumer"
+            pure RouteContinue
+          DispatchMissing -> do
             logMessage Error ("callback missing for SID: " ++ show (Msg.sid msg))
             pure RouteContinue
+      ParsedMessageTooLarge actual maximumSize -> do
+        logMessage Error
+          ( "inbound message size "
+              ++ show actual
+              ++ " exceeds client limit "
+              ++ show maximumSize
+          )
+        pure (RouteExit (ExitInboundMessageTooLarge actual maximumSize))
       ParsedInfo info -> do
         logMessage Debug ("routing INFO: " ++ show info)
         liftIO $ setServerInfo state info
@@ -60,7 +83,7 @@ routeMessage state store parsed =
         if Err.isFatal err
           then do
             logMessage Error ("fatal server error: " ++ show err)
-            pure (RouteExit (ExitServerError err))
+            pure (RouteExit (ExitServerError (serverErrorFromProtocol err)))
           else do
             logMessage Warn ("server error: " ++ show err)
             pure RouteContinue

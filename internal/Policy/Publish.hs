@@ -2,7 +2,7 @@ module Publish
   ( defaultPublishConfig
   ) where
 
-import           Publish.Config (PublishConfig)
+import           Publish.Config (PublishConfig (..))
 
 defaultPublishConfig :: PublishConfig
-defaultPublishConfig = (Nothing, Nothing, Nothing, Nothing)
+defaultPublishConfig = PublishConfig Nothing Nothing

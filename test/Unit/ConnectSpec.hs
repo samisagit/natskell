@@ -6,6 +6,7 @@ import           Control.Monad
 import           Data.Aeson
 import qualified Data.ByteString           as BS
 import qualified Data.ByteString.Lazy      as LBS
+import           Lib.CallOption            (applyCallOptions)
 import           Test.Hspec
 import           Text.Printf
 import           Transformers.Transformers
@@ -14,6 +15,9 @@ import           Validators.Validators
 
 spec :: Spec
 spec = do
+  describe "call options" $ do
+    it "applies options from left to right so the last override wins" $ do
+      applyCallOptions [(+ 1), (* 2)] (3 :: Int) `shouldBe` 8
   transformationCases
   validationCases
 

@@ -1,7 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module JetStream.Consumer.Types
-  ( AckPolicy (..)
+  ( ConsumerAPI (..)
+  , Consumer (..)
+  , AckPolicy (..)
   , ConsumerConfig (..)
   , ConsumerAction (..)
   , ConsumerConfigOption
@@ -56,12 +58,15 @@ import qualified Data.ByteString  as BS
 import           Data.Maybe       (catMaybes)
 import qualified Data.Text        as T
 import           Data.Time.Clock  (NominalDiffTime, UTCTime)
+import           JetStream.Error  (JetStreamError)
 import           JetStream.Types
     ( AckPolicy (..)
     , CallOption
     , ConsumerName
     , DeliverPolicy (..)
+    , JetStreamRequestOption
     , ReplayPolicy (..)
+    , Sequence
     , StreamName
     , Subject
     , applyCallOptions
@@ -69,6 +74,26 @@ import           JetStream.Types
     , diffTimeNanosToJSON
     , parseByteString
     )
+
+-- | Consumer management operations. The public API hides the constructor so
+-- new operations can be added without breaking downstream code.
+data ConsumerAPI = ConsumerAPI
+                     { putConsumer :: StreamName -> ConsumerAction -> ConsumerTarget -> ConsumerKind -> [ConsumerConfigOption] -> [JetStreamRequestOption] -> IO (Either JetStreamError ConsumerInfo)
+                     , consumerInfo :: StreamName -> ConsumerName -> [JetStreamRequestOption] -> IO (Either JetStreamError ConsumerInfo)
+                     , pauseConsumer :: StreamName -> ConsumerName -> UTCTime -> [JetStreamRequestOption] -> IO (Either JetStreamError ConsumerPauseResponse)
+                     , resumeConsumer :: StreamName -> ConsumerName -> [JetStreamRequestOption] -> IO (Either JetStreamError ConsumerPauseResponse)
+                     , resetConsumer :: StreamName -> ConsumerName -> [ConsumerResetOption] -> [JetStreamRequestOption] -> IO (Either JetStreamError ConsumerResetResponse)
+                     , deleteConsumer :: StreamName -> ConsumerName -> [JetStreamRequestOption] -> IO (Either JetStreamError DeleteConsumerResponse)
+                     , listConsumers :: StreamName -> [ConsumerListOption] -> [JetStreamRequestOption] -> IO (Either JetStreamError ConsumerListResponse)
+                     , consumerNames :: StreamName -> [ConsumerListOption] -> [JetStreamRequestOption] -> IO (Either JetStreamError ConsumerNamesResponse)
+                     }
+
+-- | Stable identity of a consumer within a stream.
+data Consumer = Consumer
+                  { consumerStreamName :: StreamName
+                  , consumerName       :: ConsumerName
+                  }
+  deriving (Eq, Ord, Show)
 
 data ConsumerConfigRequest = ConsumerConfigRequest
                                { consumerConfigRequestDurableName :: Maybe ConsumerName
@@ -278,8 +303,8 @@ data ConsumerInfo = ConsumerInfo
   deriving (Eq, Show)
 
 data ConsumerSequenceInfo = ConsumerSequenceInfo
-                              { consumerSequenceConsumer :: Integer
-                              , consumerSequenceStream   :: Integer
+                              { consumerSequenceConsumer :: Sequence
+                              , consumerSequenceStream   :: Sequence
                               , consumerSequenceLast     :: Maybe UTCTime
                               }
   deriving (Eq, Show)
@@ -301,7 +326,7 @@ data ConsumerPauseResponse = ConsumerPauseResponse
                                }
   deriving (Eq, Show)
 
-newtype ConsumerResetRequest = ConsumerResetRequest { consumerResetRequestSequence :: Maybe Integer }
+newtype ConsumerResetRequest = ConsumerResetRequest { consumerResetRequestSequence :: Maybe Sequence }
   deriving (Eq, Show)
 
 type ConsumerResetOption = CallOption ConsumerResetRequest
@@ -313,13 +338,13 @@ consumerResetRequest options =
       { consumerResetRequestSequence = Nothing
       }
 
-withConsumerResetSequence :: Integer -> ConsumerResetOption
+withConsumerResetSequence :: Sequence -> ConsumerResetOption
 withConsumerResetSequence sequenceNumber request =
   request { consumerResetRequestSequence = Just sequenceNumber }
 
 data ConsumerResetResponse = ConsumerResetResponse
                                { consumerResetInfo             :: ConsumerInfo
-                               , consumerResetResponseSequence :: Integer
+                               , consumerResetResponseSequence :: Sequence
                                }
   deriving (Eq, Show)
 
@@ -592,7 +617,7 @@ parseDeliverPolicyField obj key = do
     "last_per_subject" ->
       pure DeliverLastPerSubject
     value ->
-      fail ("unknown deliver policy: " ++ T.unpack value)
+      pure (DeliverPolicyUnknown value)
 
 parseByteStringField :: Object -> Key -> Parser BS.ByteString
 parseByteStringField obj key =

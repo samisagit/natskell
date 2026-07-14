@@ -2,7 +2,7 @@
 
 module ClientAuthTlsCertSpec (spec) where
 
-import           API                    (Client (..))
+import           API
 import           Client
 import           Control.Concurrent     (forkIO)
 import           Control.Concurrent.STM
@@ -16,6 +16,7 @@ spec =
       let loggerOptions = testLoggerOptions
       clientCert <- runIO (readFixtureBytesRaw "tls/client.crt")
       clientKey <- runIO (readFixtureBytesRaw "tls/client.key")
+      tlsRoot <- runIO (readFixtureBytesRaw "tls/ca.crt")
       tlsHostDir <- runIO (fixturePath "tls")
       let tlsContainerDir = "/etc/nats/certs"
       let tlsConfig =
@@ -41,39 +42,33 @@ spec =
                 [ withConnectName "auth-tls"
                 , withExitAction (atomically . putTMVar exitResult)
                 , withTLSCert (clientCert, clientKey)
+                , withTLSRootCA tlsRoot
                 , withConnectionAttempts 1
                 ]
                 ++ loggerOptions
-          client <- newClient [(natsHost, natsPort)] clientOptions
+          client <- newTestClient [(natsHost, natsPort)] clientOptions
           forkIO $ do
             outcome <- atomically $ (Left <$> readTMVar pinged) `orElse` (Right <$> readTMVar exitResult)
             case outcome of
-              Left _  -> close client
+              Left _  -> close client []
               Right _ -> pure ()
-          ping client (atomically (putTMVar pinged ()))
+          _ <- ping client []
+          atomically (putTMVar pinged ())
           result <- atomically $ readTMVar exitResult
           result `shouldBe` ExitClosedByUser
         it "rejects tls client without required certificate" $ \(Endpoints natsHost natsPort) -> do
           exitResult <- newEmptyTMVarIO
-          pinged <- newEmptyTMVarIO
           let clientOptions =
                 [ withConnectName "auth-tls-missing-client-cert"
                 , withExitAction (atomically . putTMVar exitResult)
+                , withTLSRootCA tlsRoot
                 , withConnectionAttempts 1
                 ]
                 ++ loggerOptions
-          client <- newClient [(natsHost, natsPort)] clientOptions
-          ping client (atomically (putTMVar pinged ()))
-          outcome <- atomically $ (Left <$> readTMVar exitResult) `orElse` (Right <$> readTMVar pinged)
-          case outcome of
-            Right _ -> do
-              close client
+          connectResult <- newClient [(natsHost, natsPort)] clientOptions
+          case connectResult of
+            Right client -> do
+              close client []
               expectationFailure "TLS client connected without a required certificate"
-            Left result ->
-              case result of
-                ExitRetriesExhausted _ ->
-                  pure ()
-                ExitServerError _ ->
-                  pure ()
-                other ->
-                  expectationFailure $ "Unexpected exit reason: " ++ show other
+            Left _ ->
+              pure ()

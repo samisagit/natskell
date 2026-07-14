@@ -3,6 +3,7 @@
 module TestSupport
   ( Endpoints (..)
   , clientSystemTest
+  , newTestClient
   , fixturePath
   , readFixtureBytesRaw
   , readFixtureBytesTrim
@@ -16,7 +17,9 @@ module TestSupport
   , withNatsContainerConfigWithMountsNamed
   ) where
 
-import           Client
+import           API                    (Client)
+import           Client                 hiding (newClient)
+import qualified Client                 as Nats
 import           Control.Concurrent     (threadDelay)
 import           Control.Exception      (bracket, onException)
 import           Control.Monad          (filterM)
@@ -65,6 +68,13 @@ testLoggerOptions =
   [ withMinimumLogLevel Debug
   , withLogAction (putStrLn . renderLogEntry)
   ]
+
+newTestClient :: [(String, Int)] -> [ConfigOption] -> IO Client
+newTestClient servers options = do
+  result <- Nats.newClient servers options
+  case result of
+    Left err     -> fail ("client failed to connect: " ++ show err)
+    Right client -> pure client
 
 testTimeoutMicros :: Int
 testTimeoutMicros = 20 * 1000000

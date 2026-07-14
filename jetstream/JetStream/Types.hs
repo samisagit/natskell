@@ -1,4 +1,5 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings          #-}
 
 module JetStream.Types
   ( AccountAPIStats (..)
@@ -11,6 +12,12 @@ module JetStream.Types
   , Payload
   , Headers
   , CallOption
+  , Sequence
+  , sequenceFromWord64
+  , sequenceToWord64
+  , JetStreamRequestOption
+  , applyRequestOptions
+  , withRequestTimeout
   , AckPolicy (..)
   , DeliverPolicy (..)
   , DiscardPolicy (..)
@@ -28,11 +35,12 @@ import qualified Data.Aeson.Key     as Key
 import qualified Data.Aeson.KeyMap  as KeyMap
 import           Data.Aeson.Types   (Pair, Parser, typeMismatch)
 import qualified Data.ByteString    as BS
-import           Data.Maybe         (catMaybes)
+import           Data.Maybe         (catMaybes, fromMaybe)
 import qualified Data.Text          as T
 import qualified Data.Text.Encoding as E
 import           Data.Time.Clock    (NominalDiffTime)
 import qualified Data.Time.Clock    as Time
+import           Data.Word          (Word64)
 
 type StreamName = BS.ByteString
 type ConsumerName = BS.ByteString
@@ -40,6 +48,49 @@ type Subject = BS.ByteString
 type Payload = BS.ByteString
 type Headers = [(BS.ByteString, BS.ByteString)]
 type CallOption a = a -> a
+
+-- | A JetStream stream or consumer sequence number.
+--
+-- Sequence numbers are unsigned 64-bit values on the wire. The constructor is
+-- intentionally private on the public API; use 'sequenceFromWord64' and
+-- 'sequenceToWord64' at application boundaries.
+newtype Sequence = Sequence Word64
+  deriving (Bounded, Enum, Eq, Integral, Num, Ord, Real, Show)
+
+sequenceFromWord64 :: Word64 -> Sequence
+sequenceFromWord64 = Sequence
+
+sequenceToWord64 :: Sequence -> Word64
+sequenceToWord64 (Sequence value) = value
+
+instance ToJSON Sequence where
+  toJSON = toJSON . sequenceToWord64
+
+instance FromJSON Sequence where
+  parseJSON value = Sequence <$> parseJSON value
+
+-- | Options scoped to one JetStream API request. This is distinct from
+-- stream, consumer, publish, and fetch configuration.
+newtype JetStreamRequestOption = JetStreamRequestOption (JetStreamRequestConfig -> JetStreamRequestConfig)
+
+newtype JetStreamRequestConfig = JetStreamRequestConfig { requestConfigTimeoutMicros :: Maybe Int }
+
+applyRequestOptions :: Int -> [JetStreamRequestOption] -> Int
+applyRequestOptions defaultTimeout options =
+  fromMaybe defaultTimeout
+    (requestConfigTimeoutMicros (foldl apply emptyRequestConfig options))
+  where
+    emptyRequestConfig = JetStreamRequestConfig Nothing
+    apply value (JetStreamRequestOption option) = option value
+
+-- | Override the timeout for one JetStream request.
+withRequestTimeout :: NominalDiffTime -> JetStreamRequestOption
+withRequestTimeout timeoutSeconds =
+  JetStreamRequestOption $ \config ->
+    config
+      { requestConfigTimeoutMicros =
+          Just (max 1 (floor (realToFrac timeoutSeconds * (1000000 :: Double))))
+      }
 
 data AccountInfo = AccountInfo
                      { accountInfoTier   :: AccountTier
@@ -82,38 +133,52 @@ data AccountLimits = AccountLimits
 
 applyCallOptions :: [CallOption a] -> a -> a
 applyCallOptions options value =
-  foldr ($) value options
+  foldl (flip ($)) value options
 
-data AckPolicy = AckNone | AckAll | AckExplicit
+data AckPolicy = AckNone
+               | AckAll
+               | AckExplicit
+               | AckPolicyUnknown T.Text
   deriving (Eq, Show)
 
 data DeliverPolicy = DeliverAll
                    | DeliverLast
                    | DeliverNew
-                   | DeliverByStartSequence Int
+                   | DeliverByStartSequence Sequence
                    | DeliverByStartTime Time.UTCTime
                    | DeliverLastPerSubject
+                   | DeliverPolicyUnknown T.Text
   deriving (Eq, Show)
 
-data DiscardPolicy = DiscardOld | DiscardNew
+data DiscardPolicy = DiscardOld
+                   | DiscardNew
+                   | DiscardPolicyUnknown T.Text
   deriving (Eq, Show)
 
-data ReplayPolicy = ReplayInstant | ReplayOriginal
+data ReplayPolicy = ReplayInstant
+                  | ReplayOriginal
+                  | ReplayPolicyUnknown T.Text
   deriving (Eq, Show)
 
-data RetentionPolicy = LimitsPolicy | InterestPolicy | WorkQueuePolicy
+data RetentionPolicy = LimitsPolicy
+                     | InterestPolicy
+                     | WorkQueuePolicy
+                     | RetentionPolicyUnknown T.Text
   deriving (Eq, Show)
 
-data StorageType = FileStorage | MemoryStorage
+data StorageType = FileStorage
+                 | MemoryStorage
+                 | StorageTypeUnknown T.Text
   deriving (Eq, Show)
 
 instance ToJSON AckPolicy where
   toJSON policy =
     String $
       case policy of
-        AckNone     -> "none"
-        AckAll      -> "all"
-        AckExplicit -> "explicit"
+        AckNone                -> "none"
+        AckAll                 -> "all"
+        AckExplicit            -> "explicit"
+        AckPolicyUnknown value -> value
 
 instance FromJSON AckPolicy where
   parseJSON = withText "AckPolicy" $ \value ->
@@ -121,18 +186,19 @@ instance FromJSON AckPolicy where
       "none"     -> pure AckNone
       "all"      -> pure AckAll
       "explicit" -> pure AckExplicit
-      _          -> fail ("unknown ack policy: " ++ T.unpack value)
+      _          -> pure (AckPolicyUnknown value)
 
 instance ToJSON DeliverPolicy where
   toJSON policy =
     String $
       case policy of
-        DeliverAll               -> "all"
-        DeliverLast              -> "last"
-        DeliverNew               -> "new"
-        DeliverByStartSequence _ -> "by_start_sequence"
-        DeliverByStartTime _     -> "by_start_time"
-        DeliverLastPerSubject    -> "last_per_subject"
+        DeliverAll                 -> "all"
+        DeliverLast                -> "last"
+        DeliverNew                 -> "new"
+        DeliverByStartSequence _   -> "by_start_sequence"
+        DeliverByStartTime _       -> "by_start_time"
+        DeliverLastPerSubject      -> "last_per_subject"
+        DeliverPolicyUnknown value -> value
 
 instance FromJSON DeliverPolicy where
   parseJSON = withText "DeliverPolicy" $ \value ->
@@ -143,43 +209,46 @@ instance FromJSON DeliverPolicy where
       "by_start_sequence" -> fail "deliver policy by_start_sequence requires opt_start_seq"
       "by_start_time"     -> fail "deliver policy by_start_time requires opt_start_time"
       "last_per_subject"  -> pure DeliverLastPerSubject
-      _                   -> fail ("unknown deliver policy: " ++ T.unpack value)
+      _                   -> pure (DeliverPolicyUnknown value)
 
 instance ToJSON DiscardPolicy where
   toJSON policy =
     String $
       case policy of
-        DiscardOld -> "old"
-        DiscardNew -> "new"
+        DiscardOld                 -> "old"
+        DiscardNew                 -> "new"
+        DiscardPolicyUnknown value -> value
 
 instance FromJSON DiscardPolicy where
   parseJSON = withText "DiscardPolicy" $ \value ->
     case value of
       "old" -> pure DiscardOld
       "new" -> pure DiscardNew
-      _     -> fail ("unknown discard policy: " ++ T.unpack value)
+      _     -> pure (DiscardPolicyUnknown value)
 
 instance ToJSON ReplayPolicy where
   toJSON policy =
     String $
       case policy of
-        ReplayInstant  -> "instant"
-        ReplayOriginal -> "original"
+        ReplayInstant             -> "instant"
+        ReplayOriginal            -> "original"
+        ReplayPolicyUnknown value -> value
 
 instance FromJSON ReplayPolicy where
   parseJSON = withText "ReplayPolicy" $ \value ->
     case value of
       "instant"  -> pure ReplayInstant
       "original" -> pure ReplayOriginal
-      _          -> fail ("unknown replay policy: " ++ T.unpack value)
+      _          -> pure (ReplayPolicyUnknown value)
 
 instance ToJSON RetentionPolicy where
   toJSON policy =
     String $
       case policy of
-        LimitsPolicy    -> "limits"
-        InterestPolicy  -> "interest"
-        WorkQueuePolicy -> "workqueue"
+        LimitsPolicy                 -> "limits"
+        InterestPolicy               -> "interest"
+        WorkQueuePolicy              -> "workqueue"
+        RetentionPolicyUnknown value -> value
 
 instance FromJSON RetentionPolicy where
   parseJSON = withText "RetentionPolicy" $ \value ->
@@ -187,21 +256,22 @@ instance FromJSON RetentionPolicy where
       "limits"    -> pure LimitsPolicy
       "interest"  -> pure InterestPolicy
       "workqueue" -> pure WorkQueuePolicy
-      _           -> fail ("unknown retention policy: " ++ T.unpack value)
+      _           -> pure (RetentionPolicyUnknown value)
 
 instance ToJSON StorageType where
   toJSON storage =
     String $
       case storage of
-        FileStorage   -> "file"
-        MemoryStorage -> "memory"
+        FileStorage              -> "file"
+        MemoryStorage            -> "memory"
+        StorageTypeUnknown value -> value
 
 instance FromJSON StorageType where
   parseJSON = withText "StorageType" $ \value ->
     case value of
       "file"   -> pure FileStorage
       "memory" -> pure MemoryStorage
-      _        -> fail ("unknown storage type: " ++ T.unpack value)
+      _        -> pure (StorageTypeUnknown value)
 
 byteStringToJSON :: BS.ByteString -> Value
 byteStringToJSON =

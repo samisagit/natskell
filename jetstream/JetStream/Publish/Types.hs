@@ -1,7 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module JetStream.Publish.Types
-  ( PublishAck (..)
+  ( PublishAPI (..)
+  , PublishAck (..)
   , PublishExpectation (..)
   , PublishOption
   , withMsgId
@@ -16,25 +17,38 @@ import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as BC
 import           Data.Text.Encoding    (encodeUtf8)
 import           Data.Word             (Word64)
-import           JetStream.Types       (StreamName)
+import           JetStream.Error       (JetStreamError)
+import           JetStream.Types
+    ( JetStreamRequestOption
+    , Payload
+    , Sequence
+    , StreamName
+    , Subject
+    , sequenceFromWord64
+    , sequenceToWord64
+    )
+
+-- | Publish operations. The public API hides the constructor so additional
+-- publish modes can be introduced without changing downstream code.
+newtype PublishAPI = PublishAPI { publish :: Subject -> Payload -> [PublishOption] -> [JetStreamRequestOption] -> IO (Either JetStreamError PublishAck) }
 
 data PublishAck = PublishAck
                     { publishAckStream    :: StreamName
-                    , publishAckSequence  :: Word64
+                    , publishAckSequence  :: Sequence
                     , publishAckDuplicate :: Maybe Bool
                     , publishAckDomain    :: Maybe BS.ByteString
                     }
   deriving (Eq, Show)
 
-data PublishExpectation = ExpectedLastSequence Word64
-                        | ExpectedLastSubjectSequence Word64
+data PublishExpectation = ExpectedLastSequence Sequence
+                        | ExpectedLastSubjectSequence Sequence
                         | ExpectedLastMsgId BS.ByteString
   deriving (Eq, Show)
 
 instance FromJSON PublishAck where
   parseJSON = withObject "PublishAck" $ \object -> do
     streamName <- object .: "stream"
-    sequence <- object .: "seq"
+    sequence <- sequenceFromWord64 <$> (object .: "seq")
     duplicate <- object .:? "duplicate"
     domainName <- object .:? "domain"
     pure PublishAck
@@ -69,9 +83,9 @@ withPublishExpectation expectation =
     (key, value) =
       case expectation of
         ExpectedLastSequence sequenceNumber ->
-          ("Nats-Expected-Last-Sequence", renderWord64 sequenceNumber)
+          ("Nats-Expected-Last-Sequence", renderSequence sequenceNumber)
         ExpectedLastSubjectSequence sequenceNumber ->
-          ("Nats-Expected-Last-Subject-Sequence", renderWord64 sequenceNumber)
+          ("Nats-Expected-Last-Subject-Sequence", renderSequence sequenceNumber)
         ExpectedLastMsgId msgId ->
           ("Nats-Expected-Last-Msg-Id", msgId)
 
@@ -85,7 +99,7 @@ withHeaders headers config =
 
 publishHeaders :: [PublishOption] -> [(BS.ByteString, BS.ByteString)]
 publishHeaders options =
-  publishConfigHeaders (foldr ($) defaultPublishConfig options)
+  publishConfigHeaders (foldl (flip ($)) defaultPublishConfig options)
 
 putHeader :: BS.ByteString -> BS.ByteString -> PublishOption
 putHeader key value config =
@@ -112,3 +126,7 @@ isPublishExpectationHeader key =
 renderWord64 :: Word64 -> BS.ByteString
 renderWord64 =
   BC.pack . show
+
+renderSequence :: Sequence -> BS.ByteString
+renderSequence =
+  renderWord64 . sequenceToWord64

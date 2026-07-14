@@ -2,11 +2,17 @@
 
 module JetStream.ProtocolSpec (spec) where
 
-import qualified API                        as Nats
+import qualified Client.API                 as Nats
 import           Data.Aeson                 (eitherDecodeStrict)
 import           Data.Either                (isLeft)
 import           JetStream.Error            (JetStreamError (..))
-import           JetStream.Options          (newJetStreamContext, withDomain)
+import           JetStream.Options
+    ( JetStreamConfigError (..)
+    , newJetStreamContext
+    , requestTimeoutMicros
+    , tryNewJetStreamContext
+    , withDomain
+    )
 import           JetStream.Protocol.Headers (statusCode, statusDescription)
 import           JetStream.Protocol.Request (decodeJetStreamResponse)
 import           JetStream.Protocol.Subject
@@ -14,7 +20,9 @@ import           JetStream.Stream.Types     (StreamMessage (..))
 import           JetStream.Types
     ( AccountInfo (..)
     , AccountTier (..)
+    , AckPolicy (..)
     , DeliverPolicy
+    , withRequestTimeout
     )
 import           Test.Hspec
 
@@ -34,6 +42,17 @@ spec = do
       streamMessageDeleteSubject testContext "ORDERS" `shouldBe` "$JS.API.STREAM.MSG.DELETE.ORDERS"
       consumerPauseSubject testContext "ORDERS" "WORKER" `shouldBe` "$JS.API.CONSUMER.PAUSE.ORDERS.WORKER"
       consumerResetSubject testContext "ORDERS" "WORKER" `shouldBe` "$JS.API.CONSUMER.RESET.ORDERS.WORKER"
+
+  describe "JetStream options" $ do
+    it "rejects invalid construction options" $ do
+      case tryNewJetStreamContext fakeClient [withDomain ""] of
+        Left EmptyJetStreamDomain -> pure ()
+        _                         -> expectationFailure "expected an empty-domain error"
+
+    it "applies request options left to right" $ do
+      requestTimeoutMicros testContext
+        [withRequestTimeout 2, withRequestTimeout 0.25]
+        `shouldBe` 250000
 
   describe "JetStream status headers" $ do
     it "extracts status and description from normal headers" $ do
@@ -70,6 +89,10 @@ spec = do
     it "rejects parameterised deliver policies without their companion fields" $ do
       (eitherDecodeStrict "\"by_start_sequence\"" :: Either String DeliverPolicy)
         `shouldSatisfy` isLeft
+
+    it "preserves unknown wire enum values" $ do
+      eitherDecodeStrict "\"future_ack_policy\""
+        `shouldBe` Right (AckPolicyUnknown "future_ack_policy")
       (eitherDecodeStrict "\"by_start_time\"" :: Either String DeliverPolicy)
         `shouldSatisfy` isLeft
 
@@ -85,23 +108,24 @@ accountInfoResponse =
 fakeClient :: Nats.Client
 fakeClient =
   Nats.Client
-    { Nats.publish = \_ _ -> pure ()
-    , Nats.subscribe = \_ _ _ -> pure "0"
-    , Nats.request = \_ _ _ -> pure "0"
-    , Nats.unsubscribe = \_ -> pure ()
+    { Nats.publish = \_ _ _ -> pure (Right ())
+    , Nats.subscribe = \_ _ _ -> pure (Right (Nats.Subscription "0"))
+    , Nats.subscribeOnce = \_ _ _ -> pure (Right (Nats.Subscription "0"))
+    , Nats.request = \_ _ _ -> pure (Left Nats.NatsRequestTimedOut)
+    , Nats.unsubscribe = \_ _ -> pure (Right ())
     , Nats.newInbox = pure "_INBOX.TEST"
-    , Nats.ping = id
-    , Nats.flush = pure ()
-    , Nats.reset = pure ()
-    , Nats.close = pure ()
+    , Nats.ping = \_ -> pure (Right ())
+    , Nats.flush = \_ -> pure (Right ())
+    , Nats.reset = \_ -> pure ()
+    , Nats.close = \_ -> pure ()
     }
 
-fakeMsg :: Nats.MsgView
+fakeMsg :: Nats.Message
 fakeMsg =
-  Nats.MsgView
+  Nats.Message
     { Nats.subject = "subject"
     , Nats.sid = "sid"
     , Nats.replyTo = Nothing
-    , Nats.payload = Nothing
+    , Nats.payload = ""
     , Nats.headers = Nothing
     }

@@ -1,7 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module JetStream.Stream.Types
-  ( RetentionPolicy (..)
+  ( StreamAPI (..)
+  , Stream (..)
+  , RetentionPolicy (..)
   , StorageType (..)
   , DiscardPolicy (..)
   , StreamConfig (..)
@@ -51,11 +53,14 @@ import qualified Data.ByteString        as BS
 import qualified Data.ByteString.Base64 as Base64
 import           Data.Maybe             (catMaybes)
 import           Data.Time.Clock        (NominalDiffTime, UTCTime)
+import           JetStream.Error        (JetStreamError)
 import           JetStream.Types
     ( CallOption
     , DiscardPolicy (..)
+    , JetStreamRequestOption
     , Payload
     , RetentionPolicy (..)
+    , Sequence
     , StorageType (..)
     , StreamName
     , Subject
@@ -63,6 +68,26 @@ import           JetStream.Types
     , byteStringToJSON
     , parseByteString
     )
+
+-- | Stream management operations. The public module exposes this type
+-- abstractly so operations can be added without changing its constructor.
+data StreamAPI = StreamAPI
+                   { create :: StreamName -> [Subject] -> [StreamConfigOption] -> [JetStreamRequestOption] -> IO (Either JetStreamError StreamInfo)
+                   , createOrUpdate :: StreamName -> [Subject] -> [StreamConfigOption] -> [JetStreamRequestOption] -> IO (Either JetStreamError StreamInfo)
+                   , update :: StreamName -> [Subject] -> [StreamConfigOption] -> [JetStreamRequestOption] -> IO (Either JetStreamError StreamInfo)
+                   , info :: StreamName -> [JetStreamRequestOption] -> IO (Either JetStreamError StreamInfo)
+                   , getMessage :: StreamName -> StreamMessageSelector -> [JetStreamRequestOption] -> IO (Either JetStreamError StreamMessage)
+                   , deleteMessage :: StreamName -> Sequence -> StreamMessageDeleteMode -> [JetStreamRequestOption] -> IO (Either JetStreamError DeleteStreamMessageResponse)
+                   , delete :: StreamName -> [JetStreamRequestOption] -> IO (Either JetStreamError DeleteStreamResponse)
+                   , purge :: StreamName -> [PurgeStreamOption] -> [JetStreamRequestOption] -> IO (Either JetStreamError PurgeStreamResponse)
+                   , list :: [StreamListOption] -> [JetStreamRequestOption] -> IO (Either JetStreamError StreamListResponse)
+                   , names :: [StreamListOption] -> [JetStreamRequestOption] -> IO (Either JetStreamError StreamNamesResponse)
+                   }
+
+-- | A stable reference to a stream. It is intentionally just an identity;
+-- operations remain on 'StreamAPI', so handles do not retain resources.
+newtype Stream = Stream { streamName :: StreamName }
+  deriving (Eq, Ord, Show)
 
 data StreamConfigRequest = StreamConfigRequest
                              { streamConfigRequestName :: StreamName
@@ -151,7 +176,7 @@ data StreamConfig = StreamConfig
 
 data PurgeStreamRequest = PurgeStreamRequest
                             { purgeStreamSubject  :: Maybe Subject
-                            , purgeStreamSequence :: Maybe Integer
+                            , purgeStreamSequence :: Maybe Sequence
                             , purgeStreamKeep     :: Maybe Integer
                             }
   deriving (Eq, Show)
@@ -171,7 +196,7 @@ withPurgeSubject :: Subject -> PurgeStreamOption
 withPurgeSubject subject request =
   request { purgeStreamSubject = Just subject }
 
-withPurgeSequence :: Integer -> PurgeStreamOption
+withPurgeSequence :: Sequence -> PurgeStreamOption
 withPurgeSequence sequenceNumber request =
   request { purgeStreamSequence = Just sequenceNumber }
 
@@ -223,12 +248,12 @@ data StreamInfo = StreamInfo
 data StreamState = StreamState
                      { streamStateMessages      :: Integer
                      , streamStateBytes         :: Integer
-                     , streamStateFirstSequence :: Integer
+                     , streamStateFirstSequence :: Sequence
                      , streamStateFirstTime     :: UTCTime
-                     , streamStateLastSequence  :: Integer
+                     , streamStateLastSequence  :: Sequence
                      , streamStateLastTime      :: UTCTime
                      , streamStateConsumerCount :: Int
-                     , streamStateDeleted       :: [Integer]
+                     , streamStateDeleted       :: [Sequence]
                      , streamStateNumDeleted    :: Integer
                      , streamStateNumSubjects   :: Integer
                      }
@@ -285,14 +310,14 @@ data StreamNamesResponse = StreamNamesResponse
 
 data StreamMessage = StreamMessage
                        { streamMessageSubject    :: Subject
-                       , streamMessageSequence   :: Integer
+                       , streamMessageSequence   :: Sequence
                        , streamMessageHeadersRaw :: Maybe BS.ByteString
                        , streamMessagePayload    :: Maybe Payload
                        , streamMessageTime       :: UTCTime
                        }
   deriving (Eq, Show)
 
-data StreamMessageSelector = StreamMessageBySequence Integer
+data StreamMessageSelector = StreamMessageBySequence Sequence
                            | LastStreamMessageForSubject Subject
                            | NextStreamMessageForSubject Subject
   deriving (Eq, Show)
@@ -308,12 +333,12 @@ data StreamMessageDeleteMode = DeleteMessage | SecureDeleteMessage
   deriving (Eq, Show)
 
 data StreamMessageDeleteRequest = StreamMessageDeleteRequest
-                                    { streamMessageDeleteSequence :: Integer
+                                    { streamMessageDeleteSequence :: Sequence
                                     , streamMessageDeleteNoErase  :: Maybe Bool
                                     }
   deriving (Eq, Show)
 
-streamMessageDeleteRequest :: Integer -> StreamMessageDeleteMode -> StreamMessageDeleteRequest
+streamMessageDeleteRequest :: Sequence -> StreamMessageDeleteMode -> StreamMessageDeleteRequest
 streamMessageDeleteRequest sequenceNumber mode =
   StreamMessageDeleteRequest
     { streamMessageDeleteSequence = sequenceNumber

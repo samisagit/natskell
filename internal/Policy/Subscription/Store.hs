@@ -1,5 +1,6 @@
 module Subscription.Store
   ( SubscriptionStore
+  , DispatchResult (..)
   , newSubscriptionStore
   , register
   , unregister
@@ -15,7 +16,7 @@ module Subscription.Store
 import           Control.Concurrent     (forkIO, threadDelay)
 import           Control.Concurrent.STM
 import           Control.Exception      (SomeException, finally)
-import           Control.Monad          (unless, void)
+import           Control.Monad          (unless, void, when)
 import qualified Data.Heap              as Heap
 import qualified Data.Map               as Map
 import           Data.Time.Clock
@@ -25,38 +26,62 @@ import qualified Types.Msg              as M
 import           Types.Msg              (SID)
 
 data SubscriptionState = SubscriptionState
-                           { subscriptionCallbacks :: Map.Map SID (Maybe M.Msg -> IO ())
+                           { subscriptionCallbacks :: Map.Map SID SubscriptionCallback
                            , subscriptionExpiryHeap :: Heap.MinHeap (UTCTime, SID)
                            , subscriptionTrackedExpiries :: Map.Map SID UTCTime
                            , subscriptionMeta :: Map.Map SID SubscriptionMeta
                            }
 
+data SubscriptionCallback = SubscriptionCallback
+                              { deliverMessage :: Maybe M.Msg -> IO ()
+                              , dropMessage    :: IO ()
+                              }
+
+data DispatchResult = DispatchMissing
+                    | DispatchQueued
+                    | DispatchDropped Bool
+  deriving (Eq, Show)
+
 data SubscriptionStore = SubscriptionStore
                            { storeState           :: TVar SubscriptionState
                            , storeCallbackQueue   :: TQueue (IO ())
                            , storeCallbackPending :: TVar Int
+                           , storeDeliveryPending :: TVar Int
+                           , storeDeliveryBytes   :: TVar Int
+                           , storeSlowConsumer    :: TVar Bool
+                           , storePendingLimits   :: PendingLimits
+                           , storeSlowAction      :: IO ()
                            }
 
-newSubscriptionStore :: IO SubscriptionStore
-newSubscriptionStore =
+newSubscriptionStore :: PendingLimits -> IO () -> IO SubscriptionStore
+newSubscriptionStore limits slowAction =
   SubscriptionStore
     <$> newTVarIO emptySubscriptionState
     <*> newTQueueIO
     <*> newTVarIO 0
+    <*> newTVarIO 0
+    <*> newTVarIO 0
+    <*> newTVarIO False
+    <*> pure (normalizePendingLimits limits)
+    <*> pure slowAction
 
 emptySubscriptionState :: SubscriptionState
 emptySubscriptionState =
   SubscriptionState Map.empty Heap.empty Map.empty Map.empty
 
-register :: SubscriptionStore -> SID -> SubscriptionMeta -> SubscribeConfig -> (Maybe M.Msg -> IO ()) -> IO ()
-register store sid meta cfg callback = do
+register :: SubscriptionStore -> SID -> SubscriptionMeta -> SubscribeConfig -> (Maybe M.Msg -> IO ()) -> IO () -> IO ()
+register store sid meta cfg callback onDropped = do
   expiryAt <- case expiry cfg of
     Nothing  -> pure Nothing
     Just ttl -> Just . addUTCTime ttl <$> getCurrentTime
   atomically . modifyTVar' (storeState store) $ \state ->
     let stateWithCallback =
           state
-            { subscriptionCallbacks = Map.insert sid callback (subscriptionCallbacks state)
+            { subscriptionCallbacks =
+                Map.insert
+                  sid
+                  (SubscriptionCallback callback onDropped)
+                  (subscriptionCallbacks state)
             , subscriptionMeta = Map.insert sid meta (subscriptionMeta state)
             }
     in case expiryAt of
@@ -70,14 +95,14 @@ unregister store sid =
   atomically $
     modifyTVar' (storeState store) (removeSubscriptionLocal sid)
 
-dispatchMessage :: SubscriptionStore -> M.Msg -> IO Bool
-dispatchMessage store msg =
-  atomically $ do
+dispatchMessage :: SubscriptionStore -> M.Msg -> IO DispatchResult
+dispatchMessage store msg = do
+  (result, onDropped) <- atomically $ do
     state <- readTVar (storeState store)
     let sid = M.sid msg
     case Map.lookup sid (subscriptionCallbacks state) of
       Nothing ->
-        pure False
+        pure (DispatchMissing, pure ())
       Just callback -> do
         let shouldRemove =
               maybe False isReply (Map.lookup sid (subscriptionMeta state))
@@ -85,9 +110,21 @@ dispatchMessage store msg =
               if shouldRemove
                 then removeSubscriptionLocal sid state
                 else state
+            messageBytes = M.messageContentSize (M.headers msg) (M.payload msg)
+        canQueue <- hasDeliveryCapacity store messageBytes
         writeTVar (storeState store) nextState
-        enqueueCallbackSTM store (callback (Just msg))
-        pure True
+        if canQueue
+          then do
+            enqueueDeliverySTM store messageBytes (deliverMessage callback (Just msg))
+            pure (DispatchQueued, pure ())
+          else do
+            alreadySlow <- readTVar (storeSlowConsumer store)
+            unless alreadySlow $ do
+              writeTVar (storeSlowConsumer store) True
+              enqueueControlCallbackSTM store (storeSlowAction store)
+            pure (DispatchDropped (not alreadySlow), dropMessage callback)
+  onDropped
+  pure result
 
 active :: SubscriptionStore -> IO [(SID, SubscriptionMeta)]
 active store =
@@ -123,12 +160,44 @@ hasTrackedExpiries :: SubscriptionStore -> IO Bool
 hasTrackedExpiries store =
   not . Map.null . subscriptionTrackedExpiries <$> readTVarIO (storeState store)
 
-enqueueCallbackSTM :: SubscriptionStore -> IO () -> STM ()
-enqueueCallbackSTM store action = do
+enqueueControlCallbackSTM :: SubscriptionStore -> IO () -> STM ()
+enqueueControlCallbackSTM store action = do
   modifyTVar' (storeCallbackPending store) (+1)
   let wrapped =
         action `finally` atomically (modifyTVar' (storeCallbackPending store) (subtract 1))
   writeTQueue (storeCallbackQueue store) wrapped
+
+enqueueDeliverySTM :: SubscriptionStore -> Int -> IO () -> STM ()
+enqueueDeliverySTM store messageBytes action = do
+  modifyTVar' (storeCallbackPending store) (+1)
+  modifyTVar' (storeDeliveryPending store) (+1)
+  modifyTVar' (storeDeliveryBytes store) (+ messageBytes)
+  let wrapped =
+        action `finally` atomically (releaseDeliverySTM store messageBytes)
+  writeTQueue (storeCallbackQueue store) wrapped
+
+releaseDeliverySTM :: SubscriptionStore -> Int -> STM ()
+releaseDeliverySTM store messageBytes = do
+  modifyTVar' (storeCallbackPending store) (subtract 1)
+  modifyTVar' (storeDeliveryPending store) (subtract 1)
+  modifyTVar' (storeDeliveryBytes store) (subtract messageBytes)
+  pendingMessages <- readTVar (storeDeliveryPending store)
+  pendingBytes <- readTVar (storeDeliveryBytes store)
+  let limits = storePendingLimits store
+      belowLowWater =
+        pendingMessages <= pendingMessageLimit limits `div` 2
+          && pendingBytes <= pendingByteLimit limits `div` 2
+  when belowLowWater $
+    writeTVar (storeSlowConsumer store) False
+
+hasDeliveryCapacity :: SubscriptionStore -> Int -> STM Bool
+hasDeliveryCapacity store messageBytes = do
+  pendingMessages <- readTVar (storeDeliveryPending store)
+  pendingBytes <- readTVar (storeDeliveryBytes store)
+  let limits = storePendingLimits store
+  pure $
+    pendingMessages < pendingMessageLimit limits
+      && messageBytes <= pendingByteLimit limits - pendingBytes
 
 expireReadySubscriptions :: SubscriptionStore -> UTCTime -> IO Bool
 expireReadySubscriptions store now =
@@ -136,7 +205,7 @@ expireReadySubscriptions store now =
     state <- readTVar (storeState store)
     let (actions, nextState) = collectExpiredCallbacks now state
     writeTVar (storeState store) nextState
-    mapM_ (enqueueCallbackSTM store) actions
+    mapM_ (enqueueControlCallbackSTM store) actions
     pure (not (null actions))
 
 trackSubscriptionExpiry :: SID -> UTCTime -> SubscriptionState -> SubscriptionState
@@ -173,7 +242,11 @@ collectExpiredCallbacks now = go []
               | otherwise ->
                   let callback = Map.lookup sid (subscriptionCallbacks state)
                       state' = removeSubscriptionLocal sid (dropHeapHead state)
-                      actions' = maybe actions ((: actions) . ($ Nothing)) callback
+                      actions' =
+                        maybe
+                          actions
+                          ((: actions) . ($ Nothing) . deliverMessage)
+                          callback
                   in go actions' state'
 
 dropHeapHead :: SubscriptionState -> SubscriptionState
@@ -181,3 +254,10 @@ dropHeapHead state =
   case Heap.view (subscriptionExpiryHeap state) of
     Nothing            -> state
     Just (_, heapTail) -> state { subscriptionExpiryHeap = heapTail }
+
+normalizePendingLimits :: PendingLimits -> PendingLimits
+normalizePendingLimits limits =
+  limits
+    { pendingMessageLimit = max 1 (pendingMessageLimit limits)
+    , pendingByteLimit = max 1 (pendingByteLimit limits)
+    }

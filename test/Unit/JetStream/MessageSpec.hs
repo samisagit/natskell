@@ -2,13 +2,14 @@
 
 module JetStream.MessageSpec (spec) where
 
-import qualified API                     as Nats
+import qualified Client.API              as Nats
 import           Data.IORef
 import           JetStream.Error         (JetStreamError (..))
 import           JetStream.Message       (fetchMessages)
 import           JetStream.Message.Types
 import           JetStream.Options       (newJetStreamContext)
 import           Publish                 (defaultPublishConfig)
+import           Publish.Config          (publishReplyTo)
 import           Test.Hspec
 import           Types.Msg               (Payload, SID, Subject)
 
@@ -41,7 +42,7 @@ spec = do
   describe "message metadata" $ do
     it "parses v1 JetStream ack reply subjects" $ do
       let metadata = messageMetadata $
-            Message "ORDERS.created" (Just "payload") Nothing
+            Message "ORDERS.created" "payload" Nothing
               (Just "$JS.ACK.ORDERS.WORKER.3.10.2.123000000000.4")
               Nothing
       fmap messageMetadataStream metadata `shouldBe` Just "ORDERS"
@@ -55,14 +56,14 @@ spec = do
 
     it "parses v2 JetStream ack reply subjects with domains" $ do
       let metadata = messageMetadata $
-            Message "ORDERS.created" (Just "payload") Nothing
+            Message "ORDERS.created" "payload" Nothing
               (Just "$JS.ACK.HUB.ACCOUNT.ORDERS.WORKER.1.11.3.124000000000.0")
               Nothing
       fmap messageMetadataDomain metadata `shouldBe` Just (Just "HUB")
       fmap messageMetadataStreamSequence metadata `shouldBe` Just 11
 
     it "rejects non-JetStream reply subjects" $ do
-      messageMetadata (Message "ORDERS.created" Nothing Nothing (Just "_INBOX.reply") Nothing)
+      messageMetadata (Message "ORDERS.created" "" Nothing (Just "_INBOX.reply") Nothing)
         `shouldBe` Nothing
 
   describe "pull request payloads" $ do
@@ -82,12 +83,12 @@ spec = do
       callbackRef <- newIORef Nothing
       let client = fakeClient publishCalls unsubscribeCalls callbackRef
           request = pullRequest [withFetchBatch 2]
-      result <- fetchMessages (newJetStreamContext client []) "ORDERS" "WORKER" request
+      result <- fetchMessages (newJetStreamContext client []) "ORDERS" "WORKER" request []
 
       publishCalls' <- readIORef publishCalls
       publishCalls' `shouldBe`
         [ ( "$JS.API.CONSUMER.MSG.NEXT.ORDERS.WORKER"
-          , Just "{\"batch\":2,\"expires\":1000000000}"
+          , "{\"batch\":2,\"expires\":1000000000}"
           , Just "_INBOX.batch"
           )
         ]
@@ -97,7 +98,7 @@ spec = do
         Left err ->
           expectationFailure ("fetch failed: " ++ show err)
         Right response -> do
-          fmap messagePayload (pullResponseMessages response) `shouldBe` [Just "one", Just "two"]
+          fmap messagePayload (pullResponseMessages response) `shouldBe` ["one", "two"]
           pullResponseStatus response `shouldBe` Nothing
 
     it "returns a JetStream timeout when no pull response arrives" $ do
@@ -105,13 +106,13 @@ spec = do
       unsubscribeCalls <- newIORef []
       let client = silentFakeClient publishCalls unsubscribeCalls
           request = pullRequest [withFetchWait (FetchNoWaitMicros 1000)]
-      result <- fetchMessages (newJetStreamContext client []) "ORDERS" "WORKER" request
+      result <- fetchMessages (newJetStreamContext client []) "ORDERS" "WORKER" request []
 
       result `shouldBe` Left JetStreamTimeout
       publishCalls' <- readIORef publishCalls
       publishCalls' `shouldBe`
         [ ( "$JS.API.CONSUMER.MSG.NEXT.ORDERS.WORKER"
-          , Just "{\"batch\":1,\"no_wait\":true}"
+          , "{\"batch\":1,\"no_wait\":true}"
           , Just "_INBOX.timeout"
           )
         ]
@@ -119,62 +120,68 @@ spec = do
       unsubscribeCalls' `shouldBe` ["sid-timeout"]
 
 fakeClient
-  :: IORef [(Subject, Maybe Payload, Maybe Subject)]
+  :: IORef [(Subject, Payload, Maybe Subject)]
   -> IORef [SID]
-  -> IORef (Maybe (Maybe Nats.MsgView -> IO ()))
+  -> IORef (Maybe (Nats.MsgView -> IO ()))
   -> Nats.Client
 fakeClient publishCalls unsubscribeCalls callbackRef =
   Nats.Client
-    { Nats.publish = \subject options -> do
-        let (body, _, _, replyTo') = foldr ($) defaultPublishConfig options
+    { Nats.publish = \subject body options -> do
+        let replyTo' = publishReplyTo (foldl (flip ($)) defaultPublishConfig options)
         modifyIORef' publishCalls (++ [(subject, body, replyTo')])
         callback <- readIORef callbackRef
         case callback of
           Nothing ->
             pure ()
           Just deliver -> do
-            deliver (Just (fakeMsg "one"))
-            deliver (Just (fakeMsg "two"))
+            deliver (fakeMsg "one")
+            deliver (fakeMsg "two")
+        pure (Right ())
     , Nats.subscribe = \_ _ callback -> do
         writeIORef callbackRef (Just callback)
-        pure "sid-1"
-    , Nats.request = \_ _ _ -> pure "sid-request"
-    , Nats.unsubscribe = \sid ->
+        pure (Right (Nats.Subscription "sid-1"))
+    , Nats.subscribeOnce = \_ _ _ -> pure (Right (Nats.Subscription "sid-once"))
+    , Nats.request = \_ _ _ -> pure (Left Nats.NatsRequestTimedOut)
+    , Nats.unsubscribe = \(Nats.Subscription sid) _ -> do
         modifyIORef' unsubscribeCalls (++ [sid])
+        pure (Right ())
     , Nats.newInbox = pure "_INBOX.batch"
-    , Nats.ping = id
-    , Nats.flush = pure ()
-    , Nats.reset = pure ()
-    , Nats.close = pure ()
+    , Nats.ping = \_ -> pure (Right ())
+    , Nats.flush = \_ -> pure (Right ())
+    , Nats.reset = \_ -> pure ()
+    , Nats.close = \_ -> pure ()
     }
 
-fakeMsg :: Payload -> Nats.MsgView
+fakeMsg :: Payload -> Nats.Message
 fakeMsg body =
-  Nats.MsgView
+  Nats.Message
     { Nats.subject = "ORDERS.created"
     , Nats.sid = "sid-1"
     , Nats.replyTo = Just "$JS.ACK.ORDERS.WORKER.1.1.1"
-    , Nats.payload = Just body
+    , Nats.payload = body
     , Nats.headers = Nothing
     }
 
 silentFakeClient
-  :: IORef [(Subject, Maybe Payload, Maybe Subject)]
+  :: IORef [(Subject, Payload, Maybe Subject)]
   -> IORef [SID]
   -> Nats.Client
 silentFakeClient publishCalls unsubscribeCalls =
   Nats.Client
-    { Nats.publish = \subject options -> do
-        let (body, _, _, replyTo') = foldr ($) defaultPublishConfig options
+    { Nats.publish = \subject body options -> do
+        let replyTo' = publishReplyTo (foldl (flip ($)) defaultPublishConfig options)
         modifyIORef' publishCalls (++ [(subject, body, replyTo')])
+        pure (Right ())
     , Nats.subscribe = \_ _ _ ->
-        pure "sid-timeout"
-    , Nats.request = \_ _ _ -> pure "sid-request"
-    , Nats.unsubscribe = \sid ->
+        pure (Right (Nats.Subscription "sid-timeout"))
+    , Nats.subscribeOnce = \_ _ _ -> pure (Right (Nats.Subscription "sid-once"))
+    , Nats.request = \_ _ _ -> pure (Left Nats.NatsRequestTimedOut)
+    , Nats.unsubscribe = \(Nats.Subscription sid) _ -> do
         modifyIORef' unsubscribeCalls (++ [sid])
+        pure (Right ())
     , Nats.newInbox = pure "_INBOX.timeout"
-    , Nats.ping = id
-    , Nats.flush = pure ()
-    , Nats.reset = pure ()
-    , Nats.close = pure ()
+    , Nats.ping = \_ -> pure (Right ())
+    , Nats.flush = \_ -> pure (Right ())
+    , Nats.reset = \_ -> pure ()
+    , Nats.close = \_ -> pure ()
     }

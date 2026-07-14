@@ -2,7 +2,7 @@
 
 module ClientAuthTlsJwtCredsSpec (spec) where
 
-import           API                    (Client (..))
+import           API
 import           Client
 import           Control.Concurrent     (forkIO)
 import           Control.Concurrent.STM
@@ -18,6 +18,7 @@ spec =
       accountJwt <- runIO (readFixtureText "jwt/account.jwt")
       accountPub <- runIO (readFixtureText "jwt/account.pub")
       userCreds <- runIO (readFixtureBytesRaw "jwt/user.creds")
+      tlsRoot <- runIO (readFixtureBytesRaw "tls/ca.crt")
       tlsHostDir <- runIO (fixturePath "tls")
       let tlsContainerDir = "/etc/nats/certs"
       let tlsConfig =
@@ -46,15 +47,17 @@ spec =
                 [ withConnectName "auth-tls-jwt-creds"
                 , withExitAction (atomically . putTMVar exitResult)
                 , withJWT userCreds
+                , withTLSRootCA tlsRoot
                 , withConnectionAttempts 1
                 ]
                 ++ loggerOptions
-          client <- newClient [(natsHost, natsPort)] clientOptions
+          client <- newTestClient [(natsHost, natsPort)] clientOptions
           forkIO $ do
             outcome <- atomically $ (Left <$> readTMVar pinged) `orElse` (Right <$> readTMVar exitResult)
             case outcome of
-              Left _  -> close client
+              Left _  -> close client []
               Right _ -> pure ()
-          ping client (atomically (putTMVar pinged ()))
+          _ <- ping client []
+          atomically (putTMVar pinged ())
           result <- atomically $ readTMVar exitResult
           result `shouldBe` ExitClosedByUser

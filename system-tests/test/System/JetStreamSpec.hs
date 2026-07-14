@@ -3,7 +3,7 @@
 module JetStreamSpec (spec) where
 
 import qualified API                   as Nats
-import           Client                (newClient, withConnectName)
+import           Client                (withConnectName)
 import           Control.Concurrent
     ( newEmptyMVar
     , takeMVar
@@ -132,17 +132,19 @@ jetStreamDomainSystemTest testId label scenario =
 
 withJetStreamClient :: String -> Endpoints -> (JetStream -> IO ()) -> IO ()
 withJetStreamClient testId (Endpoints natsHost natsPort) scenario = do
-  client <- newClient [(natsHost, natsPort)] $
+  client <- newTestClient [(natsHost, natsPort)] $
     withConnectName (BC.pack testId)
       : testLoggerOptions
-  scenario (newJetStream client []) `finally` Nats.close client
+  jetStream <- either (fail . show) pure (newJetStream client [])
+  scenario jetStream `finally` Nats.close client []
 
 withJetStreamDomainClient :: String -> Endpoints -> (JetStream -> IO ()) -> IO ()
 withJetStreamDomainClient testId (Endpoints natsHost natsPort) scenario = do
-  client <- newClient [(natsHost, natsPort)] $
+  client <- newTestClient [(natsHost, natsPort)] $
     withConnectName (BC.pack testId)
       : testLoggerOptions
-  scenario (newJetStream client [withDomain "HUB"]) `finally` Nats.close client
+  jetStream <- either (fail . show) pure (newJetStream client [withDomain "HUB"])
+  scenario jetStream `finally` Nats.close client []
 
 durablePullConsumerTest :: JetStream -> IO ()
 durablePullConsumerTest jetStream = do
@@ -152,19 +154,19 @@ durablePullConsumerTest jetStream = do
   mapM_ (publishPayload jetStream subjectName) payloadBodies
 
   firstFetch <- expectRight "first fetch" $
-    JetStream.fetch (messages jetStream) streamName durableName fetchBatch
+    JetStream.fetch (messages jetStream) streamName durableName fetchBatch []
   case JetStream.pullResponseMessages firstFetch of
     messages'@[_, _] -> do
       fmap JetStream.messageSubject messages' `shouldBe` [subjectName, subjectName]
-      fmap JetStream.messagePayload messages' `shouldBe` fmap Just payloadBodies
-      acknowledgements <- mapM (JetStream.ack (messages jetStream)) messages'
+      fmap JetStream.messagePayload messages' `shouldBe` payloadBodies
+      acknowledgements <- mapM (\message -> JetStream.ack (messages jetStream) message []) messages'
       acknowledgements `shouldBe` [Right (), Right ()]
     messages' ->
       expectationFailure ("expected two JetStream messages, got " ++ show (length messages'))
   JetStream.pullResponseStatus firstFetch `shouldBe` Nothing
 
   emptyFetch <- expectRight "empty fetch" $
-    JetStream.fetch (messages jetStream) streamName durableName shortFetch
+    JetStream.fetch (messages jetStream) streamName durableName shortFetch []
   JetStream.pullResponseMessages emptyFetch `shouldBe` []
   expectNoMessages emptyFetch
 
@@ -190,19 +192,19 @@ publishExpectationFailureTest jetStream = do
   JetStream.publishAckSequence firstAck `shouldBe` 1
 
   wrongStream <- JetStream.publish (publisher jetStream) subject "wrong-stream"
-    [JetStream.withExpectedStream "OTHER_STREAM"]
+    [JetStream.withExpectedStream "OTHER_STREAM"] []
   expectJetStreamFailure "expected stream mismatch" wrongStream
 
   wrongLastSequence <- JetStream.publish (publisher jetStream) subject "wrong-last-sequence"
-    [JetStream.withPublishExpectation (JetStream.ExpectedLastSequence 99)]
+    [JetStream.withPublishExpectation (JetStream.ExpectedLastSequence 99)] []
   expectJetStreamFailure "expected last sequence mismatch" wrongLastSequence
 
   wrongSubjectSequence <- JetStream.publish (publisher jetStream) subject "wrong-subject-sequence"
-    [JetStream.withPublishExpectation (JetStream.ExpectedLastSubjectSequence 99)]
+    [JetStream.withPublishExpectation (JetStream.ExpectedLastSubjectSequence 99)] []
   expectJetStreamFailure "expected last subject sequence mismatch" wrongSubjectSequence
 
   wrongMsgId <- JetStream.publish (publisher jetStream) subject "wrong-msg-id"
-    [JetStream.withPublishExpectation (JetStream.ExpectedLastMsgId "missing-id")]
+    [JetStream.withPublishExpectation (JetStream.ExpectedLastMsgId "missing-id")] []
   expectJetStreamFailure "expected last msg id mismatch" wrongMsgId
 
   secondAck <- publishPayloadWith jetStream subject "second"
@@ -221,13 +223,13 @@ pullNoWaitStatusTest jetStream = do
     pullConsumerOptions durable []
 
   empty <- expectRight "no-wait fetch before publish" $
-    JetStream.fetch (messages jetStream) stream durable shortFetch
+    JetStream.fetch (messages jetStream) stream durable shortFetch []
   JetStream.pullResponseMessages empty `shouldBe` []
   expectNoMessages empty
 
   publishPayload jetStream subject "available"
   message <- fetchOneMessage jetStream stream durable
-  JetStream.messagePayload message `shouldBe` Just "available"
+  JetStream.messagePayload message `shouldBe` "available"
   ackOrFail jetStream message
 
 discardPolicyTest :: JetStream -> IO ()
@@ -243,12 +245,12 @@ discardPolicyTest jetStream = do
   createDurableConsumerOrFail jetStream oldStream "DISCARD_OLD" $
     pullConsumerOptions "DISCARD_OLD" []
   oldMessage <- fetchOnePayload jetStream oldStream "DISCARD_OLD"
-  oldMessage `shouldBe` Just "new"
+  oldMessage `shouldBe` "new"
 
   createStreamOrFail jetStream newStream [newSubject] $
     streamOptions ++ [JetStream.withMaxMessages 1, JetStream.withDiscard JetStream.DiscardNew]
   publishPayload jetStream newSubject "kept"
-  failed <- JetStream.publish (publisher jetStream) newSubject "rejected" []
+  failed <- JetStream.publish (publisher jetStream) newSubject "rejected" [] []
   expectJetStreamFailure "discard new publish" failed
   info <- streamInfoOrFail jetStream newStream
   JetStream.streamStateMessages (JetStream.streamInfoState info) `shouldBe` 1
@@ -281,10 +283,10 @@ nakRedeliveryTest jetStream = do
     pullConsumerOptions durable []
   publishPayload jetStream subject "redeliver"
   firstMessage <- fetchOneMessage jetStream stream durable
-  JetStream.messagePayload firstMessage `shouldBe` Just "redeliver"
-  JetStream.nak (messages jetStream) firstMessage `shouldReturn` Right ()
+  JetStream.messagePayload firstMessage `shouldBe` "redeliver"
+  JetStream.nak (messages jetStream) firstMessage [] `shouldReturn` Right ()
   secondMessage <- fetchOneMessage jetStream stream durable
-  JetStream.messagePayload secondMessage `shouldBe` Just "redeliver"
+  JetStream.messagePayload secondMessage `shouldBe` "redeliver"
   ackOrFail jetStream secondMessage
 
 termStopsRedeliveryTest :: JetStream -> IO ()
@@ -297,9 +299,9 @@ termStopsRedeliveryTest jetStream = do
     pullConsumerOptions durable []
   publishPayload jetStream subject "stop"
   message <- fetchOneMessage jetStream stream durable
-  JetStream.term (messages jetStream) message `shouldReturn` Right ()
+  JetStream.term (messages jetStream) message [] `shouldReturn` Right ()
   empty <- expectRight "fetch after term" $
-    JetStream.fetch (messages jetStream) stream durable shortFetch
+    JetStream.fetch (messages jetStream) stream durable shortFetch []
   JetStream.pullResponseMessages empty `shouldBe` []
   expectNoMessages empty
 
@@ -316,10 +318,10 @@ ackWaitRedeliveryTest jetStream = do
       ]
   publishPayload jetStream subject "timeout"
   firstMessage <- fetchOneMessage jetStream stream durable
-  JetStream.messagePayload firstMessage `shouldBe` Just "timeout"
+  JetStream.messagePayload firstMessage `shouldBe` "timeout"
   threadDelay 500000
   secondMessage <- fetchOneMessage jetStream stream durable
-  JetStream.messagePayload secondMessage `shouldBe` Just "timeout"
+  JetStream.messagePayload secondMessage `shouldBe` "timeout"
   ackOrFail jetStream secondMessage
 
 inProgressAckWaitTest :: JetStream -> IO ()
@@ -335,20 +337,20 @@ inProgressAckWaitTest jetStream = do
       ]
   publishPayload jetStream subject "slow-work"
   firstMessage <- fetchOneMessage jetStream stream durable
-  JetStream.messagePayload firstMessage `shouldBe` Just "slow-work"
+  JetStream.messagePayload firstMessage `shouldBe` "slow-work"
 
   threadDelay 150000
-  JetStream.inProgress (messages jetStream) firstMessage `shouldReturn` Right ()
+  JetStream.inProgress (messages jetStream) firstMessage [] `shouldReturn` Right ()
   threadDelay 250000
 
   empty <- expectRight "fetch during extended AckWait" $
-    JetStream.fetch (messages jetStream) stream durable shortFetch
+    JetStream.fetch (messages jetStream) stream durable shortFetch []
   JetStream.pullResponseMessages empty `shouldBe` []
   expectNoMessages empty
 
   threadDelay 300000
   redelivered <- fetchOneMessage jetStream stream durable
-  JetStream.messagePayload redelivered `shouldBe` Just "slow-work"
+  JetStream.messagePayload redelivered `shouldBe` "slow-work"
   ackOrFail jetStream redelivered
 
 deliverPolicyTest :: JetStream -> IO ()
@@ -362,17 +364,17 @@ deliverPolicyTest jetStream = do
   createDurableConsumerOrFail jetStream stream "DELIVER_LAST" $
     pullConsumerOptions "DELIVER_LAST" [JetStream.withConsumerDeliverPolicy JetStream.DeliverLast]
   latest <- fetchOnePayload jetStream stream "DELIVER_LAST"
-  latest `shouldBe` Just "old-2"
+  latest `shouldBe` "old-2"
 
   createDurableConsumerOrFail jetStream stream "DELIVER_NEW" $
     pullConsumerOptions "DELIVER_NEW" [JetStream.withConsumerDeliverPolicy JetStream.DeliverNew]
   empty <- expectRight "deliver new empty fetch" $
-    JetStream.fetch (messages jetStream) stream "DELIVER_NEW" shortFetch
+    JetStream.fetch (messages jetStream) stream "DELIVER_NEW" shortFetch []
   JetStream.pullResponseMessages empty `shouldBe` []
   expectNoMessages empty
   publishPayload jetStream subject "new"
   newest <- fetchOnePayload jetStream stream "DELIVER_NEW"
-  newest `shouldBe` Just "new"
+  newest `shouldBe` "new"
 
 consumerFilterTest :: JetStream -> IO ()
 consumerFilterTest jetStream = do
@@ -392,9 +394,9 @@ consumerFilterTest jetStream = do
   publishPayload jetStream subjectB "b"
   publishPayload jetStream subjectC "c"
   one <- fetchPayloads jetStream stream "FILTER_ONE" 1
-  one `shouldBe` [Just "a"]
+  one `shouldBe` ["a"]
   many <- fetchPayloads jetStream stream "FILTER_MANY" 2
-  many `shouldBe` [Just "a", Just "c"]
+  many `shouldBe` ["a", "c"]
 
 filteredPurgeTest :: JetStream -> IO ()
 filteredPurgeTest jetStream = do
@@ -408,7 +410,7 @@ filteredPurgeTest jetStream = do
   publishPayload jetStream subjectA "a-2"
   publishPayload jetStream subjectB "b-1"
   purged <- expectRight "purge stream" $
-    JetStream.purge (streams jetStream) stream [JetStream.withPurgeSubject subjectA]
+    JetStream.purge (streams jetStream) stream [JetStream.withPurgeSubject subjectA] []
   JetStream.purgeStreamSuccess purged `shouldBe` True
   JetStream.purgeStreamPurged purged `shouldBe` 2
   info <- streamInfoOrFail jetStream stream
@@ -416,7 +418,7 @@ filteredPurgeTest jetStream = do
   createDurableConsumerOrFail jetStream stream durable $
     pullConsumerOptions durable []
   remaining <- fetchOnePayload jetStream stream durable
-  remaining `shouldBe` Just "b-1"
+  remaining `shouldBe` "b-1"
 
 purgeSequenceAndKeepTest :: JetStream -> IO ()
 purgeSequenceAndKeepTest jetStream = do
@@ -429,25 +431,27 @@ purgeSequenceAndKeepTest jetStream = do
   createStreamOrFail jetStream sequenceStream [sequenceSubject] streamOptions
   mapM_ (publishPayload jetStream sequenceSubject) payloads
   purgedBySequence <- expectRight "purge stream by sequence" $
-    JetStream.purge (streams jetStream) sequenceStream [JetStream.withPurgeSequence 4]
+    JetStream.purge (streams jetStream) sequenceStream [JetStream.withPurgeSequence 4] []
   JetStream.purgeStreamSuccess purgedBySequence `shouldBe` True
   JetStream.purgeStreamPurged purgedBySequence `shouldBe` 3
   missingFirst <- JetStream.getMessage
     (streams jetStream)
     sequenceStream
     (JetStream.StreamMessageBySequence 1)
+    []
   expectJetStreamFailure "get purged sequence" missingFirst
   firstRemaining <- expectRight "get remaining sequence after purge" $
     JetStream.getMessage
       (streams jetStream)
       sequenceStream
       (JetStream.StreamMessageBySequence 4)
+      []
   JetStream.streamMessagePayload firstRemaining `shouldBe` Just "msg-4"
 
   createStreamOrFail jetStream keepStream [keepSubject] streamOptions
   mapM_ (publishPayload jetStream keepSubject) payloads
   purgedByKeep <- expectRight "purge stream with keep" $
-    JetStream.purge (streams jetStream) keepStream [JetStream.withPurgeKeep 2]
+    JetStream.purge (streams jetStream) keepStream [JetStream.withPurgeKeep 2] []
   JetStream.purgeStreamSuccess purgedByKeep `shouldBe` True
   JetStream.purgeStreamPurged purgedByKeep `shouldBe` 3
   info <- streamInfoOrFail jetStream keepStream
@@ -455,7 +459,7 @@ purgeSequenceAndKeepTest jetStream = do
   createDurableConsumerOrFail jetStream keepStream durable $
     pullConsumerOptions durable []
   remaining <- fetchPayloads jetStream keepStream durable 2
-  remaining `shouldBe` fmap Just ["msg-4", "msg-5"]
+  remaining `shouldBe` ["msg-4", "msg-5"]
 
 streamListFilterTest :: JetStream -> IO ()
 streamListFilterTest jetStream = do
@@ -466,14 +470,14 @@ streamListFilterTest jetStream = do
   createStreamOrFail jetStream streamA [subjectA] streamOptions
   createStreamOrFail jetStream streamB [subjectB] streamOptions
   matchingNames <- expectRight "stream names" $
-    JetStream.names (streams jetStream) [JetStream.withStreamListSubject subjectA]
+    JetStream.names (streams jetStream) [JetStream.withStreamListSubject subjectA] []
   JetStream.streamNamesStreams matchingNames `shouldBe` [streamA]
   matchingList <- expectRight "stream list" $
-    JetStream.list (streams jetStream) [JetStream.withStreamListSubject subjectA]
+    JetStream.list (streams jetStream) [JetStream.withStreamListSubject subjectA] []
   fmap (JetStream.streamConfigName . JetStream.streamInfoConfig) (JetStream.streamListStreams matchingList)
     `shouldBe` [streamA]
   pagedNames <- expectRight "stream names with offset" $
-    JetStream.names (streams jetStream) [JetStream.withStreamListOffset 1]
+    JetStream.names (streams jetStream) [JetStream.withStreamListOffset 1] []
   sort (JetStream.streamNamesStreams pagedNames) `shouldBe` [streamB]
 
 deleteLifecycleTest :: JetStream -> IO ()
@@ -485,20 +489,20 @@ deleteLifecycleTest jetStream = do
   createDurableConsumerOrFail jetStream stream durable $
     pullConsumerOptions durable []
   deletedConsumer <- expectRight "delete consumer" $
-    JetStream.deleteConsumer (consumers jetStream) stream durable
+    JetStream.deleteConsumer (consumers jetStream) stream durable []
   JetStream.deleteConsumerSuccess deletedConsumer `shouldBe` True
-  consumerInfoResult <- JetStream.consumerInfo (consumers jetStream) stream durable
+  consumerInfoResult <- JetStream.consumerInfo (consumers jetStream) stream durable []
   expectJetStreamFailure "consumer info after delete" consumerInfoResult
   deletedStream <- expectRight "delete stream" $
-    JetStream.delete (streams jetStream) stream
+    JetStream.delete (streams jetStream) stream []
   JetStream.deleteStreamSuccess deletedStream `shouldBe` True
-  streamInfoResult <- JetStream.info (streams jetStream) stream
+  streamInfoResult <- JetStream.info (streams jetStream) stream []
   expectJetStreamFailure "stream info after delete" streamInfoResult
 
 streamAdministrationTest :: JetStream -> IO ()
 streamAdministrationTest jetStream = do
   account <- expectRight "account info" $
-    JetStream.accountInfo jetStream
+    JetStream.accountInfo jetStream []
   JetStream.accountTierStreams (JetStream.accountInfoTier account) `shouldSatisfy` (>= 0)
 
   let stream = "NATSKELL_JS_ADMIN_STREAM"
@@ -510,6 +514,7 @@ streamAdministrationTest jetStream = do
       stream
       [subjectA, subjectB]
       (streamOptions ++ [JetStream.withMaxMessages 10])
+      []
   JetStream.streamConfigName (JetStream.streamInfoConfig created) `shouldBe` stream
   updated <- expectRight "update stream" $
     JetStream.update
@@ -517,6 +522,7 @@ streamAdministrationTest jetStream = do
       stream
       [subjectA, subjectB]
       (streamOptions ++ [JetStream.withMaxMessages 5])
+      []
   JetStream.streamConfigMaxMessages (JetStream.streamInfoConfig updated) `shouldBe` 5
 
   firstAck <- publishPayloadWith jetStream subjectA "admin-a" []
@@ -525,34 +531,39 @@ streamAdministrationTest jetStream = do
     JetStream.getMessage
       (streams jetStream)
       stream
-      (JetStream.StreamMessageBySequence (fromIntegral (JetStream.publishAckSequence firstAck)))
+      (JetStream.StreamMessageBySequence (JetStream.publishAckSequence firstAck))
+      []
   JetStream.streamMessagePayload firstMessage `shouldBe` Just "admin-a"
   lastForSubject <- expectRight "get last stream message by subject" $
     JetStream.getMessage
       (streams jetStream)
       stream
       (JetStream.LastStreamMessageForSubject subjectB)
+      []
   JetStream.streamMessagePayload lastForSubject `shouldBe` Just "admin-b"
 
   deleted <- expectRight "delete stream message" $
     JetStream.deleteMessage
       (streams jetStream)
       stream
-      (fromIntegral (JetStream.publishAckSequence firstAck))
+      (JetStream.publishAckSequence firstAck)
       JetStream.DeleteMessage
+      []
   JetStream.deleteStreamMessageSuccess deleted `shouldBe` True
   missing <- JetStream.getMessage
     (streams jetStream)
     stream
-    (JetStream.StreamMessageBySequence (fromIntegral (JetStream.publishAckSequence firstAck)))
+    (JetStream.StreamMessageBySequence (JetStream.publishAckSequence firstAck))
+    []
   expectJetStreamFailure "get deleted stream message" missing
 
   secureDeleted <- expectRight "secure delete stream message" $
     JetStream.deleteMessage
       (streams jetStream)
       stream
-      (fromIntegral (JetStream.publishAckSequence secondAck))
+      (JetStream.publishAckSequence secondAck)
       JetStream.SecureDeleteMessage
+      []
   JetStream.deleteStreamMessageSuccess secureDeleted `shouldBe` True
 
 consumerAdministrationTest :: JetStream -> IO ()
@@ -573,6 +584,7 @@ consumerAdministrationTest jetStream = do
       (JetStream.DurableConsumer durable)
       JetStream.PullConsumer
       (pullConsumerOptions durable [JetStream.withConsumerDescription "v1"])
+      []
   JetStream.consumerInfoName created `shouldBe` durable
   updated <- expectRight "update durable consumer" $
     JetStream.putConsumer
@@ -585,6 +597,7 @@ consumerAdministrationTest jetStream = do
         [ JetStream.withConsumerDescription "v2"
         , JetStream.withConsumerMaxAckPending 64
         ])
+      []
   JetStream.consumerConfigDescription (JetStream.consumerInfoConfig updated) `shouldBe` Just "v2"
   JetStream.consumerConfigMaxAckPending (JetStream.consumerInfoConfig updated) `shouldBe` Just 64
 
@@ -592,19 +605,19 @@ consumerAdministrationTest jetStream = do
   createDurableConsumerOrFail jetStream stream secondDurable $
     pullConsumerOptions secondDurable []
   names <- expectRight "consumer names" $
-    JetStream.consumerNames (consumers jetStream) stream []
+    JetStream.consumerNames (consumers jetStream) stream [] []
   sort (JetStream.consumerNamesConsumers names) `shouldBe` sort [durable, secondDurable]
   listed <- expectRight "consumer list" $
-    JetStream.listConsumers (consumers jetStream) stream []
+    JetStream.listConsumers (consumers jetStream) stream [] []
   sort (fmap JetStream.consumerInfoName (JetStream.consumerListConsumers listed))
     `shouldBe` sort [durable, secondDurable]
 
   pauseUntil <- addUTCTime 2 <$> getCurrentTime
   paused <- expectRight "pause consumer" $
-    JetStream.pauseConsumer (consumers jetStream) stream durable pauseUntil
+    JetStream.pauseConsumer (consumers jetStream) stream durable pauseUntil []
   JetStream.consumerPausePaused paused `shouldBe` True
   resumed <- expectRight "resume consumer" $
-    JetStream.resumeConsumer (consumers jetStream) stream durable
+    JetStream.resumeConsumer (consumers jetStream) stream durable []
   JetStream.consumerPausePaused resumed `shouldBe` False
 
   firstBatch <- expectRight "consumer admin fetch" $
@@ -612,6 +625,7 @@ consumerAdministrationTest jetStream = do
       [ JetStream.withFetchBatch 2
       , JetStream.withFetchWait (JetStream.FetchExpiresMicros 1000000)
       ]
+      []
   length (JetStream.pullResponseMessages firstBatch) `shouldBe` 2
   resetToSecond <- expectRight "reset consumer to sequence" $
     JetStream.resetConsumer
@@ -619,9 +633,10 @@ consumerAdministrationTest jetStream = do
       stream
       durable
       [JetStream.withConsumerResetSequence 2]
+      []
   JetStream.consumerResetResponseSequence resetToSecond `shouldBe` 2
   afterReset <- fetchOnePayload jetStream stream durable
-  afterReset `shouldBe` Just "msg-2"
+  afterReset `shouldBe` "msg-2"
 
 pushConsumerTest :: JetStream -> IO ()
 pushConsumerTest jetStream = do
@@ -641,28 +656,30 @@ pushConsumerTest jetStream = do
       [ JetStream.withConsumerAckPolicy JetStream.AckExplicit
       , JetStream.withConsumerDeliverPolicy JetStream.DeliverAll
       ]
+      []
   JetStream.consumerConfigDeliverSubject (JetStream.consumerInfoConfig created)
     `shouldBe` Just deliverSubject
 
   receivedRef <- newIORef []
   done <- newEmptyMVar
-  subscription <- JetStream.consumePush (messages jetStream) deliverSubject [] $ \message -> do
-    count <- atomicModifyIORef' receivedRef $ \received ->
-      let next =
-            if length received < length payloads
-              then received ++ [JetStream.messagePayload message]
-              else received
-      in (next, length next)
-    void (JetStream.ack (messages jetStream) message)
-    when (count >= length payloads) $
-      void (tryPutMVar done ())
+  subscription <- expectRight "push subscription"
+    (JetStream.consumePush (messages jetStream) deliverSubject [] [] $ \message -> do
+        count <- atomicModifyIORef' receivedRef $ \received ->
+          let next =
+                if length received < length payloads
+                  then received ++ [JetStream.messagePayload message]
+                  else received
+          in (next, length next)
+        void (JetStream.ack (messages jetStream) message [])
+        when (count >= length payloads) $
+          void (tryPutMVar done ()))
 
   mapM_ (publishPayload jetStream subject) payloads
   result <- timeout 5000000 (takeMVar done)
-  JetStream.stopPushSubscription subscription
+  void (JetStream.stopPushSubscription subscription)
   result `shouldBe` Just ()
   received <- readIORef receivedRef
-  received `shouldBe` fmap Just payloads
+  received `shouldBe` payloads
 
 pushQueueGroupTest :: JetStream -> IO ()
 pushQueueGroupTest jetStream = do
@@ -687,6 +704,7 @@ pushQueueGroupTest jetStream = do
       , JetStream.withConsumerDeliverGroup queueGroup
       , JetStream.withConsumerDeliverPolicy JetStream.DeliverAll
       ]
+      []
 
   receivedRef <- newIORef []
   done <- newEmptyMVar
@@ -695,30 +713,32 @@ pushQueueGroupTest jetStream = do
         count <- atomicModifyIORef' receivedRef $ \received ->
           let next = received ++ [(worker, JetStream.messagePayload message)]
           in (next, length next)
-        void (JetStream.ack (messages jetStream) message)
+        void (JetStream.ack (messages jetStream) message [])
         when (count >= expectedCount) $
           void (tryPutMVar done ())
-  subscriberA <- JetStream.consumePush
+  subscriberA <- expectRight "push queue subscription A" $ JetStream.consumePush
     (messages jetStream)
     deliverSubject
     [JetStream.withPushQueueGroup queueGroup]
+    []
     (record ("worker-a" :: BS.ByteString))
-  subscriberB <- JetStream.consumePush
+  subscriberB <- expectRight "push queue subscription B" $ JetStream.consumePush
     (messages jetStream)
     deliverSubject
     [JetStream.withPushQueueGroup queueGroup]
+    []
     (record "worker-b")
 
   threadDelay 200000
   mapM_ (publishPayload jetStream subject) payloads
   result <- timeout 5000000 (takeMVar done)
   threadDelay 500000
-  JetStream.stopPushSubscription subscriberA
-  JetStream.stopPushSubscription subscriberB
+  void (JetStream.stopPushSubscription subscriberA)
+  void (JetStream.stopPushSubscription subscriberB)
   result `shouldBe` Just ()
   received <- readIORef receivedRef
   length received `shouldBe` expectedCount
-  fmap snd received `shouldMatchList` fmap Just payloads
+  fmap snd received `shouldMatchList` payloads
 
 orderedConsumerTest :: JetStream -> IO ()
 orderedConsumerTest jetStream = do
@@ -732,22 +752,25 @@ orderedConsumerTest jetStream = do
       (messages jetStream)
       stream
       [JetStream.withOrderedConsumerNamePrefix "ORDERED_SYSTEM"]
+      []
 
   firstBatch <- expectRight "ordered first fetch" $
     JetStream.fetchOrdered ordered
       [ JetStream.withFetchBatch 2
       , JetStream.withFetchWait (JetStream.FetchExpiresMicros 1000000)
       ]
+      []
   fmap JetStream.messagePayload (JetStream.pullResponseMessages firstBatch)
-    `shouldBe` fmap Just (take 2 payloads)
+    `shouldBe` take 2 payloads
 
   current <- expectRight "ordered consumer info" $
-    JetStream.orderedConsumerInfo ordered
+    JetStream.orderedConsumerInfo ordered []
   deleted <- expectRight "delete ordered consumer" $
     JetStream.deleteConsumer
       (consumers jetStream)
       stream
       (JetStream.consumerInfoName current)
+      []
   JetStream.deleteConsumerSuccess deleted `shouldBe` True
 
   secondBatch <- expectRight "ordered second fetch" $
@@ -755,9 +778,10 @@ orderedConsumerTest jetStream = do
       [ JetStream.withFetchBatch 3
       , JetStream.withFetchWait (JetStream.FetchExpiresMicros 1000000)
       ]
+      []
   fmap JetStream.messagePayload (JetStream.pullResponseMessages secondBatch)
-    `shouldBe` fmap Just (drop 2 payloads)
-  JetStream.stopOrderedConsumer ordered
+    `shouldBe` drop 2 payloads
+  void (JetStream.stopOrderedConsumer ordered [])
 
 orderedFilteredHeadersOnlyTest :: JetStream -> IO ()
 orderedFilteredHeadersOnlyTest jetStream = do
@@ -778,25 +802,27 @@ orderedFilteredHeadersOnlyTest jetStream = do
       , JetStream.withOrderedConsumerFilter (JetStream.ConsumerFilterSubject subjectA)
       , JetStream.withOrderedConsumerHeadersOnly True
       ]
+      []
 
   firstFetch <- expectRight "ordered filtered headers-only fetch" $
     JetStream.fetchOrdered ordered
       [ JetStream.withFetchBatch 1
       , JetStream.withFetchWait (JetStream.FetchExpiresMicros 1000000)
       ]
+      []
   case JetStream.pullResponseMessages firstFetch of
     [message] -> do
       JetStream.messageSubject message `shouldBe` subjectA
-      JetStream.messagePayload message `shouldNotBe` Just "body-a"
+      JetStream.messagePayload message `shouldNotBe` "body-a"
       lookup "X-Test" (fromMaybe [] (JetStream.messageHeaders message)) `shouldBe` Just "one"
     received ->
       expectationFailure ("expected one ordered JetStream message, got " ++ show (length received))
 
   empty <- expectRight "ordered filtered no-wait fetch" $
-    JetStream.fetchOrdered ordered shortFetch
+    JetStream.fetchOrdered ordered shortFetch []
   JetStream.pullResponseMessages empty `shouldBe` []
   expectNoMessages empty
-  JetStream.stopOrderedConsumer ordered
+  void (JetStream.stopOrderedConsumer ordered [])
 
 pushConsumerGracefulShutdownTest :: JetStream -> IO ()
 pushConsumerGracefulShutdownTest jetStream = do
@@ -815,26 +841,29 @@ pushConsumerGracefulShutdownTest jetStream = do
       [ JetStream.withConsumerAckPolicy JetStream.AckExplicit
       , JetStream.withConsumerDeliverPolicy JetStream.DeliverAll
       ]
+      []
 
   stoppedCallback <- newEmptyMVar
-  subscription <- JetStream.consumePush (messages jetStream) deliverSubject [] $ \message ->
-    void (tryPutMVar stoppedCallback message)
+  subscription <- expectRight "push stop subscription"
+    (JetStream.consumePush (messages jetStream) deliverSubject [] [] $ \message ->
+      void (tryPutMVar stoppedCallback message))
   stopResult <- timeout 1000000 (JetStream.stopPushSubscription subscription)
-  stopResult `shouldBe` Just ()
+  stopResult `shouldBe` Just (Right ())
 
   publishPayload jetStream subject "after-stop"
   stoppedDelivery <- timeout 1000000 (takeMVar stoppedCallback)
   stoppedDelivery `shouldBe` Nothing
 
   resumedCallback <- newEmptyMVar
-  resumed <- JetStream.consumePush (messages jetStream) deliverSubject [] $ \message -> do
-    ackOrFail jetStream message
-    when (JetStream.messagePayload message == Just "after-resume") $
-      void (tryPutMVar resumedCallback message)
+  resumed <- expectRight "resumed push subscription"
+    (JetStream.consumePush (messages jetStream) deliverSubject [] [] $ \message -> do
+        ackOrFail jetStream message
+        when (JetStream.messagePayload message == "after-resume") $
+          void (tryPutMVar resumedCallback message))
   publishPayload jetStream subject "after-resume"
   resumedDelivery <- timeout 5000000 (takeMVar resumedCallback)
-  JetStream.stopPushSubscription resumed
-  fmap JetStream.messagePayload resumedDelivery `shouldBe` Just (Just "after-resume")
+  void (JetStream.stopPushSubscription resumed)
+  fmap JetStream.messagePayload resumedDelivery `shouldBe` Just "after-resume"
 
 orderedConsumerGracefulShutdownTest :: JetStream -> IO ()
 orderedConsumerGracefulShutdownTest jetStream = do
@@ -846,29 +875,32 @@ orderedConsumerGracefulShutdownTest jetStream = do
       (messages jetStream)
       stream
       [JetStream.withOrderedConsumerNamePrefix "ORDERED_STOP"]
+      []
   current <- expectRight "ordered stop consumer info" $
-    JetStream.orderedConsumerInfo ordered
+    JetStream.orderedConsumerInfo ordered []
 
-  stopResult <- timeout 1000000 (JetStream.stopOrderedConsumer ordered)
-  stopResult `shouldBe` Just ()
+  stopResult <- timeout 1000000 (JetStream.stopOrderedConsumer ordered [])
+  stopResult `shouldBe` Just (Right ())
 
   consumerInfoAfterStop <- JetStream.consumerInfo
     (consumers jetStream)
     stream
     (JetStream.consumerInfoName current)
+    []
   expectJetStreamFailure "ordered consumer info after stop" consumerInfoAfterStop
-  orderedInfoAfterStop <- JetStream.orderedConsumerInfo ordered
+  orderedInfoAfterStop <- JetStream.orderedConsumerInfo ordered []
   expectJetStreamFailure "ordered handle info after stop" orderedInfoAfterStop
   fetchAfterStop <- JetStream.fetchOrdered ordered
     [ JetStream.withFetchBatch 1
     , JetStream.withFetchWait (JetStream.FetchNoWaitMicros 100000)
     ]
+    []
   fetchAfterStop `shouldBe` Left JetStream.JetStreamNoReply
 
 domainJetStreamTest :: JetStream -> IO ()
 domainJetStreamTest jetStream = do
   account <- expectRight "domain account info" $
-    JetStream.accountInfo jetStream
+    JetStream.accountInfo jetStream []
   JetStream.accountInfoDomain account `shouldBe` Just "HUB"
 
   let stream = "NATSKELL_JS_DOMAIN"
@@ -889,10 +921,9 @@ consumerOptions =
 
 pullConsumerOptions :: BS.ByteString -> [JetStream.ConsumerConfigOption] -> [JetStream.ConsumerConfigOption]
 pullConsumerOptions _durable extraOptions =
-  extraOptions ++
   [ JetStream.withConsumerDeliverPolicy JetStream.DeliverAll
   , JetStream.withConsumerAckPolicy JetStream.AckExplicit
-  ]
+  ] ++ extraOptions
 
 createStreamOrFail
   :: JetStream
@@ -902,7 +933,7 @@ createStreamOrFail
   -> IO JetStream.StreamInfo
 createStreamOrFail jetStream name subjects options =
   expectRight ("stream create " ++ BC.unpack name) $
-    JetStream.create (streams jetStream) name subjects options
+    JetStream.create (streams jetStream) name subjects options []
 
 createDurableConsumerOrFail
   :: JetStream
@@ -919,11 +950,12 @@ createDurableConsumerOrFail jetStream stream durable options =
       (JetStream.DurableConsumer durable)
       JetStream.PullConsumer
       options
+      []
 
 streamInfoOrFail :: JetStream -> BS.ByteString -> IO JetStream.StreamInfo
 streamInfoOrFail jetStream stream =
   expectRight ("stream info " ++ BC.unpack stream) $
-    JetStream.info (streams jetStream) stream
+    JetStream.info (streams jetStream) stream []
 
 publishPayload :: JetStream -> BS.ByteString -> BS.ByteString -> IO ()
 publishPayload jetStream subject body =
@@ -937,7 +969,7 @@ publishPayloadWith
   -> IO JetStream.PublishAck
 publishPayloadWith jetStream subject body options =
   expectRight ("publish " ++ BC.unpack subject) $
-    JetStream.publish (publisher jetStream) subject body options
+    JetStream.publish (publisher jetStream) subject body options []
 
 fetchBatch :: [JetStream.FetchOption]
 fetchBatch =
@@ -951,7 +983,7 @@ shortFetch =
   , JetStream.withFetchWait (JetStream.FetchNoWaitMicros 100000)
   ]
 
-fetchOnePayload :: JetStream -> BS.ByteString -> BS.ByteString -> IO (Maybe BS.ByteString)
+fetchOnePayload :: JetStream -> BS.ByteString -> BS.ByteString -> IO BS.ByteString
 fetchOnePayload jetStream stream durable =
   JetStream.messagePayload <$> fetchOneMessage jetStream stream durable
 
@@ -962,6 +994,7 @@ fetchOneMessage jetStream stream durable = do
       [ JetStream.withFetchBatch 1
       , JetStream.withFetchWait (JetStream.FetchExpiresMicros 1000000)
       ]
+      []
   case JetStream.pullResponseMessages response of
     [message] ->
       pure message
@@ -969,13 +1002,14 @@ fetchOneMessage jetStream stream durable = do
       expectationFailure ("expected one JetStream message, got " ++ show (length received)) >>
         fail "expected one JetStream message"
 
-fetchPayloads :: JetStream -> BS.ByteString -> BS.ByteString -> Int -> IO [Maybe BS.ByteString]
+fetchPayloads :: JetStream -> BS.ByteString -> BS.ByteString -> Int -> IO [BS.ByteString]
 fetchPayloads jetStream stream durable batch = do
   response <- expectRight "fetch payloads" $
     JetStream.fetch (messages jetStream) stream durable
       [ JetStream.withFetchBatch batch
       , JetStream.withFetchWait (JetStream.FetchExpiresMicros 1000000)
       ]
+      []
   let received = JetStream.pullResponseMessages response
   unless (length received == batch) $
     expectationFailure ("expected " ++ show batch ++ " JetStream messages, got " ++ show (length received))
@@ -984,7 +1018,7 @@ fetchPayloads jetStream stream durable batch = do
 
 ackOrFail :: JetStream -> JetStream.Message -> IO ()
 ackOrFail jetStream message =
-  JetStream.ack (messages jetStream) message `shouldReturn` Right ()
+  JetStream.ack (messages jetStream) message [] `shouldReturn` Right ()
 
 expectNoMessages :: JetStream.PullResponse -> IO ()
 expectNoMessages response =

@@ -5,6 +5,7 @@ module JetStream.Error
   , JetStreamError (..)
   ) where
 
+import qualified Client.API         as Nats
 import           Data.Aeson
 import qualified Data.ByteString    as BS
 import qualified Data.Text.Encoding as E
@@ -21,6 +22,7 @@ data JetStreamError = JetStreamApiFailure JetStreamApiError
                     | JetStreamDecodeError String
                     | JetStreamTimeout
                     | JetStreamNoReply
+                    | JetStreamNatsError Nats.NatsError
   deriving (Eq, Show)
 
 instance FromJSON JetStreamApiError where

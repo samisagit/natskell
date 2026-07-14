@@ -3,12 +3,16 @@
 module ConnectionSpec (spec) where
 
 import           Auth.None                 (auth)
+import qualified Client
 import           Control.Concurrent
 import           Control.Concurrent.STM
 import qualified Data.ByteString           as BS
 import qualified Data.ByteString.Lazy      as LBS
 import           Data.IORef                (newIORef, readIORef, writeIORef)
-import           Handshake.Nats            (performHandshake)
+import           Handshake.Nats
+    ( HandshakeError (HandshakeAuthError, HandshakeTLSError, HandshakeTimeout)
+    , performHandshake
+    )
 import           Lib.Logger
     ( LogLevel (Debug)
     , LoggerConfig (LoggerConfig)
@@ -27,6 +31,7 @@ import           Parser.API
     , ParsedMessage (ParsedInfo, ParsedPing, ParsedPong)
     , ParserAPI (ParserAPI)
     )
+import qualified Parser.Attoparsec         as Attoparsec
 import qualified Queue.API                 as Queue
 import           Queue.TransactionalQueue  (newQueue)
 import           Router.Nats
@@ -41,6 +46,7 @@ import           State.Store
     )
 import           State.Types               (ClientConfig (..))
 import           Subscription.Store        (newSubscriptionStore)
+import           Subscription.Types        (defaultPendingLimits)
 import           System.Timeout            (timeout)
 import           Test.Hspec
 import           Transformers.Transformers (Transformer (transform))
@@ -48,9 +54,21 @@ import qualified Types.Connect             as Connect
 import           Types.Info                (Info (Info))
 import           Types.Ping                (Ping (Ping))
 import           Types.Pong                (Pong (Pong))
+import           Types.TLS                 (TLSConfig (..), defaultTLSConfig)
 
 spec :: Spec
 spec = do
+  describe "TLS configuration" $ do
+    it "does not expose client private keys when rendered" $ do
+      let config = defaultTLSConfig
+            { tlsClientCertificate = Just ("certificate", "private-key")
+            , tlsRootCertificates = ["private-root"]
+            }
+
+      show config `shouldNotContain` "private-key"
+      show config `shouldNotContain` "private-root"
+      show config `shouldContain` "tlsRootCertificates = 1 configured"
+
   describe "Connection reader" $ do
     it "unblocks a blocking read when closeReader is called" $ do
       conn <- newConn connectionApi
@@ -74,7 +92,7 @@ spec = do
   describe "Router ping lifecycle" $ do
     it "responds to server PING by enqueueing PONG" $ do
       state <- newTestState
-      store <- newSubscriptionStore
+      store <- newSubscriptionStore defaultPendingLimits (pure ())
 
       directive <- routeMessage state store (ParsedPing Ping)
 
@@ -86,17 +104,32 @@ spec = do
         Left err ->
           expectationFailure ("expected queued PONG, got queue error: " ++ err)
 
-    it "runs the next pending ping action when PONG is routed" $ do
+    it "runs exactly one pending ping action for each PONG" $ do
       state <- newTestState
-      store <- newSubscriptionStore
-      actionRan <- newIORef False
-      pushPingAction state (writeIORef actionRan True)
+      store <- newSubscriptionStore defaultPendingLimits (pure ())
+      firstActionRan <- newIORef False
+      secondActionRan <- newIORef False
+      pushPingAction state (writeIORef firstActionRan True)
+      pushPingAction state (writeIORef secondActionRan True)
 
-      directive <- routeMessage state store (ParsedPong Pong)
+      firstDirective <- routeMessage state store (ParsedPong Pong)
 
-      directive `shouldBe` RouteContinue
-      readIORef actionRan `shouldReturn` True
+      firstDirective `shouldBe` RouteContinue
+      readIORef firstActionRan `shouldReturn` True
+      readIORef secondActionRan `shouldReturn` False
+
+      secondDirective <- routeMessage state store (ParsedPong Pong)
+
+      secondDirective `shouldBe` RouteContinue
+      readIORef secondActionRan `shouldReturn` True
   describe "Handshake" $ do
+    it "returns a typed error when no servers are configured" $ do
+      result <- Client.newClient [] [Client.withConnectionAttempts 1]
+      case result of
+        Left Client.ConnectNoServers -> pure ()
+        Left err -> expectationFailure ("unexpected connection error: " ++ show err)
+        Right _ -> expectationFailure "client connected without a server"
+
     it "accepts an incremental parser backend for the initial INFO frame" $ do
       state <- newTestState
       conn <- newConn connectionApi
@@ -105,6 +138,7 @@ spec = do
         newScriptedTransport
           [ "INF"
           , "O {\"server_id\":\"srv\",\"version\":\"1.0.0\",\"go\":\"go1\",\"host\":\"127.0.0.1\",\"port\":4222,\"max_payload\":1024,\"proto\":1}\r\n"
+          , "PONG\r\n"
           ]
           writes
       pointTransport conn transport
@@ -113,7 +147,8 @@ spec = do
 
       result `shouldBe` Right ()
       readServerInfo state `shouldReturn` Just testInfo
-      readTVarIO writes `shouldReturn` [LBS.toStrict (transform testConnect)]
+      readTVarIO writes `shouldReturn`
+        [LBS.toStrict (transform testConnect <> transform Ping)]
 
     it "accepts a parser backend that drops an invalid prefix before INFO" $ do
       state <- newTestState
@@ -123,6 +158,7 @@ spec = do
         newScriptedTransport
           [ "XIN"
           , "FO {\"server_id\":\"srv\",\"version\":\"1.0.0\",\"go\":\"go1\",\"host\":\"127.0.0.1\",\"port\":4222,\"max_payload\":1024,\"proto\":1}\r\n"
+          , "PONG\r\n"
           ]
           writes
       pointTransport conn transport
@@ -131,14 +167,85 @@ spec = do
 
       result `shouldBe` Right ()
       readServerInfo state `shouldReturn` Just testInfo
-      readTVarIO writes `shouldReturn` [LBS.toStrict (transform testConnect)]
+      readTVarIO writes `shouldReturn`
+        [LBS.toStrict (transform testConnect <> transform Ping)]
+
+    it "does not report readiness until the server sends PONG" $ do
+      state <- newTestStateWithTimeout 20000
+      conn <- newConn connectionApi
+      writes <- newTVarIO []
+      blocker <- newEmptyMVar
+      let transport = Transport
+            { transportRead = \_ -> do
+                first <- atomically $ do
+                  written <- readTVar writes
+                  pure (null written)
+                if first then pure infoFrame else takeMVar blocker
+            , transportWrite = \bytes ->
+                atomically $ modifyTVar' writes (<> [bytes])
+            , transportWriteLazy = \bytes ->
+                atomically $ modifyTVar' writes (<> [LBS.toStrict bytes])
+            , transportFlush = pure ()
+            , transportClose = pure ()
+            , transportUpgrade = Nothing
+            }
+      pointTransport conn transport
+
+      result <- performHandshake connectionApi incrementalInfoParser state auth conn "127.0.0.1"
+
+      result `shouldBe` Left HandshakeTimeout
+
+    it "accepts +OK before the handshake PONG" $ do
+      state <- newTestState
+      conn <- newConn connectionApi
+      writes <- newTVarIO []
+      transport <- newScriptedTransport [infoFrame, "+OK\r\nPONG\r\n"] writes
+      pointTransport conn transport
+
+      result <- performHandshake connectionApi Attoparsec.parserApi state auth conn "127.0.0.1"
+
+      result `shouldBe` Right ()
+
+    it "returns authentication errors received before PONG" $ do
+      state <- newTestState
+      conn <- newConn connectionApi
+      writes <- newTVarIO []
+      transport <- newScriptedTransport
+        [infoFrame, "-ERR 'Authorization Violation'\r\n"] writes
+      pointTransport conn transport
+
+      result <- performHandshake connectionApi Attoparsec.parserApi state auth conn "127.0.0.1"
+
+      case result of
+        Left (HandshakeAuthError _) -> pure ()
+        other -> expectationFailure ("expected auth error, got: " ++ show other)
+
+    it "rejects requested TLS when the server does not advertise it" $ do
+      state <- newTestStateWithConfig $ \cfg ->
+        cfg { tlsConfig = Just defaultTLSConfig }
+      conn <- newConn connectionApi
+      writes <- newTVarIO []
+      transport <- newScriptedTransport [infoFrame] writes
+      pointTransport conn transport
+
+      result <- performHandshake connectionApi Attoparsec.parserApi state auth conn "127.0.0.1"
+
+      case result of
+        Left (HandshakeTLSError _) -> pure ()
+        other -> expectationFailure ("expected TLS error, got: " ++ show other)
 
 newTestState = do
+  newTestStateWithConfig id
+
+newTestStateWithTimeout timeoutMicros = do
+  newTestStateWithConfig $ \cfg -> cfg { connectTimeoutMicros = timeoutMicros }
+
+newTestStateWithConfig updateConfig = do
   queue <- newQueue
   ctx <- newLogContext
   conn <- newConn connectionApi
   logger <- newSilentLogger
-  newClientState (testConfig logger) queue conn ctx
+  newClientState (updateConfig (testConfig logger)) queue conn ctx
 
 newSilentLogger :: IO LoggerConfig
 newSilentLogger = do
@@ -149,11 +256,12 @@ testConfig :: LoggerConfig -> ClientConfig
 testConfig logger =
   ClientConfig
     { connectionAttempts = 1
+    , connectTimeoutMicros = 1000000
     , callbackConcurrency = 1
-    , bufferLimit = 4096
+    , messageLimit = 1024 * 1024
     , connectConfig = testConnect
     , loggerConfig = logger
-    , tlsCert = Nothing
+    , tlsConfig = Nothing
     , exitAction = const (pure ())
     , connectOptions = []
     }
@@ -196,6 +304,7 @@ testInfo =
     Nothing
     Nothing
     Nothing
+    Nothing
 
 incrementalInfoParser :: ParserAPI ParsedMessage
 incrementalInfoParser = ParserAPI parseInfo
@@ -205,6 +314,8 @@ incrementalInfoParser = ParserAPI parseInfo
           NeedMore
       | bytes == infoFrame =
           Emit (ParsedInfo testInfo) ""
+      | bytes == "PONG\r\n" =
+          Emit (ParsedPong Pong) ""
       | otherwise =
           Reject ("unexpected input: " ++ show bytes)
 
@@ -216,6 +327,8 @@ dropPrefixInfoParser = ParserAPI parseInfo
           DropPrefix 1 "invalid prefix"
       | bytes == infoFrame =
           Emit (ParsedInfo testInfo) ""
+      | bytes == "PONG\r\n" =
+          Emit (ParsedPong Pong) ""
       | otherwise =
           Reject ("unexpected input: " ++ show bytes)
 

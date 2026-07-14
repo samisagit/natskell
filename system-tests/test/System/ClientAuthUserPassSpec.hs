@@ -2,7 +2,7 @@
 
 module ClientAuthUserPassSpec (spec) where
 
-import           API                    (Client (..))
+import           API
 import           Client
 import           Control.Concurrent     (forkIO)
 import           Control.Concurrent.STM
@@ -28,12 +28,13 @@ spec =
                 , withUserPass ("test-user", "test-pass")
                 ]
                 ++ loggerOptions
-          client <- newClient [(natsHost, natsPort)] clientOptions
+          client <- newTestClient [(natsHost, natsPort)] clientOptions
           forkIO $ do
             outcome <- atomically $ (Left <$> readTMVar pinged) `orElse` (Right <$> readTMVar exitResult)
             case outcome of
-              Left _  -> close client
+              Left _  -> close client []
               Right _ -> pure ()
-          ping client (atomically (putTMVar pinged ()))
+          _ <- ping client []
+          atomically (putTMVar pinged ())
           result <- atomically $ readTMVar exitResult
           result `shouldBe` ExitClosedByUser

@@ -2,7 +2,7 @@
 
 module ClientAuthUsersSpec (spec) where
 
-import           API                    (Client (..), withPayload)
+import           API
 import           Client
 import           Control.Concurrent     (forkIO)
 import           Control.Concurrent.STM
@@ -31,13 +31,14 @@ spec =
                 , withUserPass ("test-user", "test-pass")
                 ]
                 ++ loggerOptions
-          client <- newClient [(natsHost, natsPort)] clientOptions
+          client <- newTestClient [(natsHost, natsPort)] clientOptions
           forkIO $ do
             outcome <- atomically $ (Left <$> readTMVar pinged) `orElse` (Right <$> readTMVar exitResult)
             case outcome of
-              Left _  -> close client
+              Left _  -> close client []
               Right _ -> pure ()
-          ping client (atomically (putTMVar pinged ()))
+          _ <- ping client []
+          atomically (putTMVar pinged ())
           result <- atomically $ readTMVar exitResult
           result `shouldBe` ExitClosedByUser
       let permissionServerOptions =
@@ -74,12 +75,12 @@ spec =
                 , withMinimumLogLevel Debug
                 , withLogAction recordLog
                 ]
-          client <- newClient [(natsHost, natsPort)] clientOptions
+          client <- newTestClient [(natsHost, natsPort)] clientOptions
           (do
-              publish client "PERMISSIONS.DENIED" [withPayload "blocked"]
-              flush client
+              _ <- publish client "PERMISSIONS.DENIED" "blocked" []
+              flush client []
               waitForLogContaining logs "Permissions Violation")
-            `finally` close client
+            `finally` close client []
 
         it "reports subscribe permission violations" $ \(Endpoints natsHost natsPort) -> do
           logs <- newTVarIO []
@@ -91,12 +92,12 @@ spec =
                 , withMinimumLogLevel Debug
                 , withLogAction recordLog
                 ]
-          client <- newClient [(natsHost, natsPort)] clientOptions
+          client <- newTestClient [(natsHost, natsPort)] clientOptions
           (do
               _ <- subscribe client "PERMISSIONS.DENIED" [] (const (pure ()))
-              flush client
+              flush client []
               waitForLogContaining logs "Permissions Violation")
-            `finally` close client
+            `finally` close client []
 
 waitForLogContaining :: TVar [LogEntry] -> String -> IO ()
 waitForLogContaining logs needle = do

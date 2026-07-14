@@ -2,10 +2,11 @@
 
 module ClientAuthTokenSpec (spec) where
 
-import           API                    (Client (..))
+import           API
 import           Client
 import           Control.Concurrent     (forkIO)
 import           Control.Concurrent.STM
+import           Data.List              (isInfixOf)
 import           NatsServerConfig
 import           Test.Hspec
 import           TestSupport
@@ -28,13 +29,14 @@ spec =
                 , withAuthToken "test-token"
                 ]
                 ++ loggerOptions
-          client <- newClient [(natsHost, natsPort)] clientOptions
+          client <- newTestClient [(natsHost, natsPort)] clientOptions
           forkIO $ do
             outcome <- atomically $ (Left <$> readTMVar pinged) `orElse` (Right <$> readTMVar exitResult)
             case outcome of
-              Left _  -> close client
+              Left _  -> close client []
               Right _ -> pure ()
-          ping client (atomically (putTMVar pinged ()))
+          _ <- ping client []
+          atomically (putTMVar pinged ())
           result <- atomically $ readTMVar exitResult
           result `shouldBe` ExitClosedByUser
         it "rejects invalid token" $ \(Endpoints natsHost natsPort) -> do
@@ -46,10 +48,17 @@ spec =
                 , withConnectionAttempts 1
                 ]
                 ++ loggerOptions
-          _ <- newClient [(natsHost, natsPort)] clientOptions
+          connectResult <- newClient [(natsHost, natsPort)] clientOptions
+          case connectResult of
+            Left err
+              | "Authorization Violation" `isInfixOf` show err -> pure ()
+              | otherwise -> expectationFailure ("unexpected connection error: " ++ show err)
+            Right client -> do
+              close client []
+              expectationFailure "client connected with an invalid token"
           result <- atomically $ readTMVar exitResult
           case result of
-            ExitServerError err ->
-              show err `shouldContain` "Authorization Violation"
+            ExitRetriesExhausted _ ->
+              pure ()
             other ->
               expectationFailure $ "Unexpected exit reason: " ++ show other

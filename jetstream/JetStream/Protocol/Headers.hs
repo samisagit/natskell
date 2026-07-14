@@ -9,7 +9,7 @@ module JetStream.Protocol.Headers
   , statusError
   ) where
 
-import qualified API                   as Nats
+import qualified Client.API            as Nats
 import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as BC
 import           Data.Maybe            (fromMaybe, listToMaybe)

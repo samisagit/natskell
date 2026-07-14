@@ -9,4 +9,4 @@ import           Lib.Logger.Types       (MonadLogger)
 import           Network.ConnectionAPI  (WriterAPI)
 import           Queue.API              (Queue)
 
-newtype BroadcastingAPI = BroadcastingAPI { run :: forall m writer. (MonadLogger m, MonadIO m) => Int -> Queue -> WriterAPI writer -> writer -> m () }
+newtype BroadcastingAPI = BroadcastingAPI { run :: forall m writer. (MonadLogger m, MonadIO m) => Queue -> WriterAPI writer -> writer -> m () }
