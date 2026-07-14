@@ -976,7 +976,7 @@ spec = do
           let Right jetStream = newJetStream client []
           done <- newEmptyMVar
           void . forkIO $ do
-            result <- JetStream.accountInfo jetStream []
+            result <- JetStream.accountInfo (JetStream.management jetStream) []
             putMVar done result
           captured <- capturePublish serv "$JS.API.INFO"
           capturedPayload captured `shouldBe` ""
@@ -994,7 +994,7 @@ spec = do
           let Right jetStream = newJetStream client [withRequestTimeoutMicros 1000]
           done <- newEmptyMVar
           void . forkIO $ do
-            result <- JetStream.accountInfo jetStream []
+            result <- JetStream.accountInfo (JetStream.management jetStream) []
             putMVar done result
           captured <- capturePublish serv "$JS.API.INFO"
           capturedPayload captured `shouldBe` ""

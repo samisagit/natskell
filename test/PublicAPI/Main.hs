@@ -5,20 +5,19 @@
 -- compiling this executable is the compatibility check.
 module Main (main) where
 
-import qualified Nats
-import qualified Nats.Client             as Client
-import qualified Nats.JetStream          as JetStream
-import qualified Nats.JetStream.Consumer as Consumer
-import qualified Nats.JetStream.Error    as JetStreamError
-import qualified Nats.JetStream.Message  as JetStreamMessage
-import qualified Nats.JetStream.Publish  as JetStreamPublish
-import qualified Nats.JetStream.Stream   as Stream
-import qualified Nats.Message            as Message
-import qualified Nats.Subscription       as Subscription
+import qualified API                      as Nats
+import qualified Client
+import qualified JetStream.API            as JetStream
+import qualified JetStream.API.Consumer   as Consumer
+import qualified JetStream.API.Management as Management
+import qualified JetStream.API.Message    as JetStreamMessage
+import qualified JetStream.API.Publish    as JetStreamPublish
+import qualified JetStream.API.Stream     as Stream
+import qualified JetStream.Client         as JetStreamClient
 
-connect :: IO (Either Client.ConnectError Client.Client)
+connect :: IO (Either Client.ConnectError Nats.Client)
 connect =
-  Nats.connect
+  Client.connect
     [configuredServer]
     [ Client.withConnectName "public-api-compile-test"
     , Client.withConnectionAttempts 1
@@ -40,54 +39,54 @@ serverBuilders
 serverBuilders =
   (Client.server "nats.example" 4222, Client.serverWithDefaultPort "nats.example")
 
-coreOperations :: Client.Client -> IO ()
+coreOperations :: Nats.Client -> IO ()
 coreOperations client = do
-  _ <- Client.publish
+  _ <- Nats.publish
     client
     "events.created"
     "payload"
-    [Client.withHeaders [("content-type", "text/plain")]]
-  subscription <- Subscription.subscribe
+    [Nats.withHeaders [("content-type", "text/plain")]]
+  subscription <- Nats.subscribe
     client
     "events.*"
-    [Subscription.withQueueGroup "workers"]
+    [Nats.withQueueGroup "workers"]
     observeMessage
   case subscription of
     Left _       -> pure ()
     Right handle -> do
-      _ <- Subscription.unsubscribe client handle []
+      _ <- Nats.unsubscribe client handle []
       pure ()
-  _ <- Client.request
+  _ <- Nats.request
     client
     "service.echo"
     "request"
-    [Client.withRequestTimeout 1]
-  _ <- Client.ping client []
-  _ <- Client.flush client []
-  Client.close client []
+    [Nats.withRequestTimeout 1]
+  _ <- Nats.ping client []
+  _ <- Nats.flush client []
+  Nats.close client []
 
-observeMessage :: Message.Message -> IO ()
+observeMessage :: Nats.Message -> IO ()
 observeMessage message = do
-  let _ = Message.subject message
-      _ = Message.payload message
-      _ = Message.replyTo message
-      _ = Message.headers message
+  let _ = Nats.subject message
+      _ = Nats.payload message
+      _ = Nats.replyTo message
+      _ = Nats.headers message
   pure ()
 
 jetStreamContext
-  :: Client.Client
-  -> Either JetStream.JetStreamConfigError JetStream.JetStream
+  :: Nats.Client
+  -> Either JetStreamClient.JetStreamConfigError JetStream.JetStream
 jetStreamContext client =
-  JetStream.newJetStream
+  JetStreamClient.newJetStream
     client
-    [ JetStream.withDomain "hub"
-    , JetStream.withRequestTimeoutMicros 1000000
+    [ JetStreamClient.withDomain "hub"
+    , JetStreamClient.withRequestTimeoutMicros 1000000
     ]
 
 jetStreamOperations :: JetStream.JetStream -> IO ()
 jetStreamOperations jetStream = do
-  _ <- JetStream.accountInfo
-    jetStream
+  _ <- Management.accountInfo
+    (JetStream.management jetStream)
     [JetStream.withRequestTimeout 1]
   created <- Stream.createStream
     (JetStream.streams jetStream)
@@ -145,11 +144,11 @@ messageOperations messageAPI message = do
   _ <- JetStreamMessage.nak messageAPI message []
   pure ()
 
-inspectJetStreamApiError :: JetStreamError.JetStreamApiError -> IO ()
+inspectJetStreamApiError :: JetStream.JetStreamApiError -> IO ()
 inspectJetStreamApiError err = do
-  JetStreamError.apiErrorCode err `seq` pure ()
-  JetStreamError.apiErrorCodeDetail err `seq` pure ()
-  JetStreamError.apiErrorDescription err `seq` pure ()
+  JetStream.apiErrorCode err `seq` pure ()
+  JetStream.apiErrorCodeDetail err `seq` pure ()
+  JetStream.apiErrorDescription err `seq` pure ()
 
 main :: IO ()
 main =

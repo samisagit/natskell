@@ -53,6 +53,7 @@ import qualified Data.ByteString        as BS
 import qualified Data.ByteString.Base64 as Base64
 import           Data.Maybe             (catMaybes)
 import           Data.Time.Clock        (NominalDiffTime, UTCTime)
+import           Data.Word              (Word64)
 import           JetStream.Error        (JetStreamError)
 import           JetStream.Types
     ( CallOption
@@ -60,7 +61,6 @@ import           JetStream.Types
     , JetStreamRequestOption
     , Payload
     , RetentionPolicy (..)
-    , Sequence
     , StorageType (..)
     , StreamName
     , Subject
@@ -77,7 +77,7 @@ data StreamAPI = StreamAPI
                    , update :: StreamName -> [Subject] -> [StreamConfigOption] -> [JetStreamRequestOption] -> IO (Either JetStreamError StreamInfo)
                    , info :: StreamName -> [JetStreamRequestOption] -> IO (Either JetStreamError StreamInfo)
                    , getMessage :: StreamName -> StreamMessageSelector -> [JetStreamRequestOption] -> IO (Either JetStreamError StreamMessage)
-                   , deleteMessage :: StreamName -> Sequence -> StreamMessageDeleteMode -> [JetStreamRequestOption] -> IO (Either JetStreamError DeleteStreamMessageResponse)
+                   , deleteMessage :: StreamName -> Word64 -> StreamMessageDeleteMode -> [JetStreamRequestOption] -> IO (Either JetStreamError DeleteStreamMessageResponse)
                    , delete :: StreamName -> [JetStreamRequestOption] -> IO (Either JetStreamError DeleteStreamResponse)
                    , purge :: StreamName -> [PurgeStreamOption] -> [JetStreamRequestOption] -> IO (Either JetStreamError PurgeStreamResponse)
                    , list :: [StreamListOption] -> [JetStreamRequestOption] -> IO (Either JetStreamError StreamListResponse)
@@ -176,7 +176,7 @@ data StreamConfig = StreamConfig
 
 data PurgeStreamRequest = PurgeStreamRequest
                             { purgeStreamSubject  :: Maybe Subject
-                            , purgeStreamSequence :: Maybe Sequence
+                            , purgeStreamSequence :: Maybe Word64
                             , purgeStreamKeep     :: Maybe Integer
                             }
   deriving (Eq, Show)
@@ -196,7 +196,7 @@ withPurgeSubject :: Subject -> PurgeStreamOption
 withPurgeSubject subject request =
   request { purgeStreamSubject = Just subject }
 
-withPurgeSequence :: Sequence -> PurgeStreamOption
+withPurgeSequence :: Word64 -> PurgeStreamOption
 withPurgeSequence sequenceNumber request =
   request { purgeStreamSequence = Just sequenceNumber }
 
@@ -248,12 +248,12 @@ data StreamInfo = StreamInfo
 data StreamState = StreamState
                      { streamStateMessages      :: Integer
                      , streamStateBytes         :: Integer
-                     , streamStateFirstSequence :: Sequence
+                     , streamStateFirstSequence :: Word64
                      , streamStateFirstTime     :: UTCTime
-                     , streamStateLastSequence  :: Sequence
+                     , streamStateLastSequence  :: Word64
                      , streamStateLastTime      :: UTCTime
                      , streamStateConsumerCount :: Int
-                     , streamStateDeleted       :: [Sequence]
+                     , streamStateDeleted       :: [Word64]
                      , streamStateNumDeleted    :: Integer
                      , streamStateNumSubjects   :: Integer
                      }
@@ -310,14 +310,14 @@ data StreamNamesResponse = StreamNamesResponse
 
 data StreamMessage = StreamMessage
                        { streamMessageSubject    :: Subject
-                       , streamMessageSequence   :: Sequence
+                       , streamMessageSequence   :: Word64
                        , streamMessageHeadersRaw :: Maybe BS.ByteString
                        , streamMessagePayload    :: Maybe Payload
                        , streamMessageTime       :: UTCTime
                        }
   deriving (Eq, Show)
 
-data StreamMessageSelector = StreamMessageBySequence Sequence
+data StreamMessageSelector = StreamMessageBySequence Word64
                            | LastStreamMessageForSubject Subject
                            | NextStreamMessageForSubject Subject
   deriving (Eq, Show)
@@ -333,12 +333,12 @@ data StreamMessageDeleteMode = DeleteMessage | SecureDeleteMessage
   deriving (Eq, Show)
 
 data StreamMessageDeleteRequest = StreamMessageDeleteRequest
-                                    { streamMessageDeleteSequence :: Sequence
+                                    { streamMessageDeleteSequence :: Word64
                                     , streamMessageDeleteNoErase  :: Maybe Bool
                                     }
   deriving (Eq, Show)
 
-streamMessageDeleteRequest :: Sequence -> StreamMessageDeleteMode -> StreamMessageDeleteRequest
+streamMessageDeleteRequest :: Word64 -> StreamMessageDeleteMode -> StreamMessageDeleteRequest
 streamMessageDeleteRequest sequenceNumber mode =
   StreamMessageDeleteRequest
     { streamMessageDeleteSequence = sequenceNumber

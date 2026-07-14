@@ -58,6 +58,7 @@ import qualified Data.ByteString  as BS
 import           Data.Maybe       (catMaybes)
 import qualified Data.Text        as T
 import           Data.Time.Clock  (NominalDiffTime, UTCTime)
+import           Data.Word        (Word64)
 import           JetStream.Error  (JetStreamError)
 import           JetStream.Types
     ( AckPolicy (..)
@@ -66,7 +67,6 @@ import           JetStream.Types
     , DeliverPolicy (..)
     , JetStreamRequestOption
     , ReplayPolicy (..)
-    , Sequence
     , StreamName
     , Subject
     , applyCallOptions
@@ -303,8 +303,8 @@ data ConsumerInfo = ConsumerInfo
   deriving (Eq, Show)
 
 data ConsumerSequenceInfo = ConsumerSequenceInfo
-                              { consumerSequenceConsumer :: Sequence
-                              , consumerSequenceStream   :: Sequence
+                              { consumerSequenceConsumer :: Word64
+                              , consumerSequenceStream   :: Word64
                               , consumerSequenceLast     :: Maybe UTCTime
                               }
   deriving (Eq, Show)
@@ -326,7 +326,7 @@ data ConsumerPauseResponse = ConsumerPauseResponse
                                }
   deriving (Eq, Show)
 
-newtype ConsumerResetRequest = ConsumerResetRequest { consumerResetRequestSequence :: Maybe Sequence }
+newtype ConsumerResetRequest = ConsumerResetRequest { consumerResetRequestSequence :: Maybe Word64 }
   deriving (Eq, Show)
 
 type ConsumerResetOption = CallOption ConsumerResetRequest
@@ -338,13 +338,13 @@ consumerResetRequest options =
       { consumerResetRequestSequence = Nothing
       }
 
-withConsumerResetSequence :: Sequence -> ConsumerResetOption
+withConsumerResetSequence :: Word64 -> ConsumerResetOption
 withConsumerResetSequence sequenceNumber request =
   request { consumerResetRequestSequence = Just sequenceNumber }
 
 data ConsumerResetResponse = ConsumerResetResponse
                                { consumerResetInfo             :: ConsumerInfo
-                               , consumerResetResponseSequence :: Sequence
+                               , consumerResetResponseSequence :: Word64
                                }
   deriving (Eq, Show)
 

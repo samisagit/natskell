@@ -16,16 +16,15 @@ module JetStream.Options
   , withRequestTimeoutMicros
   ) where
 
-import qualified Client.API             as Nats
-import qualified Data.ByteString        as BS
-import           JetStream.Consumer.API (ConsumerAPI)
-import           JetStream.Error        (JetStreamError)
-import           JetStream.Message.API  (MessageAPI)
-import           JetStream.Publish.API  (PublishAPI)
-import           JetStream.Stream.API   (StreamAPI)
+import qualified Client.API               as Nats
+import qualified Data.ByteString          as BS
+import           JetStream.Consumer.API   (ConsumerAPI)
+import           JetStream.Management.API (ManagementAPI)
+import           JetStream.Message.API    (MessageAPI)
+import           JetStream.Publish.API    (PublishAPI)
+import           JetStream.Stream.API     (StreamAPI)
 import           JetStream.Types
-    ( AccountInfo
-    , JetStreamRequestOption
+    ( JetStreamRequestOption
     , applyRequestOptions
     , withRequestTimeout
     )
@@ -33,11 +32,11 @@ import           JetStream.Types
 -- | JetStream capabilities. The constructor is kept in the internal package;
 -- the public API exposes this type abstractly and exports its accessors.
 data JetStream = JetStream
-                   { streams :: StreamAPI
-                   , consumers :: ConsumerAPI
-                   , publisher :: PublishAPI
-                   , messages :: MessageAPI
-                   , accountInfo :: [JetStreamRequestOption] -> IO (Either JetStreamError AccountInfo)
+                   { streams    :: StreamAPI
+                   , consumers  :: ConsumerAPI
+                   , publisher  :: PublishAPI
+                   , messages   :: MessageAPI
+                   , management :: ManagementAPI
                    }
 
 data JetStreamConfig = JetStreamConfig

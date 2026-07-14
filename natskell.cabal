@@ -49,6 +49,7 @@ library
   autogen-modules:
     Paths_natskell
   other-modules:
+    Client.Implementation
     Paths_natskell
   build-depends:
     natskell-internal,
@@ -61,17 +62,12 @@ library
     API
     Client
     JetStream.API
+    JetStream.API.Consumer
+    JetStream.API.Management
+    JetStream.API.Message
+    JetStream.API.Publish
+    JetStream.API.Stream
     JetStream.Client
-    Nats
-    Nats.Client
-    Nats.Message
-    Nats.Subscription
-    Nats.JetStream
-    Nats.JetStream.Consumer
-    Nats.JetStream.Error
-    Nats.JetStream.Message
-    Nats.JetStream.Publish
-    Nats.JetStream.Stream
 
   hs-source-dirs:
        client
@@ -96,6 +92,8 @@ library jetstream-internal
     JetStream.Message
     JetStream.Message.API
     JetStream.Message.Types
+    JetStream.Management
+    JetStream.Management.API
     JetStream.Options
     JetStream.Protocol.Headers
     JetStream.Protocol.Request

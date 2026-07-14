@@ -60,11 +60,9 @@ import           JetStream.Types
     , JetStreamRequestOption
     , Payload
     , ReplayPolicy
-    , Sequence
     , StreamName
     , Subject
     , applyCallOptions
-    , sequenceFromWord64
     )
 
 -- | Message consumption and acknowledgement operations. The public module
@@ -128,8 +126,8 @@ data Message = Message
 data MessageMetadata = MessageMetadata
                          { messageMetadataStream           :: StreamName
                          , messageMetadataConsumer         :: ConsumerName
-                         , messageMetadataStreamSequence   :: Sequence
-                         , messageMetadataConsumerSequence :: Sequence
+                         , messageMetadataStreamSequence   :: Word64
+                         , messageMetadataConsumerSequence :: Word64
                          , messageMetadataNumDelivered     :: Integer
                          , messageMetadataNumPending       :: Integer
                          , messageMetadataTimestamp        :: UTCTime
@@ -346,12 +344,12 @@ parseNum bytes
   | BC.all isDigit bytes = Just (read (BC.unpack bytes))
   | otherwise = Nothing
 
-parseSequence :: ByteString -> Maybe Sequence
+parseSequence :: ByteString -> Maybe Word64
 parseSequence bytes = do
   value <- parseNum bytes
   if value < 0 || value > toInteger (maxBound :: Word64)
     then Nothing
-    else Just (sequenceFromWord64 (fromInteger value))
+    else Just (fromInteger value)
 
 nanosToTime :: Integer -> UTCTime
 nanosToTime nanoseconds =

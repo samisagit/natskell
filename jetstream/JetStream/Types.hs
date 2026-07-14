@@ -1,5 +1,4 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module JetStream.Types
   ( AccountAPIStats (..)
@@ -12,9 +11,6 @@ module JetStream.Types
   , Payload
   , Headers
   , CallOption
-  , Sequence
-  , sequenceFromWord64
-  , sequenceToWord64
   , JetStreamRequestOption
   , applyRequestOptions
   , withRequestTimeout
@@ -48,26 +44,6 @@ type Subject = BS.ByteString
 type Payload = BS.ByteString
 type Headers = [(BS.ByteString, BS.ByteString)]
 type CallOption a = a -> a
-
--- | A JetStream stream or consumer sequence number.
---
--- Sequence numbers are unsigned 64-bit values on the wire. The constructor is
--- intentionally private on the public API; use 'sequenceFromWord64' and
--- 'sequenceToWord64' at application boundaries.
-newtype Sequence = Sequence Word64
-  deriving (Bounded, Enum, Eq, Integral, Num, Ord, Real, Show)
-
-sequenceFromWord64 :: Word64 -> Sequence
-sequenceFromWord64 = Sequence
-
-sequenceToWord64 :: Sequence -> Word64
-sequenceToWord64 (Sequence value) = value
-
-instance ToJSON Sequence where
-  toJSON = toJSON . sequenceToWord64
-
-instance FromJSON Sequence where
-  parseJSON value = Sequence <$> parseJSON value
 
 -- | Options scoped to one JetStream API request. This is distinct from
 -- stream, consumer, publish, and fetch configuration.
@@ -144,7 +120,7 @@ data AckPolicy = AckNone
 data DeliverPolicy = DeliverAll
                    | DeliverLast
                    | DeliverNew
-                   | DeliverByStartSequence Sequence
+                   | DeliverByStartSequence Word64
                    | DeliverByStartTime Time.UTCTime
                    | DeliverLastPerSubject
                    | DeliverPolicyUnknown T.Text
