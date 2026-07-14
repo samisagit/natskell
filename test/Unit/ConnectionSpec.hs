@@ -104,16 +104,24 @@ spec = do
         Left err ->
           expectationFailure ("expected queued PONG, got queue error: " ++ err)
 
-    it "runs the next pending ping action when PONG is routed" $ do
+    it "runs exactly one pending ping action for each PONG" $ do
       state <- newTestState
       store <- newSubscriptionStore defaultPendingLimits (pure ())
-      actionRan <- newIORef False
-      pushPingAction state (writeIORef actionRan True)
+      firstActionRan <- newIORef False
+      secondActionRan <- newIORef False
+      pushPingAction state (writeIORef firstActionRan True)
+      pushPingAction state (writeIORef secondActionRan True)
 
-      directive <- routeMessage state store (ParsedPong Pong)
+      firstDirective <- routeMessage state store (ParsedPong Pong)
 
-      directive `shouldBe` RouteContinue
-      readIORef actionRan `shouldReturn` True
+      firstDirective `shouldBe` RouteContinue
+      readIORef firstActionRan `shouldReturn` True
+      readIORef secondActionRan `shouldReturn` False
+
+      secondDirective <- routeMessage state store (ParsedPong Pong)
+
+      secondDirective `shouldBe` RouteContinue
+      readIORef secondActionRan `shouldReturn` True
   describe "Handshake" $ do
     it "returns a typed error when no servers are configured" $ do
       result <- Client.newClient [] [Client.withConnectionAttempts 1]

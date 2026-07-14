@@ -415,24 +415,19 @@ spec = do
   describe "client integration" $ do
     around withClient $ do
       it "PING waits for PONG" $ \(serv, client, _, _) -> do
-        wg <- newWaitGroup 1
-        pingWithCallback client $ done wg
+        resultVar <- newEmptyMVar
+        void . forkIO $ ping client [] >>= putMVar resultVar
+        expectClientCommand serv "PING\r\n"
+        tryReadMVar resultVar `shouldReturn` Nothing
         sendAll serv "PONG\r\n"
-        wait wg
+        takeMVar resultVar `shouldReturn` Right ()
       it "flush waits for PONG" $ \(serv, client, _, _) -> do
-        doneVar <- newEmptyMVar
-        void . forkIO $ do
-          flush client []
-          putMVar doneVar ()
-        threadDelay 100000
-        returnedEarly <- not <$> isEmptyMVar doneVar
-        when returnedEarly $
-          expectationFailure "flush returned before PONG"
+        resultVar <- newEmptyMVar
+        void . forkIO $ flush client [] >>= putMVar resultVar
+        expectClientCommand serv "PING\r\n"
+        tryReadMVar resultVar `shouldReturn` Nothing
         sendAll serv "PONG\r\n"
-        result <- timeout 1000000 (takeMVar doneVar)
-        case result of
-          Nothing -> expectationFailure "flush did not return after PONG"
-          Just () -> pure ()
+        takeMVar resultVar `shouldReturn` Right ()
       it "subscribes with a queue group" $ \(serv, client, _, _) -> do
         Right subscription <- subscribe client "JOBS" [withQueueGroup "WORKERS"] (const (pure ()))
         expectQueuedSub serv "JOBS" "WORKERS" (subscriptionSid subscription)
@@ -442,22 +437,15 @@ spec = do
       it "PONG resolves one ping" $ \(serv, client, _, _) -> do
         first <- newEmptyMVar
         second <- newEmptyMVar
-        pingWithCallback client (putMVar first ())
-        pingWithCallback client (putMVar second ())
+        void . forkIO $ ping client [] >>= putMVar first
+        expectClientCommand serv "PING\r\n"
+        void . forkIO $ ping client [] >>= putMVar second
+        expectClientCommand serv "PING\r\n"
         sendAll serv "PONG\r\n"
-        firstResult <- timeout 1000000 (takeMVar first)
-        case firstResult of
-          Nothing -> expectationFailure "first ping did not resolve"
-          Just () -> pure ()
-        threadDelay 100000
-        secondReady <- not <$> isEmptyMVar second
-        when secondReady $
-          expectationFailure "second ping resolved before second PONG"
+        takeMVar first `shouldReturn` Right ()
+        tryReadMVar second `shouldReturn` Nothing
         sendAll serv "PONG\r\n"
-        secondResult <- timeout 1000000 (takeMVar second)
-        case secondResult of
-          Nothing -> expectationFailure "second ping did not resolve"
-          Just () -> pure ()
+        takeMVar second `shouldReturn` Right ()
       it "reports user initiated close" $ \(_, client, _, exited) -> do
         close client []
         result <- atomically $ readTMVar exited
