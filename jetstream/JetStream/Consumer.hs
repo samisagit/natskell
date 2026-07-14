@@ -7,13 +7,10 @@ module JetStream.Consumer
 
 import           Data.Aeson                 (Value, object, toJSON, (.=))
 import           Data.Maybe                 (catMaybes)
-import           JetStream.Consumer.API     (ConsumerAPI (..))
+import           JetStream.Consumer.API
 import           JetStream.Consumer.Types
-    ( ConsumerAction (..)
-    , ConsumerConfigOption
+    ( ConsumerAPI (..)
     , ConsumerConfigRequest
-    , ConsumerKind
-    , ConsumerTarget (..)
     , applyConsumerKind
     , applyConsumerTarget
     , consumerActionValue
@@ -38,7 +35,7 @@ import           JetStream.Types
 consumerAPI :: JetStreamContext -> ConsumerAPI
 consumerAPI context =
   ConsumerAPI
-    { putConsumer = \stream action target kind options ->
+    { putConsumer = \stream action target kind options requestOptions ->
         case consumerRequest context stream action target kind options of
           Left err ->
             pure (Left err)
@@ -46,34 +43,42 @@ consumerAPI context =
             Request.requestJSON context
               subject
               (Just (createConsumerRequest stream actionValue config))
-    , consumerInfo = \stream consumer ->
+              requestOptions
+    , consumerInfo = \stream consumer requestOptions ->
         Request.requestJSON context
           (Subject.consumerInfoSubject context stream consumer)
           Nothing
-    , pauseConsumer = \stream consumer pauseUntil ->
+          requestOptions
+    , pauseConsumer = \stream consumer pauseUntil requestOptions ->
         Request.requestJSON context
           (Subject.consumerPauseSubject context stream consumer)
           (Just (toJSON (consumerPauseRequest (Just pauseUntil))))
-    , resumeConsumer = \stream consumer ->
+          requestOptions
+    , resumeConsumer = \stream consumer requestOptions ->
         Request.requestJSON context
           (Subject.consumerPauseSubject context stream consumer)
           (Just (toJSON (consumerPauseRequest Nothing)))
-    , resetConsumer = \stream consumer options ->
+          requestOptions
+    , resetConsumer = \stream consumer options requestOptions ->
         Request.requestJSON context
           (Subject.consumerResetSubject context stream consumer)
           (Just (toJSON (consumerResetRequest options)))
-    , deleteConsumer = \stream consumer ->
+          requestOptions
+    , deleteConsumer = \stream consumer requestOptions ->
         Request.requestJSON context
           (Subject.consumerDeleteSubject context stream consumer)
           Nothing
-    , listConsumers = \stream options ->
+          requestOptions
+    , listConsumers = \stream options requestOptions ->
         Request.requestJSON context
           (Subject.consumerListSubject context stream)
           (Just (toJSON (consumerListRequest options)))
-    , consumerNames = \stream options ->
+          requestOptions
+    , consumerNames = \stream options requestOptions ->
         Request.requestJSON context
           (Subject.consumerNamesSubject context stream)
           (Just (toJSON (consumerNamesRequest options)))
+          requestOptions
     }
 
 consumerRequest

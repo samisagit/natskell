@@ -1,10 +1,11 @@
 module Publish.Config
-  ( Payload
-  , Headers
-  , PublishConfig
+  ( Headers
+  , PublishConfig (..)
   ) where
 
-import qualified Types.Msg as M
-import           Types.Msg (Headers, Payload, Subject)
+import           Types.Msg (Headers, Subject)
 
-type PublishConfig = (Maybe Payload, Maybe (Maybe M.Msg -> IO ()), Maybe Headers, Maybe Subject)
+data PublishConfig = PublishConfig
+                       { publishHeaders :: Maybe Headers
+                       , publishReplyTo :: Maybe Subject
+                       }

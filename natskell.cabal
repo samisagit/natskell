@@ -54,19 +54,31 @@ library
     natskell-internal,
     jetstream-internal,
     stm  >= 2.5 && < 2.6,
-    bytestring  >= 0.10 && < 0.13
+    bytestring  >= 0.10 && < 0.13,
+    time >= 1.9 && < 1.16
 
   exposed-modules:
     API
     Client
     JetStream.API
     JetStream.Client
+    Nats
+    Nats.Client
+    Nats.Message
+    Nats.Subscription
+    Nats.JetStream
+    Nats.JetStream.Consumer
+    Nats.JetStream.Error
+    Nats.JetStream.Message
+    Nats.JetStream.Publish
+    Nats.JetStream.Stream
 
   hs-source-dirs:
        client
 
 library jetstream-internal
   import:         shared
+  visibility:     private
   build-depends:
     natskell-internal,
     aeson >= 2.1 && < 2.3,
@@ -256,6 +268,14 @@ test-suite fuzz-test
   other-modules:
     ParserSpec
     ValidatorsSpec
+
+test-suite public-api-test
+  import:             shared
+  type:               exitcode-stdio-1.0
+  hs-source-dirs:     test/PublicAPI
+  main-is:            Main.hs
+  build-depends:
+    natskell
 
 benchmark parser-bench
   import:         shared

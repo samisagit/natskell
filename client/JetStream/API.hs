@@ -1,11 +1,47 @@
 -- | Capability record for the JetStream client surface.
 module JetStream.API
-  ( JetStream (..)
-  , AccountAPIStats (..)
-  , AccountInfo (..)
-  , AccountLimits (..)
-  , AccountTier (..)
-  , JetStreamApiError (..)
+  ( JetStream
+  , streams
+  , consumers
+  , publisher
+  , messages
+  , accountInfo
+  , JetStreamRequestOption
+  , withRequestTimeout
+  , Sequence
+  , sequenceFromWord64
+  , sequenceToWord64
+  , AccountAPIStats
+  , accountAPILevel
+  , accountAPITotal
+  , accountAPIErrors
+  , accountAPIInflight
+  , AccountInfo
+  , accountInfoTier
+  , accountInfoDomain
+  , accountInfoAPI
+  , accountInfoTiers
+  , AccountLimits
+  , accountLimitsMaxMemory
+  , accountLimitsMaxStorage
+  , accountLimitsMaxStreams
+  , accountLimitsMaxConsumers
+  , accountLimitsMaxAckPending
+  , accountLimitsMemoryMaxStreamBytes
+  , accountLimitsStorageMaxStreamBytes
+  , accountLimitsMaxBytesRequired
+  , AccountTier
+  , accountTierMemory
+  , accountTierStorage
+  , accountTierReservedMemory
+  , accountTierReservedStorage
+  , accountTierStreams
+  , accountTierConsumers
+  , accountTierLimits
+  , JetStreamApiError
+  , apiErrorCode
+  , apiErrorCodeDetail
+  , apiErrorDescription
   , JetStreamError (..)
   , StreamName
   , ConsumerName
@@ -19,10 +55,21 @@ module JetStream.API
 
 import           JetStream.Consumer.API
 import           JetStream.Error
-    ( JetStreamApiError (..)
+    ( JetStreamApiError
     , JetStreamError (..)
+    , apiErrorCode
+    , apiErrorCodeDetail
+    , apiErrorDescription
     )
 import           JetStream.Message.API
+import           JetStream.Options
+    ( JetStream
+    , accountInfo
+    , consumers
+    , messages
+    , publisher
+    , streams
+    )
 import           JetStream.Publish.API
 import           JetStream.Stream.API
 import           JetStream.Types
@@ -31,22 +78,12 @@ import           JetStream.Types
     , AccountLimits (..)
     , AccountTier (..)
     , ConsumerName
+    , JetStreamRequestOption
     , Payload
+    , Sequence
     , StreamName
     , Subject
+    , sequenceFromWord64
+    , sequenceToWord64
+    , withRequestTimeout
     )
-
--- | JetStream capabilities for streams, consumers, publishing, and pull
--- message workflows.
-data JetStream = JetStream
-                   { streams     :: StreamAPI
-                     -- ^ Manage streams and inspect stream state.
-                   , consumers   :: ConsumerAPI
-                     -- ^ Manage stream consumers.
-                   , publisher   :: PublishAPI
-                     -- ^ Publish messages to JetStream subjects.
-                   , messages    :: MessageAPI
-                     -- ^ Fetch and acknowledge pull-consumer messages.
-                   , accountInfo :: IO (Either JetStreamError AccountInfo)
-                   -- ^ Fetch account-level JetStream usage and limits.
-                   }

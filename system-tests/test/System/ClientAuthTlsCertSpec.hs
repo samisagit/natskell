@@ -2,7 +2,7 @@
 
 module ClientAuthTlsCertSpec (spec) where
 
-import           API                    (Client (..))
+import           API
 import           Client
 import           Control.Concurrent     (forkIO)
 import           Control.Concurrent.STM
@@ -50,9 +50,10 @@ spec =
           forkIO $ do
             outcome <- atomically $ (Left <$> readTMVar pinged) `orElse` (Right <$> readTMVar exitResult)
             case outcome of
-              Left _  -> close client
+              Left _  -> close client []
               Right _ -> pure ()
-          ping client (atomically (putTMVar pinged ()))
+          _ <- ping client []
+          atomically (putTMVar pinged ())
           result <- atomically $ readTMVar exitResult
           result `shouldBe` ExitClosedByUser
         it "rejects tls client without required certificate" $ \(Endpoints natsHost natsPort) -> do
@@ -67,7 +68,7 @@ spec =
           connectResult <- newClient [(natsHost, natsPort)] clientOptions
           case connectResult of
             Right client -> do
-              close client
+              close client []
               expectationFailure "TLS client connected without a required certificate"
             Left _ ->
               pure ()

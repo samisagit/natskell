@@ -17,7 +17,10 @@ import           State.Store
     , setServerInfo
     , updateLogContextFromInfo
     )
-import           State.Types            (ClientExitReason (ExitServerError))
+import           State.Types
+    ( ClientExitReason (ExitServerError)
+    , serverErrorFromProtocol
+    )
 import           Subscription.Store     (SubscriptionStore, dispatchMessage)
 import qualified Types.Err              as Err
 import qualified Types.Msg              as Msg
@@ -60,7 +63,7 @@ routeMessage state store parsed =
         if Err.isFatal err
           then do
             logMessage Error ("fatal server error: " ++ show err)
-            pure (RouteExit (ExitServerError err))
+            pure (RouteExit (ExitServerError (serverErrorFromProtocol err)))
           else do
             logMessage Warn ("server error: " ++ show err)
             pure RouteContinue

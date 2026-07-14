@@ -1,14 +1,42 @@
 module JetStream.Message.API
-  ( MessageAPI (..)
+  ( MessageAPI
+  , fetch
+  , consumePush
+  , createOrderedConsumer
+  , ack
+  , nak
+  , inProgress
+  , term
   , FetchOption
   , FetchWait (..)
   , Headers
-  , Message (..)
-  , OrderedConsumer (..)
+  , Message
+  , messageSubject
+  , messagePayload
+  , messageHeaders
+  , messageReplyTo
+  , messageStatus
+  , MessageMetadata
+  , messageMetadata
+  , messageMetadataStream
+  , messageMetadataConsumer
+  , messageMetadataStreamSequence
+  , messageMetadataConsumerSequence
+  , messageMetadataNumDelivered
+  , messageMetadataNumPending
+  , messageMetadataTimestamp
+  , messageMetadataDomain
+  , OrderedConsumer
+  , orderedConsumerInfo
+  , fetchOrdered
+  , stopOrderedConsumer
   , OrderedConsumerOption
   , PushConsumeOption
-  , PushSubscription (..)
-  , PullResponse (..)
+  , PushSubscription
+  , stopPushSubscription
+  , PullResponse
+  , pullResponseMessages
+  , pullResponseStatus
   , PullStatus (..)
   , withFetchBatch
   , withFetchWait
@@ -21,18 +49,46 @@ module JetStream.Message.API
   , withPushQueueGroup
   ) where
 
-import           JetStream.Error         (JetStreamError)
 import           JetStream.Message.Types
     ( FetchOption
     , FetchWait (..)
     , Headers
     , Message (..)
-    , OrderedConsumer (..)
+    , MessageAPI
+    , MessageMetadata
+    , OrderedConsumer
     , OrderedConsumerOption
-    , PullResponse (..)
+    , PullResponse
     , PullStatus (..)
     , PushConsumeOption
-    , PushSubscription (..)
+    , PushSubscription
+    , ack
+    , consumePush
+    , createOrderedConsumer
+    , fetch
+    , fetchOrdered
+    , inProgress
+    , messageHeaders
+    , messageMetadata
+    , messageMetadataConsumer
+    , messageMetadataConsumerSequence
+    , messageMetadataDomain
+    , messageMetadataNumDelivered
+    , messageMetadataNumPending
+    , messageMetadataStream
+    , messageMetadataStreamSequence
+    , messageMetadataTimestamp
+    , messagePayload
+    , messageReplyTo
+    , messageStatus
+    , messageSubject
+    , nak
+    , orderedConsumerInfo
+    , pullResponseMessages
+    , pullResponseStatus
+    , stopOrderedConsumer
+    , stopPushSubscription
+    , term
     , withFetchBatch
     , withFetchWait
     , withOrderedConsumerDeliverPolicy
@@ -43,22 +99,3 @@ import           JetStream.Message.Types
     , withOrderedConsumerReplayPolicy
     , withPushQueueGroup
     )
-import           JetStream.Types         (ConsumerName, StreamName, Subject)
-
--- | Pull-consumer message operations.
-data MessageAPI = MessageAPI
-                    { fetch :: StreamName -> ConsumerName -> [FetchOption] -> IO (Either JetStreamError PullResponse)
-                      -- ^ Fetch messages for a pull consumer.
-                    , consumePush :: Subject -> [PushConsumeOption] -> (Message -> IO ()) -> IO PushSubscription
-                      -- ^ Subscribe to a push consumer deliver subject.
-                    , createOrderedConsumer :: StreamName -> [OrderedConsumerOption] -> IO (Either JetStreamError OrderedConsumer)
-                      -- ^ Create a client-managed ordered pull consumer.
-                    , ack :: Message -> IO (Either JetStreamError ())
-                      -- ^ Acknowledge successful message processing.
-                    , nak :: Message -> IO (Either JetStreamError ())
-                      -- ^ Negatively acknowledge a message.
-                    , inProgress :: Message -> IO (Either JetStreamError ())
-                      -- ^ Tell the server that message processing is still in progress.
-                    , term :: Message -> IO (Either JetStreamError ())
-                    -- ^ Terminate message redelivery.
-                    }

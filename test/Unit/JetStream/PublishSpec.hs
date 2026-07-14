@@ -17,10 +17,10 @@ spec =
           , withPublishExpectation (ExpectedLastSequence 12)
           , withHeaders [("Nats-Expected-Test", "custom")]
           ]
-          `shouldBe` [ ("Nats-Msg-Id", "msg-1")
-                     , ("Nats-Expected-Stream", "ORDERS")
+          `shouldBe` [ ("Nats-Expected-Test", "custom")
                      , ("Nats-Expected-Last-Sequence", "12")
-                     , ("Nats-Expected-Test", "custom")
+                     , ("Nats-Expected-Stream", "ORDERS")
+                     , ("Nats-Msg-Id", "msg-1")
                      ]
 
       it "keeps publish expectations mutually exclusive" $ do
@@ -29,7 +29,7 @@ spec =
           , withPublishExpectation (ExpectedLastSubjectSequence 7)
           , withPublishExpectation (ExpectedLastMsgId "msg-0")
           ]
-          `shouldBe` [("Nats-Expected-Last-Sequence", "12")]
+          `shouldBe` [("Nats-Expected-Last-Msg-Id", "msg-0")]
 
     describe "PublishAck" $ do
       it "decodes required and optional publish ack fields" $ do

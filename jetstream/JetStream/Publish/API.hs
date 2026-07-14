@@ -1,6 +1,11 @@
 module JetStream.Publish.API
-  ( PublishAPI (..)
-  , PublishAck (..)
+  ( PublishAPI
+  , publish
+  , PublishAck
+  , publishAckStream
+  , publishAckSequence
+  , publishAckDuplicate
+  , publishAckDomain
   , PublishExpectation (..)
   , PublishOption
   , withMsgId
@@ -9,20 +14,18 @@ module JetStream.Publish.API
   , withHeaders
   ) where
 
-import           JetStream.Error         (JetStreamError)
 import           JetStream.Publish.Types
-    ( PublishAck (..)
+    ( PublishAPI
+    , PublishAck
     , PublishExpectation (..)
     , PublishOption
+    , publish
+    , publishAckDomain
+    , publishAckDuplicate
+    , publishAckSequence
+    , publishAckStream
     , withExpectedStream
     , withHeaders
     , withMsgId
     , withPublishExpectation
     )
-import           JetStream.Types         (Payload, Subject)
-
--- | Publish operations for JetStream subjects.
---
--- The 'publish' field publishes a message and waits for a JetStream publish
--- acknowledgement.
-newtype PublishAPI = PublishAPI { publish :: Subject -> Payload -> [PublishOption] -> IO (Either JetStreamError PublishAck) }

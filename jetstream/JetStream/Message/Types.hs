@@ -1,7 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module JetStream.Message.Types
-  ( AckVerb (..)
+  ( MessageAPI (..)
+  , AckVerb (..)
   , FetchOption
   , FetchWait (..)
   , Headers
@@ -48,6 +49,7 @@ import           Data.Char                (isDigit, toLower)
 import           Data.Maybe               (isJust)
 import           Data.Time.Clock          (NominalDiffTime, UTCTime)
 import qualified Data.Time.Clock.POSIX    as Time
+import           Data.Word                (Word64)
 import           JetStream.Consumer.Types (ConsumerFilter, ConsumerInfo)
 import           JetStream.Error          (JetStreamError)
 import           JetStream.Types
@@ -55,12 +57,27 @@ import           JetStream.Types
     , ConsumerName
     , DeliverPolicy (..)
     , Headers
+    , JetStreamRequestOption
     , Payload
     , ReplayPolicy
+    , Sequence
     , StreamName
     , Subject
     , applyCallOptions
+    , sequenceFromWord64
     )
+
+-- | Message consumption and acknowledgement operations. The public module
+-- hides the constructor so this capability can grow additively.
+data MessageAPI = MessageAPI
+                    { fetch :: StreamName -> ConsumerName -> [FetchOption] -> [JetStreamRequestOption] -> IO (Either JetStreamError PullResponse)
+                    , consumePush :: Subject -> [PushConsumeOption] -> [JetStreamRequestOption] -> (Message -> IO ()) -> IO (Either JetStreamError PushSubscription)
+                    , createOrderedConsumer :: StreamName -> [OrderedConsumerOption] -> [JetStreamRequestOption] -> IO (Either JetStreamError OrderedConsumer)
+                    , ack :: Message -> [JetStreamRequestOption] -> IO (Either JetStreamError ())
+                    , nak :: Message -> [JetStreamRequestOption] -> IO (Either JetStreamError ())
+                    , inProgress :: Message -> [JetStreamRequestOption] -> IO (Either JetStreamError ())
+                    , term :: Message -> [JetStreamRequestOption] -> IO (Either JetStreamError ())
+                    }
 
 data PullRequest = PullRequest
                      { pullRequestBatch :: Int
@@ -101,7 +118,7 @@ data PullResponse = PullResponse
 
 data Message = Message
                  { messageSubject :: Subject
-                 , messagePayload :: Maybe Payload
+                 , messagePayload :: Payload
                  , messageHeaders :: Maybe Headers
                  , messageReplyTo :: Maybe Subject
                  , messageStatus  :: Maybe PullStatus
@@ -111,8 +128,8 @@ data Message = Message
 data MessageMetadata = MessageMetadata
                          { messageMetadataStream           :: StreamName
                          , messageMetadataConsumer         :: ConsumerName
-                         , messageMetadataStreamSequence   :: Integer
-                         , messageMetadataConsumerSequence :: Integer
+                         , messageMetadataStreamSequence   :: Sequence
+                         , messageMetadataConsumerSequence :: Sequence
                          , messageMetadataNumDelivered     :: Integer
                          , messageMetadataNumPending       :: Integer
                          , messageMetadataTimestamp        :: UTCTime
@@ -120,7 +137,7 @@ data MessageMetadata = MessageMetadata
                          }
   deriving (Eq, Show)
 
-newtype PushSubscription = PushSubscription { stopPushSubscription :: IO () }
+newtype PushSubscription = PushSubscription { stopPushSubscription :: IO (Either JetStreamError ()) }
 
 newtype PushConsumeConfig = PushConsumeConfig { pushConsumeQueueGroup :: Maybe Subject }
 
@@ -138,9 +155,9 @@ withPushQueueGroup queueGroup config =
   config { pushConsumeQueueGroup = Just queueGroup }
 
 data OrderedConsumer = OrderedConsumer
-                         { orderedConsumerInfo :: IO (Either JetStreamError ConsumerInfo)
-                         , fetchOrdered :: [FetchOption] -> IO (Either JetStreamError PullResponse)
-                         , stopOrderedConsumer :: IO ()
+                         { orderedConsumerInfo :: [JetStreamRequestOption] -> IO (Either JetStreamError ConsumerInfo)
+                         , fetchOrdered :: [FetchOption] -> [JetStreamRequestOption] -> IO (Either JetStreamError PullResponse)
+                         , stopOrderedConsumer :: [JetStreamRequestOption] -> IO (Either JetStreamError ())
                          }
 
 data OrderedConsumerConfig = OrderedConsumerConfig
@@ -283,8 +300,8 @@ parseMetadataSubject subject = do
   stream <- tokenAt ackStreamTokenPos tokens
   consumer <- tokenAt ackConsumerTokenPos tokens
   delivered <- parseNum =<< tokenAt ackNumDeliveredTokenPos tokens
-  streamSeq <- parseNum =<< tokenAt ackStreamSeqTokenPos tokens
-  consumerSeq <- parseNum =<< tokenAt ackConsumerSeqTokenPos tokens
+  streamSeq <- parseSequence =<< tokenAt ackStreamSeqTokenPos tokens
+  consumerSeq <- parseSequence =<< tokenAt ackConsumerSeqTokenPos tokens
   timestamp <- nanosToTime <$> (parseNum =<< tokenAt ackTimestampTokenPos tokens)
   pending <- parseNum =<< tokenAt ackNumPendingTokenPos tokens
   let domain = nonEmpty =<< tokenAt ackDomainTokenPos tokens
@@ -328,6 +345,13 @@ parseNum bytes
   | BS.null bytes = Just 0
   | BC.all isDigit bytes = Just (read (BC.unpack bytes))
   | otherwise = Nothing
+
+parseSequence :: ByteString -> Maybe Sequence
+parseSequence bytes = do
+  value <- parseNum bytes
+  if value < 0 || value > toInteger (maxBound :: Word64)
+    then Nothing
+    else Just (sequenceFromWord64 (fromInteger value))
 
 nanosToTime :: Integer -> UTCTime
 nanosToTime nanoseconds =

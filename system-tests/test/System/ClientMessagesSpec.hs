@@ -3,10 +3,18 @@
 module ClientMessagesSpec (spec) where
 
 import           API
-    ( Client (..)
-    , MsgView (..)
+    ( Client
+    , close
+    , flush
+    , headers
+    , payload
+    , publish
+    , replyTo
+    , reset
+    , sid
+    , subject
+    , subscribe
     , withHeaders
-    , withPayload
     , withQueueGroup
     )
 import           Client
@@ -43,23 +51,22 @@ messageTest payload loggerOptions (Endpoints natsHost natsPort) = do
   promptClient <- newTestClient [(natsHost, natsPort)] $
     withConnectName "0e81e61a-932f-4036-9cdd-9a65fb4ed829"
       : loggerOptions
-  subscribe assertClient topic [] $ \msg -> do
-    case msg of
-      Nothing -> error "Received empty message"
-      Just msg' -> do
-        unsubscribe assertClient (sid msg')
-        putMVar lock msg'
-        putMVar sidBox (sid msg')
-        done wg
-  flush assertClient
-  let publishOptions = maybe [] (\payloadValue -> [withPayload payloadValue]) payload
-  publish promptClient topic publishOptions
+  void . subscribe assertClient topic [] $ \msg -> do
+    putMVar lock msg
+    putMVar sidBox (sid msg)
+    done wg
+  flush assertClient []
+  void (publish promptClient topic (fromMaybe "" payload) [])
   wait wg
   msg <- takeMVar lock
   sid' <- takeMVar sidBox
-  msg `shouldBe` MsgView topic sid' Nothing payload Nothing
-  close assertClient
-  close promptClient
+  subject msg `shouldBe` topic
+  sid msg `shouldBe` sid'
+  replyTo msg `shouldBe` Nothing
+  API.payload msg `shouldBe` fromMaybe "" payload
+  headers msg `shouldBe` Nothing
+  close assertClient []
+  close promptClient []
 
 queueGroupTest :: [ConfigOption] -> Endpoints -> IO ()
 queueGroupTest loggerOptions (Endpoints natsHost natsPort) = do
@@ -80,9 +87,9 @@ queueGroupTest loggerOptions (Endpoints natsHost natsPort) = do
     withConnectName "4185b922-9a1c-4c09-82e6-8f6f06ed434b"
       : loggerOptions
   let cleanup = do
-        close assertClientA
-        close assertClientB
-        close promptClient
+        close assertClientA []
+        close assertClientB []
+        close promptClient []
       record body = do
         count <- modifyMVar received $ \bodies -> do
           let bodies' = body : bodies
@@ -91,17 +98,14 @@ queueGroupTest loggerOptions (Endpoints natsHost natsPort) = do
           void (tryPutMVar expectedDone ())
         when (count > expectedCount) $
           void (tryPutMVar extraDelivery ())
-      handle msg =
-        case msg of
-          Nothing   -> record "<empty>"
-          Just msg' -> record (fromMaybe "<empty payload>" (payload msg'))
+      handle msg = record (payload msg)
   (do
       _ <- subscribe assertClientA topic [withQueueGroup queueGroup] handle
       _ <- subscribe assertClientB topic [withQueueGroup queueGroup] handle
-      flush assertClientA
-      flush assertClientB
-      mapM_ (\body -> publish promptClient topic [withPayload body]) payloads
-      flush promptClient
+      flush assertClientA []
+      flush assertClientB []
+      mapM_ (\body -> void (publish promptClient topic body [])) payloads
+      flush promptClient []
       delivered <- timeout (5 * 1000000) (takeMVar expectedDone)
       case delivered of
         Nothing -> expectationFailure "queue group did not receive every message"
@@ -125,23 +129,21 @@ normalSubscriptionReconnectTest loggerOptions (Endpoints natsHost natsPort) = do
     withConnectName "reconnect-normal-publisher"
       : loggerOptions
   let cleanup = do
-        close subscriber
-        close publisher
+        close subscriber []
+        close publisher []
   (do
       _ <- subscribe subscriber topic [] (putMVar received)
-      flush subscriber
-      reset subscriber
-      flush subscriber
-      publish publisher topic [withPayload "after-reconnect"]
-      flush publisher
+      flush subscriber []
+      reset subscriber []
+      flush subscriber []
+      void (publish publisher topic "after-reconnect" [])
+      flush publisher []
       delivery <- timeout (5 * 1000000) (takeMVar received)
       case delivery of
         Nothing ->
           expectationFailure "normal subscription did not receive after reconnect"
-        Just Nothing ->
-          expectationFailure "normal subscription received an empty callback"
-        Just (Just msg) ->
-          payload msg `shouldBe` Just "after-reconnect")
+        Just msg ->
+          payload msg `shouldBe` "after-reconnect")
     `finally` cleanup
 
 queueSubscriptionReconnectTest :: [ConfigOption] -> Endpoints -> IO ()
@@ -156,23 +158,21 @@ queueSubscriptionReconnectTest loggerOptions (Endpoints natsHost natsPort) = do
     withConnectName "reconnect-queue-publisher"
       : loggerOptions
   let cleanup = do
-        close subscriber
-        close publisher
+        close subscriber []
+        close publisher []
   (do
       _ <- subscribe subscriber topic [withQueueGroup queueGroup] (putMVar received)
-      flush subscriber
-      reset subscriber
-      flush subscriber
-      publish publisher topic [withPayload "queued-after-reconnect"]
-      flush publisher
+      flush subscriber []
+      reset subscriber []
+      flush subscriber []
+      void (publish publisher topic "queued-after-reconnect" [])
+      flush publisher []
       delivery <- timeout (5 * 1000000) (takeMVar received)
       case delivery of
         Nothing ->
           expectationFailure "queue subscription did not receive after reconnect"
-        Just Nothing ->
-          expectationFailure "queue subscription received an empty callback"
-        Just (Just msg) ->
-          payload msg `shouldBe` Just "queued-after-reconnect")
+        Just msg ->
+          payload msg `shouldBe` "queued-after-reconnect")
     `finally` cleanup
 
 headersRoundTripTest :: [ConfigOption] -> Endpoints -> IO ()
@@ -192,20 +192,18 @@ headersRoundTripTest loggerOptions (Endpoints natsHost natsPort) = do
     withConnectName "headers-round-trip-publisher"
       : loggerOptions
   let cleanup = do
-        close subscriber
-        close publisher
+        close subscriber []
+        close publisher []
   (do
       _ <- subscribe subscriber topic [] (putMVar received)
-      flush subscriber
-      publish publisher topic [withHeaders expectedHeaders, withPayload "header-payload"]
-      flush publisher
+      flush subscriber []
+      void (publish publisher topic "header-payload" [withHeaders expectedHeaders])
+      flush publisher []
       delivery <- timeout (5 * 1000000) (takeMVar received)
       case delivery of
         Nothing ->
           expectationFailure "header message was not delivered"
-        Just Nothing ->
-          expectationFailure "header subscription received an empty callback"
-        Just (Just msg) -> do
-          payload msg `shouldBe` Just "header-payload"
+        Just msg -> do
+          payload msg `shouldBe` "header-payload"
           headers msg `shouldBe` Just expectedHeaders)
     `finally` cleanup

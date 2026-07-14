@@ -10,10 +10,14 @@ module State.Types
   , ConnectError (..)
   , ConnectAttemptError (..)
   , ConnectFailure (..)
+  , ServerError
+  , serverErrorReason
+  , serverErrorFromProtocol
   , ClientExitReason (..)
   , ClientStatus (..)
   ) where
 
+import           Data.ByteString  (ByteString)
 import           Lib.Logger.Types (LoggerConfig)
 import           Types.Connect    (Connect)
 import qualified Types.Err        as Err
@@ -51,9 +55,22 @@ data ConnectFailure = ConnectTransportFailure String
                     | ConnectHandshakeTimeout
   deriving (Eq, Show)
 
+-- | A server-reported protocol error.
+--
+-- Its wire representation is intentionally opaque so that new server error
+-- categories do not force changes to the public type.
+newtype ServerError = ServerError ByteString
+  deriving (Eq, Show)
+
+serverErrorReason :: ServerError -> ByteString
+serverErrorReason (ServerError reason) = reason
+
+serverErrorFromProtocol :: Err.Err -> ServerError
+serverErrorFromProtocol = ServerError . Err.errReason
+
 data ClientExitReason = ExitClosedByUser
                       | ExitRetriesExhausted (Maybe String)
-                      | ExitServerError Err.Err
+                      | ExitServerError ServerError
                       | ExitResetRequested
   deriving (Eq, Show)
 

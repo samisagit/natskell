@@ -1,138 +1,156 @@
 -- | Internal home for the core NATS client capability surface.
+--
+-- The public @API@ module deliberately hides the constructors defined here.
+-- Keeping construction private lets the capability grow without changing the
+-- public representation.
 module Client.API
   ( Client (..)
-  , MsgView (..)
+  , Message (..)
+  , MsgView
+  , Subscription (..)
+  , subscriptionSid
+  , NatsError (..)
+  , Subject
+  , Payload
+  , Headers
   , PublishOption
   , SubscribeOption
+  , RequestOption
+  , UnsubscribeOption
+  , PingOption
+  , FlushOption
+  , ResetOption
+  , CloseOption
+  , RequestConfig (..)
+  , UnsubscribeConfig (..)
+  , PingConfig (..)
+  , FlushConfig (..)
+  , ResetConfig (..)
+  , CloseConfig (..)
   , withSubscriptionExpiry
   , withQueueGroup
-  , withPayload
-  , withReplyCallback
   , withReplyTo
   , withHeaders
+  , withRequestTimeout
+  , withRequestHeaders
   ) where
 
 import qualified Data.ByteString    as BS
 import           Data.Time.Clock    (NominalDiffTime)
 import           Lib.CallOption     (CallOption)
-import           Publish.Config     (PublishConfig)
+import           Publish.Config     (PublishConfig (..))
+import           State.Types        (ClientExitReason)
 import           Subscription.Types (SubscribeConfig (..))
-import qualified Types.Msg          as Msg
 import           Types.Msg          (Headers, Payload, SID, Subject)
 
--- | Client capabilities for publishing, subscribing, and lifecycle control.
+-- | Client capabilities for publishing, subscribing, request-reply, and
+-- lifecycle control.
+--
+-- This constructor is internal. Public callers receive a 'Client' from
+-- 'Client.newClient' and use the named operations re-exported by @API@.
 data Client = Client
-                { publish :: Subject -> [PublishOption] -> IO ()
-                  -- ^ Publish a message, optionally overriding publish options.
-                , subscribe :: Subject -> [SubscribeOption] -> (Maybe MsgView -> IO ()) -> IO SID
-                  -- ^ Subscribe to a subject and handle delivered messages.
-                , request :: Subject -> [SubscribeOption] -> (Maybe MsgView -> IO ()) -> IO SID
-                  -- ^ Subscribe with request semantics and auto-unsubscribe after a reply.
-                , unsubscribe :: SID -> IO ()
-                  -- ^ Unsubscribe from a subscription by SID.
+                { publish :: Subject -> Payload -> [PublishOption] -> IO (Either NatsError ())
+                  -- ^ Publish a message.
+                , subscribe :: Subject -> [SubscribeOption] -> (Message -> IO ()) -> IO (Either NatsError Subscription)
+                  -- ^ Subscribe to a subject until explicitly unsubscribed.
+                , subscribeOnce :: Subject -> [SubscribeOption] -> (Message -> IO ()) -> IO (Either NatsError Subscription)
+                  -- ^ Subscribe until the first message is delivered.
+                , request :: Subject -> Payload -> [RequestOption] -> IO (Either NatsError Message)
+                  -- ^ Publish a request and wait for one response.
+                , unsubscribe :: Subscription -> [UnsubscribeOption] -> IO (Either NatsError ())
+                  -- ^ Unsubscribe a subscription created by this client.
                 , newInbox :: IO Subject
                   -- ^ Create a unique inbox subject for replies.
-                , ping :: IO () -> IO ()
-                  -- ^ Send a ping and run the callback when a pong arrives.
-                , flush :: IO ()
-                  -- ^ Flush buffered writes to the server.
-                , reset :: IO ()
+                , ping :: [PingOption] -> IO (Either NatsError ())
+                  -- ^ Round trip a PING through the server.
+                , flush :: [FlushOption] -> IO (Either NatsError ())
+                  -- ^ Wait until all previously buffered writes reach the server.
+                , reset :: [ResetOption] -> IO ()
                   -- ^ Reset the client connection state.
-                , close :: IO ()
+                , close :: [CloseOption] -> IO ()
                 -- ^ Close the client connection and release resources.
                 }
 
--- | MsgView represents a MSG in the NATS protocol.
-data MsgView = MsgView
-                 { -- | The subject of the message.
-                   subject :: BS.ByteString
-                   -- | The SID (subscription ID) of the message.
-                 , sid     :: BS.ByteString
-                   -- | The replyTo subject, if any.
-                 , replyTo :: Maybe BS.ByteString
-                   -- | The payload of the message, if any.
-                 , payload :: Maybe BS.ByteString
-                   -- | Headers associated with the message, if any.
-                 , headers :: Maybe [(BS.ByteString, BS.ByteString)]
+-- | A message delivered by NATS.
+--
+-- NATS always has a payload, which may be empty. This is intentionally
+-- represented by a strict 'BS.ByteString', not @Maybe ByteString@.
+data Message = Message
+                 { subject :: Subject
+                 , sid     :: SID
+                 , replyTo :: Maybe Subject
+                 , payload :: Payload
+                 , headers :: Maybe Headers
                  }
+  deriving (Eq, Show)
+
+-- | Compatibility name retained for code written against pre-0.4 releases.
+type MsgView = Message
+
+-- | An opaque handle to an active subscription.
+newtype Subscription = Subscription SID
+  deriving (Eq, Show)
+
+-- | The protocol identifier used by the legacy @API@ module. New code should
+-- treat 'Subscription' as an opaque handle.
+subscriptionSid :: Subscription -> SID
+subscriptionSid (Subscription value) = value
+
+-- | Failures reported by core NATS operations.
+data NatsError = NatsValidationError BS.ByteString
+               | NatsPayloadTooLarge Int Int
+               | NatsConnectionClosed ClientExitReason
+               | NatsRequestTimedOut
+               | NatsNoResponders
   deriving (Eq, Show)
 
 type PublishOption = CallOption PublishConfig
 
 type SubscribeOption = CallOption SubscribeConfig
 
--- | withSubscriptionExpiry sets the reply subscription expiry in seconds.
--- Default: no expiry (reply subscriptions stay open until unsubscribe).
---
--- __Examples:__
---
--- @
--- {-# LANGUAGE OverloadedStrings #-}
---
--- subscribe client \"events.created\" [withSubscriptionExpiry 2] print
--- @
+data RequestConfig = RequestConfig
+                       { requestTimeout :: NominalDiffTime
+                       , requestHeaders :: Maybe Headers
+                       }
+
+type RequestOption = CallOption RequestConfig
+
+data UnsubscribeConfig = UnsubscribeConfig
+type UnsubscribeOption = CallOption UnsubscribeConfig
+
+data PingConfig = PingConfig
+type PingOption = CallOption PingConfig
+
+data FlushConfig = FlushConfig
+type FlushOption = CallOption FlushConfig
+
+data ResetConfig = ResetConfig
+type ResetOption = CallOption ResetConfig
+
+data CloseConfig = CloseConfig
+type CloseOption = CallOption CloseConfig
+
+-- | Stop a one-shot subscription if it has not received a message within the
+-- given interval.
 withSubscriptionExpiry :: NominalDiffTime -> SubscribeOption
 withSubscriptionExpiry expirySeconds cfg = cfg { expiry = Just expirySeconds }
 
--- | withQueueGroup sets the queue group for a subscription.
--- Default: no queue group.
+-- | Deliver messages to one member of the named queue group.
 withQueueGroup :: Subject -> SubscribeOption
 withQueueGroup queueGroup cfg = cfg { subscribeQueueGroup = Just queueGroup }
 
--- | withPayload is used to set the payload for a publish operation.
--- Default: no payload.
---
--- __Examples:__
---
--- @
--- {-# LANGUAGE OverloadedStrings #-}
---
--- publish client \"updates\" [withPayload \"hello\"]
--- @
-withPayload :: Payload -> PublishOption
-withPayload payload (_, callback, headers, replyTo') =
-  (Just payload, callback, headers, replyTo')
-
--- | withReplyCallback is used to set a callback for a reply to a publish operation.
--- Default: no reply subscription; publishes are fire-and-forget.
---
--- __Examples:__
---
--- @
--- {-# LANGUAGE OverloadedStrings #-}
---
--- publish client \"service.echo\" [withReplyCallback print]
--- @
-withReplyCallback :: (Maybe MsgView -> IO ()) -> PublishOption
-withReplyCallback callback (payload, _, headers, replyTo') =
-  (payload, Just (callback . fmap (\msg -> MsgView
-    { subject = Msg.subject msg
-    , sid = Msg.sid msg
-    , replyTo = Msg.replyTo msg
-    , payload = Msg.payload msg
-    , headers = Msg.headers msg
-    })), headers, replyTo')
-
--- | withReplyTo sets an explicit reply subject for a publish operation.
--- Default: no reply subject unless a reply callback is configured.
---
--- This option only controls the outgoing reply subject. It does not create a
--- subscription; callers that expect multiple replies should subscribe to the
--- reply subject themselves.
+-- | Set the reply subject on an outgoing publish.
 withReplyTo :: Subject -> PublishOption
-withReplyTo replySubject (payload, callback, headers, _) =
-  (payload, callback, headers, Just replySubject)
+withReplyTo replySubject cfg = cfg { publishReplyTo = Just replySubject }
 
--- | withHeaders is used to set headers for a publish operation.
--- Default: no headers.
---
--- __Examples:__
---
--- @
--- {-# LANGUAGE OverloadedStrings #-}
---
--- publish client \"updates\" [withHeaders [(\"source\", \"test\")]]
--- @
+-- | Set headers on an outgoing publish.
 withHeaders :: Headers -> PublishOption
-withHeaders headers (payload, callback, _, replyTo') =
-  (payload, callback, Just headers, replyTo')
+withHeaders messageHeaders cfg = cfg { publishHeaders = Just messageHeaders }
+
+-- | Set the amount of time to wait for a request reply.
+withRequestTimeout :: NominalDiffTime -> RequestOption
+withRequestTimeout timeout cfg = cfg { requestTimeout = max 0 timeout }
+
+-- | Set headers on an outgoing request.
+withRequestHeaders :: Headers -> RequestOption
+withRequestHeaders messageHeaders cfg = cfg { requestHeaders = Just messageHeaders }

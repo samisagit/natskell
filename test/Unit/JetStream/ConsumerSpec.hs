@@ -26,6 +26,14 @@ spec = do
       eitherDecode (encode targetKindConsumerConfigRequest)
         `shouldBe` Right targetKindConsumerConfigValue
 
+    it "applies consumer options from left to right" $ do
+      let request = consumerConfigRequest
+            [ withConsumerDeliverPolicy DeliverAll
+            , withConsumerDeliverPolicy DeliverLast
+            ]
+      eitherDecode (encode request)
+        `shouldBe` Right (object ["deliver_policy" .= ("last" :: String)])
+
   describe "Consumer reset request JSON" $ do
     it "encodes an optional reset sequence" $ do
       eitherDecode (encode (consumerResetRequest [withConsumerResetSequence 7]))
@@ -33,7 +41,7 @@ spec = do
 
   describe "ConsumerInfo JSON" .
     it "decodes server responses into concrete fields" $ do
-      eitherDecode consumerInfoJSON `shouldBe` Right consumerInfo
+      eitherDecode consumerInfoJSON `shouldBe` Right consumerInfoFixture
 
   describe "ConsumerResetResponse JSON" .
     it "decodes reset metadata with the updated consumer info" $ do
@@ -47,7 +55,7 @@ spec = do
           { consumerListTotal = 1
           , consumerListOffset = 0
           , consumerListLimit = 1024
-          , consumerListConsumers = [consumerInfo]
+          , consumerListConsumers = [consumerInfoFixture]
           }
 
     it "decodes consumer name responses" $ do
@@ -148,8 +156,8 @@ consumerNamesJSON :: LBS.ByteString
 consumerNamesJSON =
   "{\"type\":\"io.nats.jetstream.api.v1.consumer_names_response\",\"total\":2,\"offset\":0,\"limit\":1024,\"consumers\":[\"orders-puller\",\"orders-worker\"]}"
 
-consumerInfo :: ConsumerInfo
-consumerInfo = ConsumerInfo
+consumerInfoFixture :: ConsumerInfo
+consumerInfoFixture = ConsumerInfo
   { consumerInfoStreamName = "ORDERS"
   , consumerInfoName = "orders-puller"
   , consumerInfoCreated = timestamp

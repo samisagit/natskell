@@ -2,11 +2,12 @@
 
 module ClientCloseSpec (spec) where
 
-import           API                    (Client (..), withPayload)
+import           API
 import           Client
 import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Exception      (finally)
+import           Control.Monad          (void)
 import           System.Timeout
 import           Test.Hspec
 import           TestSupport
@@ -22,7 +23,7 @@ spec = do
       , withExitAction (\r -> atomically (putTMVar exitResult r) >> done wg)
       ]
       ++ loggerOptions
-    close client
+    close client []
     wait wg
     result <- atomically $ readTMVar exitResult
     result `shouldBe` ExitClosedByUser
@@ -43,19 +44,19 @@ spec = do
         : loggerOptions
     let cleanup = do
           _ <- tryPutMVar releaseCallback ()
-          close subscriber
-          close publisher
+          close subscriber []
+          close publisher []
     (do
         _ <- subscribe subscriber topic [] $ \_ -> do
           putMVar callbackStarted ()
           takeMVar releaseCallback
           putMVar callbackFinished ()
-        flush subscriber
-        publish publisher topic [withPayload "wait-for-callback"]
-        flush publisher
+        flush subscriber []
+        void (publish publisher topic "wait-for-callback" [])
+        flush publisher []
         started <- timeout (5 * 1000000) (takeMVar callbackStarted)
         started `shouldBe` Just ()
-        _ <- forkIO $ close subscriber >> putMVar closeReturned ()
+        _ <- forkIO $ close subscriber [] >> putMVar closeReturned ()
         earlyClose <- timeout 300000 (takeMVar closeReturned)
         case earlyClose of
           Nothing ->

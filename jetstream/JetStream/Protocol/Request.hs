@@ -9,7 +9,6 @@ module JetStream.Protocol.Request
   ) where
 
 import qualified Client.API                 as Nats
-import           Control.Concurrent.STM
 import           Control.Monad              (void)
 import           Data.Aeson
 import qualified Data.Aeson                 as Aeson
@@ -17,50 +16,50 @@ import           Data.Aeson.Types           (Parser, parseEither)
 import qualified Data.ByteString            as BS
 import qualified Data.ByteString.Lazy       as LBS
 import           JetStream.Error
-import           JetStream.Options          (JetStreamContext (..))
+import           JetStream.Options
+    ( JetStreamContext (..)
+    , requestTimeoutMicros
+    )
 import           JetStream.Protocol.Headers (statusError)
-import           JetStream.Types            (Headers, Payload, Subject)
-import           System.Timeout             (timeout)
+import           JetStream.Types
+    ( Headers
+    , JetStreamRequestOption
+    , Payload
+    , Subject
+    )
 
-requestMsg :: JetStreamContext -> Subject -> Maybe Payload -> Headers -> IO (Either JetStreamError Nats.MsgView)
-requestMsg ctx subject payload headers = do
-  replyBox <- newEmptyTMVarIO
-  let publishOptions =
-        maybe [] (\body -> [Nats.withPayload body]) payload
-          ++ [Nats.withReplyCallback (atomically . putTMVar replyBox)]
-          ++ [Nats.withHeaders headers | not (null headers)]
-  Nats.publish (contextClient ctx) subject publishOptions
-  result <- timeout (contextRequestTimeoutMicros ctx) (atomically (readTMVar replyBox))
-  case result of
-    Nothing ->
-      pure (Left JetStreamTimeout)
-    Just Nothing ->
-      pure (Left JetStreamNoReply)
-    Just (Just msg) ->
-      pure (Right msg)
+requestMsg :: JetStreamContext -> Subject -> Payload -> Headers -> [JetStreamRequestOption] -> IO (Either JetStreamError Nats.MsgView)
+requestMsg ctx subject payload headers options = do
+  result <- Nats.request (contextClient ctx) subject payload requestOptions
+  pure $ case result of
+    Left Nats.NatsRequestTimedOut -> Left JetStreamTimeout
+    Left err                      -> Left (JetStreamNatsError err)
+    Right msg                     -> Right msg
+  where
+    timeoutSeconds =
+      fromRational (toRational (requestTimeoutMicros ctx options) / 1000000)
+    requestOptions =
+      Nats.withRequestTimeout timeoutSeconds
+        : [Nats.withRequestHeaders headers | not (null headers)]
 
-requestJSON :: FromJSON a => JetStreamContext -> Subject -> Maybe Value -> IO (Either JetStreamError a)
+requestJSON :: FromJSON a => JetStreamContext -> Subject -> Maybe Value -> [JetStreamRequestOption] -> IO (Either JetStreamError a)
 requestJSON ctx subject body =
   requestJSONWithHeaders ctx subject body []
 
-requestJSONWithHeaders :: FromJSON a => JetStreamContext -> Subject -> Maybe Value -> Headers -> IO (Either JetStreamError a)
-requestJSONWithHeaders ctx subject body headers = do
-  msgResult <- requestMsg ctx subject (strictEncode <$> body) headers
+requestJSONWithHeaders :: FromJSON a => JetStreamContext -> Subject -> Maybe Value -> Headers -> [JetStreamRequestOption] -> IO (Either JetStreamError a)
+requestJSONWithHeaders ctx subject body headers options = do
+  msgResult <- requestMsg ctx subject (maybe BS.empty strictEncode body) headers options
   pure $ do
     msg <- msgResult
     case statusError msg of
       Just err ->
         Left err
       Nothing ->
-        case Nats.payload msg of
-          Nothing ->
-            Left JetStreamNoReply
-          Just payload ->
-            decodeJetStreamResponse payload
+        decodeJetStreamResponse (Nats.payload msg)
 
-requestUnit :: JetStreamContext -> Subject -> Maybe Value -> IO (Either JetStreamError ())
-requestUnit ctx subject body = do
-  response <- requestJSON ctx subject body
+requestUnit :: JetStreamContext -> Subject -> Maybe Value -> [JetStreamRequestOption] -> IO (Either JetStreamError ())
+requestUnit ctx subject body options = do
+  response <- requestJSON ctx subject body options
   pure (void (response :: Either JetStreamError SuccessResponse))
 
 decodeJetStreamResponse :: FromJSON a => BS.ByteString -> Either JetStreamError a

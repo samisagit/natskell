@@ -2,11 +2,10 @@
 
 module ClientCycleSpec (spec) where
 
-import           API         (Client (..))
+import           API
 import           Client
 import           Test.Hspec
 import           TestSupport
-import           WaitGroup
 
 spec :: Spec
 spec =
@@ -16,7 +15,5 @@ spec =
       , withConnectionAttempts 2
       ]
       ++ loggerOptions
-    wg <- newWaitGroup 1
-    ping c $ done wg
-    wait wg
-    close c
+    ping c [] `shouldReturn` Right ()
+    close c []

@@ -11,9 +11,10 @@ import           JetStream.Error
 import           JetStream.Options          (JetStreamContext)
 import qualified JetStream.Protocol.Request as Request
 import qualified JetStream.Protocol.Subject as Subject
-import           JetStream.Stream.API       (StreamAPI (..))
+import           JetStream.Stream.API
 import           JetStream.Stream.Types
-    ( purgeStreamRequest
+    ( StreamAPI (..)
+    , purgeStreamRequest
     , streamConfigRequest
     , streamListRequest
     , streamMessageDeleteRequest
@@ -24,52 +25,57 @@ import           JetStream.Stream.Types
 streamAPI :: JetStreamContext -> StreamAPI
 streamAPI context =
   StreamAPI
-    { create = \name subjects options ->
+    { create = \name subjects options requestOptions ->
         let config = streamConfigRequest name subjects options
         in Request.requestJSON context
           (Subject.streamCreateSubject context name)
           (Just (toJSON config))
-    , createOrUpdate = \name subjects options -> do
-        updateResult <- update (streamAPI context) name subjects options
+          requestOptions
+    , createOrUpdate = \name subjects options requestOptions -> do
+        updateResult <- update (streamAPI context) name subjects options requestOptions
         case updateResult of
           Left err
             | isStreamNotFound err ->
-                create (streamAPI context) name subjects options
+                create (streamAPI context) name subjects options requestOptions
           other ->
             pure other
-    , update = \name subjects options ->
+    , update = \name subjects options requestOptions ->
         let config = streamConfigRequest name subjects options
         in Request.requestJSON context
           (Subject.streamUpdateSubject context name)
           (Just (toJSON config))
-    , info = \streamName ->
+          requestOptions
+    , info = \streamName requestOptions ->
         Request.requestJSON context
           (Subject.streamInfoSubject context streamName)
           Nothing
-    , getMessage = \streamName selector ->
+          requestOptions
+    , getMessage = \streamName selector requestOptions ->
         Request.requestJSON context
           (Subject.streamMessageGetSubject context streamName)
           (Just (toJSON (streamMessageGetRequest selector)))
-    , deleteMessage = \streamName sequenceNumber mode ->
+          requestOptions
+    , deleteMessage = \streamName sequenceNumber mode requestOptions ->
         Request.requestJSON context
           (Subject.streamMessageDeleteSubject context streamName)
           (Just (toJSON (streamMessageDeleteRequest sequenceNumber mode)))
-    , delete = \streamName ->
+          requestOptions
+    , delete = \streamName requestOptions ->
         Request.requestJSON context
           (Subject.streamDeleteSubject context streamName)
           Nothing
-    , purge = \streamName options ->
+          requestOptions
+    , purge = \streamName options requestOptions ->
         Request.requestJSON context
           (Subject.streamPurgeSubject context streamName)
           (Just (toJSON (purgeStreamRequest options)))
+          requestOptions
     , list =
-        Request.requestJSON context
-          (Subject.streamListSubject context) .
-          Just . toJSON . streamListRequest
+        Request.requestJSON context (Subject.streamListSubject context)
+          . Just . toJSON . streamListRequest
     , names =
-        Request.requestJSON context
-          (Subject.streamNamesSubject context) .
-          Just . toJSON . streamNamesRequest
+        Request.requestJSON context (Subject.streamNamesSubject context)
+          . Just . toJSON . streamNamesRequest
     }
 
 isStreamNotFound :: JetStreamError -> Bool
