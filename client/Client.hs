@@ -302,7 +302,8 @@ withTLSCert :: TLSCertData -> ConfigOption
 withTLSCert cert =
   modifyTLSConfig $ \tls -> tls { tlsClientCertificate = Just cert }
 
--- | Add PEM-encoded root certificates to the operating system trust store.
+-- | Trust a PEM-encoded root certificate for this client. Once configured,
+-- these roots replace the operating-system trust store for the connection.
 withTLSRootCA :: BS.ByteString -> ConfigOption
 withTLSRootCA root =
   modifyTLSConfig $ \tls ->

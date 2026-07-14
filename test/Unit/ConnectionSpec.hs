@@ -53,10 +53,21 @@ import qualified Types.Connect             as Connect
 import           Types.Info                (Info (Info))
 import           Types.Ping                (Ping (Ping))
 import           Types.Pong                (Pong (Pong))
-import           Types.TLS                 (defaultTLSConfig)
+import           Types.TLS                 (TLSConfig (..), defaultTLSConfig)
 
 spec :: Spec
 spec = do
+  describe "TLS configuration" $ do
+    it "does not expose client private keys when rendered" $ do
+      let config = defaultTLSConfig
+            { tlsClientCertificate = Just ("certificate", "private-key")
+            , tlsRootCertificates = ["private-root"]
+            }
+
+      show config `shouldNotContain` "private-key"
+      show config `shouldNotContain` "private-root"
+      show config `shouldContain` "tlsRootCertificates = 1 configured"
+
   describe "Connection reader" $ do
     it "unblocks a blocking read when closeReader is called" $ do
       conn <- newConn connectionApi

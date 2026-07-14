@@ -110,7 +110,10 @@ buildTlsParams host tlsConfig = do
         shared = TLS.clientShared base
         parsedRoots = map readSignedObjectFromMemory (tlsRootCertificates tlsConfig)
         invalidRoot = any null parsedRoots
-        caStore = systemStore <> makeCertificateStore (concat parsedRoots)
+        caStore =
+          if null parsedRoots
+            then systemStore
+            else makeCertificateStore (concat parsedRoots)
         verificationHooks =
           if tlsInsecure tlsConfig
             then hooks { TLS.onServerCertificate = \_ _ _ _ -> return [] }

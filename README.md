@@ -69,9 +69,11 @@ main = do
 ```
 
 TLS verifies the server certificate against the operating-system trust store by
-default. `withTLSRootCA` adds a private CA, `withTLSServerName` overrides the
-verification/SNI name, and `withTLSCert` supplies a client certificate and key
-for mutual TLS. `withTLS` enables TLS without additional material.
+default. Configuring one or more private roots with `withTLSRootCA` replaces the
+operating-system roots for that client connection; it never modifies the host's
+trust store. `withTLSServerName` overrides the verification/SNI name, and
+`withTLSCert` supplies a client certificate and key for mutual TLS. `withTLS`
+enables TLS without additional material.
 `withTLSInsecure` disables verification and should only be used in controlled
 test environments.
 

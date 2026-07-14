@@ -7,6 +7,7 @@ module Types.TLS
   ) where
 
 import qualified Data.ByteString as BS
+import           Data.Maybe      (isJust)
 
 type TLSPublicKey = BS.ByteString
 type TLSPrivateKey = BS.ByteString
@@ -19,7 +20,22 @@ data TLSConfig = TLSConfig
                    , tlsServerName        :: Maybe String
                    , tlsInsecure          :: Bool
                    }
-  deriving (Eq, Show)
+  deriving (Eq)
+
+instance Show TLSConfig where
+  show config =
+    "TLSConfig {tlsClientCertificate = "
+      ++ configured (isJust (tlsClientCertificate config))
+      ++ ", tlsRootCertificates = "
+      ++ show (length (tlsRootCertificates config))
+      ++ " configured, tlsServerName = "
+      ++ show (tlsServerName config)
+      ++ ", tlsInsecure = "
+      ++ show (tlsInsecure config)
+      ++ "}"
+    where
+      configured True  = "<configured>"
+      configured False = "Nothing"
 
 defaultTLSConfig :: TLSConfig
 defaultTLSConfig =
