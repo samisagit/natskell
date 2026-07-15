@@ -105,6 +105,9 @@ spec =
       jetStreamSystemTest "2c1a4ec1-8bc6-4506-8b0c-a128ca670c09"
         "orders filtered headers-only messages"
         orderedFilteredHeadersOnlyTest
+      jetStreamSystemTest "9bba145b-28a5-41fb-8512-47eaa66269c9"
+        "enforces stream and pull consumer resource limits"
+        resourceLimitsTest
       jetStreamSystemTest "ff173d87-7377-4ff5-a6c8-83574508b591"
         "stops push consumer subscriptions gracefully"
         pushConsumerGracefulShutdownTest
@@ -932,6 +935,47 @@ orderedConsumerGracefulShutdownTest jetStream = do
     ]
     []
   fetchAfterStop `shouldBe` Left JetStream.JetStreamNoReply
+
+resourceLimitsTest :: JetStream -> IO ()
+resourceLimitsTest jetStream = do
+  let stream = "NATSKELL_JS_RESOURCE_LIMITS"
+      subject = "NATSKELL.JS.RESOURCE_LIMITS"
+      durable = "RESOURCE_LIMITS"
+      backoff = [0.05, 0.1]
+  streamInfo <- createStreamOrFail jetStream stream [subject]
+    (streamOptions ++ [JetStream.withMaxMessageSize 4])
+  JetStream.streamConfigMaxMessageSize (JetStream.streamInfoConfig streamInfo)
+    `shouldBe` 4
+  publishPayload jetStream subject "1234"
+  oversize <- JetStream.publish (publisher jetStream) subject "12345" [] []
+  expectJetStreamFailure "publish above max message size" oversize
+  encodedHeaderOversize <- JetStream.publish (publisher jetStream) subject "1"
+    [ JetStream.withMsgId "resource-limits-message"
+    , JetStream.withHeaders [("Resource-Limit", "header")]
+    ]
+    []
+  expectJetStreamFailure "publish whose encoded headers exceed max message size" encodedHeaderOversize
+
+  consumerInfo <- createDurableConsumerOrFail jetStream stream durable $
+    pullConsumerOptions durable
+      [ JetStream.withConsumerMaxDeliver 2
+      , JetStream.withConsumerBackoff backoff
+      , JetStream.withConsumerMaxRequestBatch 2
+      ]
+  let config = JetStream.consumerInfoConfig consumerInfo
+  JetStream.consumerConfigBackoff config `shouldBe` Just backoff
+  JetStream.consumerConfigMaxRequestBatch config `shouldBe` Just 2
+  oversizedBatch <- expectRight "fetch above consumer max request batch" $
+    JetStream.fetch (messages jetStream) stream durable
+      [ JetStream.withFetchBatch 3
+      , JetStream.withFetchWait (JetStream.FetchNoWaitMicros 100000)
+      ]
+      []
+  case JetStream.pullResponseStatus oversizedBatch of
+    Just (JetStream.PullStatusError "409" (Just description)) ->
+      description `shouldSatisfy` BS.isInfixOf "MaxRequestBatch"
+    other ->
+      expectationFailure ("expected max request batch status, got " ++ show other)
 
 domainJetStreamTest :: JetStream -> IO ()
 domainJetStreamTest jetStream = do

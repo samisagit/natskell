@@ -14,22 +14,25 @@ import qualified JetStream.Protocol.Subject as Subject
 import           JetStream.Stream.API
 import           JetStream.Stream.Types
     ( StreamAPI (..)
+    , StreamConfigRequest
     , purgeStreamRequest
     , streamConfigRequest
     , streamListRequest
     , streamMessageDeleteRequest
     , streamMessageGetRequest
     , streamNamesRequest
+    , validateStreamConfigRequest
     )
+import           JetStream.Types            (JetStreamRequestOption, Subject)
 
 streamAPI :: JetStreamContext -> StreamAPI
 streamAPI context =
   StreamAPI
     { create = \name subjects options requestOptions ->
         let config = streamConfigRequest name subjects options
-        in Request.requestJSON context
+        in requestStreamConfig context
           (Subject.streamCreateSubject context name)
-          (Just (toJSON config))
+          config
           requestOptions
     , createOrUpdate = \name subjects options requestOptions -> do
         updateResult <- update (streamAPI context) name subjects options requestOptions
@@ -41,9 +44,9 @@ streamAPI context =
             pure other
     , update = \name subjects options requestOptions ->
         let config = streamConfigRequest name subjects options
-        in Request.requestJSON context
+        in requestStreamConfig context
           (Subject.streamUpdateSubject context name)
-          (Just (toJSON config))
+          config
           requestOptions
     , info = \streamName requestOptions ->
         Request.requestJSON context
@@ -77,6 +80,19 @@ streamAPI context =
         Request.requestJSON context (Subject.streamNamesSubject context)
           . Just . toJSON . streamNamesRequest
     }
+
+requestStreamConfig
+  :: JetStreamContext
+  -> Subject
+  -> StreamConfigRequest
+  -> [JetStreamRequestOption]
+  -> IO (Either JetStreamError StreamInfo)
+requestStreamConfig context subject config requestOptions =
+  case validateStreamConfigRequest config of
+    Left err ->
+      pure (Left err)
+    Right () ->
+      Request.requestJSON context subject (Just (toJSON config)) requestOptions
 
 isStreamNotFound :: JetStreamError -> Bool
 isStreamNotFound (JetStreamApiFailure err) =

@@ -125,13 +125,16 @@ jetStreamOperations jetStream = do
     ["orders.>"]
     [ Stream.withStorage Stream.FileStorage
     , Stream.withMaxMessages 1000
+    , Stream.withMaxMessageSize 1024
     ]
     []
   case created of
     Left _       -> pure ()
     Right handle -> do
-      _ <- Stream.getStreamInfo (JetStream.streams jetStream) handle []
-      pure ()
+      info <- Stream.getStreamInfo (JetStream.streams jetStream) handle []
+      case info of
+        Left _       -> pure ()
+        Right detail -> Stream.streamConfigMaxMessageSize (Stream.streamInfoConfig detail) `seq` pure ()
   _ <- JetStreamPublish.publish
     (JetStream.publisher jetStream)
     "orders.created"
@@ -144,13 +147,20 @@ jetStreamOperations jetStream = do
     Consumer.ConsumerCreate
     (Consumer.DurableConsumer "processor")
     Consumer.PullConsumer
-    [Consumer.withConsumerAckPolicy Consumer.AckExplicit]
+    [ Consumer.withConsumerAckPolicy Consumer.AckExplicit
+    , Consumer.withConsumerBackoff [1, 2]
+    , Consumer.withConsumerMaxRequestBatch 64
+    ]
     []
   case consumer of
     Left _       -> pure ()
     Right handle -> do
-      _ <- Consumer.getConsumerInfo (JetStream.consumers jetStream) handle []
-      pure ()
+      info <- Consumer.getConsumerInfo (JetStream.consumers jetStream) handle []
+      case info of
+        Left _       -> pure ()
+        Right detail -> do
+          Consumer.consumerConfigBackoff (Consumer.consumerInfoConfig detail) `seq` pure ()
+          Consumer.consumerConfigMaxRequestBatch (Consumer.consumerInfoConfig detail) `seq` pure ()
   _ <- JetStreamMessage.fetch
     (JetStream.messages jetStream)
     "ORDERS"

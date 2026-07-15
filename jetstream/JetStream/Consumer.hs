@@ -19,6 +19,7 @@ import           JetStream.Consumer.Types
     , consumerNamesRequest
     , consumerPauseRequest
     , consumerResetRequest
+    , validateConsumerConfigRequest
     )
 import           JetStream.Error
     ( JetStreamError (JetStreamDecodeError)
@@ -93,11 +94,15 @@ consumerRequest context stream action target kind options =
   case consumerSubject context stream action target of
     Left err ->
       Left err
-    Right subject ->
-      Right
+    Right subject -> do
+      let config =
+            applyConsumerTarget target . applyConsumerKind kind $
+              consumerConfigRequest options
+      validateConsumerConfigRequest config
+      pure
         ( subject
         , actionValue
-        , applyConsumerTarget target . applyConsumerKind kind $ consumerConfigRequest options
+        , config
         )
   where
     actionValue =
