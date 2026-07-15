@@ -49,12 +49,15 @@ import           JetStream.Options
     ( JetStreamContext (..)
     , requestTimeoutMicros
     )
+import           JetStream.Protocol.Headers (statusError)
+import           JetStream.Protocol.Request (requestMsg)
 import qualified JetStream.Protocol.Subject as Subject
 import           JetStream.Types
     ( AckPolicy (AckNone)
     , ConsumerName
     , DeliverPolicy (DeliverByStartSequence)
     , JetStreamRequestOption
+    , Payload
     , StreamName
     , Subject
     )
@@ -70,10 +73,14 @@ messageAPI context consumerAPI =
         consumePushMessages context deliverSubject (pushConsumeConfig options) handler
     , createOrderedConsumer = \stream options requestOptions ->
         createOrderedConsumerHandle context consumerAPI stream (orderedConsumerConfig options) requestOptions
-    , ack = \message _ -> ackMessage (contextClient context) message
-    , nak = \message _ -> nakMessage (contextClient context) message
-    , inProgress = \message _ -> inProgressMessage (contextClient context) message
-    , term = \message _ -> termMessage (contextClient context) message
+    , ack = sendDisposition context ConfirmWhenRequested (ackPayload Ack)
+    , ackSync = sendDisposition context ConfirmAlways (ackPayload Ack)
+    , nak = sendDisposition context ConfirmWhenRequested (ackPayload Nak)
+    , nakWithDelay = \message delay ->
+        sendDisposition context ConfirmWhenRequested (nakDelayPayload delay) message
+    , inProgress = sendDisposition context ConfirmWhenRequested (ackPayload InProgress)
+    , term = sendDisposition context ConfirmWhenRequested (ackPayload Term)
+    , termSync = sendDisposition context ConfirmAlways (ackPayload Term)
     }
 
 consumePushMessages
@@ -373,6 +380,45 @@ publishAck natsClient verb message =
       pure (Left JetStreamNoReply)
     Just reply ->
       mapNatsResult <$> Nats.publish natsClient reply (ackPayload verb) []
+
+data ConfirmationMode = ConfirmWhenRequested | ConfirmAlways
+
+sendDisposition
+  :: JetStreamContext
+  -> ConfirmationMode
+  -> Payload
+  -> Message
+  -> [JetStreamRequestOption]
+  -> IO (Either JetStreamError ())
+sendDisposition context confirmationMode body message requestOptions =
+  case messageReplyTo message of
+    Nothing ->
+      pure (Left JetStreamNoReply)
+    Just reply
+      | confirmationRequired confirmationMode requestOptions ->
+          confirmDisposition context reply body requestOptions
+      | otherwise ->
+          mapNatsResult <$> Nats.publish (contextClient context) reply body []
+
+confirmDisposition
+  :: JetStreamContext
+  -> Subject
+  -> Payload
+  -> [JetStreamRequestOption]
+  -> IO (Either JetStreamError ())
+confirmDisposition context reply body requestOptions = do
+  response <- requestMsg context reply body [] requestOptions
+  pure $ do
+    message <- response
+    case statusError message of
+      Just err ->
+        Left err
+      Nothing ->
+        Right ()
+
+confirmationRequired :: ConfirmationMode -> [JetStreamRequestOption] -> Bool
+confirmationRequired ConfirmAlways _ = True
+confirmationRequired ConfirmWhenRequested requestOptions = not (null requestOptions)
 
 mapNatsResult :: Either Nats.NatsError () -> Either JetStreamError ()
 mapNatsResult =

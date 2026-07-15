@@ -3,6 +3,7 @@
 module JetStream.Message.Types
   ( MessageAPI (..)
   , AckVerb (..)
+  , NakDelay (..)
   , FetchOption
   , FetchWait (..)
   , Headers
@@ -26,6 +27,8 @@ module JetStream.Message.Types
   , isStatusMessage
   , messageMetadata
   , nakPayload
+  , nakDelay
+  , nakDelayPayload
   , orderedConsumerConfig
   , pullRequestPayload
   , pushConsumeConfig
@@ -46,6 +49,7 @@ import           Data.ByteString          (ByteString)
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Char8    as BC
 import           Data.Char                (isDigit, toLower)
+import           Data.Int                 (Int64)
 import           Data.Maybe               (isJust)
 import           Data.Time.Clock          (NominalDiffTime, UTCTime)
 import qualified Data.Time.Clock.POSIX    as Time
@@ -72,9 +76,12 @@ data MessageAPI = MessageAPI
                     , consumePush :: Subject -> [PushConsumeOption] -> [JetStreamRequestOption] -> (Message -> IO ()) -> IO (Either JetStreamError PushSubscription)
                     , createOrderedConsumer :: StreamName -> [OrderedConsumerOption] -> [JetStreamRequestOption] -> IO (Either JetStreamError OrderedConsumer)
                     , ack :: Message -> [JetStreamRequestOption] -> IO (Either JetStreamError ())
+                    , ackSync :: Message -> [JetStreamRequestOption] -> IO (Either JetStreamError ())
                     , nak :: Message -> [JetStreamRequestOption] -> IO (Either JetStreamError ())
+                    , nakWithDelay :: Message -> NakDelay -> [JetStreamRequestOption] -> IO (Either JetStreamError ())
                     , inProgress :: Message -> [JetStreamRequestOption] -> IO (Either JetStreamError ())
                     , term :: Message -> [JetStreamRequestOption] -> IO (Either JetStreamError ())
+                    , termSync :: Message -> [JetStreamRequestOption] -> IO (Either JetStreamError ())
                     }
 
 data PullRequest = PullRequest
@@ -213,6 +220,21 @@ data PullStatus = PullNoMessages (Maybe ByteString)
 data AckVerb = Ack | Nak | InProgress | Term
   deriving (Eq, Show)
 
+-- | A positive, whole-nanosecond JetStream redelivery delay.
+newtype NakDelay = NakDelay Int64
+  deriving (Eq, Show)
+
+-- | Build a delayed-NAK duration. Durations below one nanosecond, negative
+-- durations, and values outside the JetStream signed 64-bit wire range are
+-- rejected. Sub-nanosecond precision is rounded down.
+nakDelay :: NominalDiffTime -> Maybe NakDelay
+nakDelay duration
+  | nanoseconds < 1 = Nothing
+  | nanoseconds > toInteger (maxBound :: Int64) = Nothing
+  | otherwise = Just (NakDelay (fromInteger nanoseconds))
+  where
+    nanoseconds = floor (toRational duration * 1000000000)
+
 ackPayload :: AckVerb -> Payload
 ackPayload Ack        = "+ACK"
 ackPayload Nak        = "-NAK"
@@ -221,6 +243,15 @@ ackPayload Term       = "+TERM"
 
 nakPayload :: Payload
 nakPayload = ackPayload Nak
+
+nakDelayPayload :: NakDelay -> Payload
+nakDelayPayload (NakDelay nanoseconds) =
+  BS.concat
+    [ nakPayload
+    , " {\"delay\":"
+    , BC.pack (show nanoseconds)
+    , "}"
+    ]
 
 inProgressPayload :: Payload
 inProgressPayload = ackPayload InProgress

@@ -57,6 +57,9 @@ spec =
       jetStreamSystemTest "1ff65118-b330-4b06-8592-8d331c0d8f6d"
         "redelivers after NAK"
         nakRedeliveryTest
+      jetStreamSystemTest "03daa560-c2bc-426f-b733-f2dfc5927cf5"
+        "honours delayed NAK redelivery"
+        delayedNakRedeliveryTest
       jetStreamSystemTest "227ca150-9ecf-4541-a627-a3b45ab3b778"
         "does not redeliver after TERM"
         termStopsRedeliveryTest
@@ -162,11 +165,14 @@ durablePullConsumerTest jetStream = do
   firstFetch <- expectRight "first fetch" $
     JetStream.fetch (messages jetStream) streamName durableName fetchBatch []
   case JetStream.pullResponseMessages firstFetch of
-    messages'@[_, _] -> do
+    messages'@[firstMessage, secondMessage] -> do
       fmap JetStream.messageSubject messages' `shouldBe` [subjectName, subjectName]
       fmap JetStream.messagePayload messages' `shouldBe` payloadBodies
-      acknowledgements <- mapM (\message -> JetStream.ack (messages jetStream) message []) messages'
-      acknowledgements `shouldBe` [Right (), Right ()]
+      JetStream.ackSync (messages jetStream) firstMessage []
+        `shouldReturn` Right ()
+      JetStream.ack (messages jetStream) secondMessage
+        [JetStream.withRequestTimeout 1]
+        `shouldReturn` Right ()
     messages' ->
       expectationFailure ("expected two JetStream messages, got " ++ show (length messages'))
   JetStream.pullResponseStatus firstFetch `shouldBe` Nothing
@@ -295,6 +301,30 @@ nakRedeliveryTest jetStream = do
   JetStream.messagePayload secondMessage `shouldBe` "redeliver"
   ackOrFail jetStream secondMessage
 
+delayedNakRedeliveryTest :: JetStream -> IO ()
+delayedNakRedeliveryTest jetStream = do
+  let stream = "NATSKELL_JS_DELAYED_NAK"
+      subject = "NATSKELL.JS.DELAYED_NAK"
+      durable = "DELAYED_NAK_WORKER"
+      Just delay = JetStream.nakDelay 0.4
+  createStreamOrFail jetStream stream [subject] streamOptions
+  createDurableConsumerOrFail jetStream stream durable $
+    pullConsumerOptions durable []
+  publishPayload jetStream subject "redeliver-later"
+  firstMessage <- fetchOneMessage jetStream stream durable
+  JetStream.nakWithDelay (messages jetStream) firstMessage delay []
+    `shouldReturn` Right ()
+
+  early <- expectRight "fetch before delayed NAK expires" $
+    JetStream.fetch (messages jetStream) stream durable shortFetch []
+  JetStream.pullResponseMessages early `shouldBe` []
+  expectNoMessages early
+
+  threadDelay 500000
+  redelivered <- fetchOneMessage jetStream stream durable
+  JetStream.messagePayload redelivered `shouldBe` "redeliver-later"
+  ackOrFail jetStream redelivered
+
 termStopsRedeliveryTest :: JetStream -> IO ()
 termStopsRedeliveryTest jetStream = do
   let stream = "NATSKELL_JS_TERM"
@@ -305,7 +335,7 @@ termStopsRedeliveryTest jetStream = do
     pullConsumerOptions durable []
   publishPayload jetStream subject "stop"
   message <- fetchOneMessage jetStream stream durable
-  JetStream.term (messages jetStream) message [] `shouldReturn` Right ()
+  JetStream.termSync (messages jetStream) message [] `shouldReturn` Right ()
   empty <- expectRight "fetch after term" $
     JetStream.fetch (messages jetStream) stream durable shortFetch []
   JetStream.pullResponseMessages empty `shouldBe` []

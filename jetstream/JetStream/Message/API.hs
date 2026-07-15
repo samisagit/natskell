@@ -4,9 +4,14 @@ module JetStream.Message.API
   , consumePush
   , createOrderedConsumer
   , ack
+  , ackSync
   , nak
+  , nakWithDelay
+  , NakDelay
+  , nakDelay
   , inProgress
   , term
+  , termSync
   , FetchOption
   , FetchWait (..)
   , Headers
@@ -56,6 +61,7 @@ import           JetStream.Message.Types
     , Message (..)
     , MessageAPI
     , MessageMetadata
+    , NakDelay
     , OrderedConsumer
     , OrderedConsumerOption
     , PullResponse
@@ -63,6 +69,7 @@ import           JetStream.Message.Types
     , PushConsumeOption
     , PushSubscription
     , ack
+    , ackSync
     , consumePush
     , createOrderedConsumer
     , fetch
@@ -83,12 +90,15 @@ import           JetStream.Message.Types
     , messageStatus
     , messageSubject
     , nak
+    , nakDelay
+    , nakWithDelay
     , orderedConsumerInfo
     , pullResponseMessages
     , pullResponseStatus
     , stopOrderedConsumer
     , stopPushSubscription
     , term
+    , termSync
     , withFetchBatch
     , withFetchWait
     , withOrderedConsumerDeliverPolicy
