@@ -2,6 +2,7 @@ module Pipeline.Streaming.Parser where
 import           Conduit
 import           Data.ByteString
 import qualified Data.ByteString  as BS
+import qualified Data.List        as List
 import           Lib.Logger.Types (LogLevel (..), MonadLogger (..))
 import           Parser.API
     ( ParseStep (DropPrefix, Emit, NeedMore, Reject)
@@ -40,13 +41,28 @@ parser bufferLimit parserApi = loop empty
                   lift . logMessage Debug $ "message spans frame, waiting for more data"
                   loop bs
             DropPrefix n reason -> do
-              lift . logMessage Error $ ("dropping invalid prefix: " ++ reason)
-              lift . logMessage Debug $ ("invalid prefix: " ++ show bs)
-              lift . logMessage Error $ ("dropping " ++ show n ++ " bytes")
+              lift . logMessage Error $
+                "dropping invalid protocol bytes: category="
+                  ++ reasonCategory reason
+                  ++ " dropped_bytes="
+                  ++ show n
+                  ++ " buffered_bytes="
+                  ++ show (length bs)
               handleChunk (drop n bs)
             Reject reason ->
-              lift . logMessage Error $ ("parser rejected inbound data: " ++ reason)
+              lift . logMessage Error $
+                "parser rejected inbound data: category="
+                  ++ reasonCategory reason
+                  ++ " buffered_bytes="
+                  ++ show (length bs)
             Emit message rest -> do
               lift . logMessage Debug $ "parsed message"
               yield message
               handleChunk rest
+
+    reasonCategory reason
+      | "unknown protocol prefix" `List.isPrefixOf` reason = "unknown-prefix"
+      | "invalid INFO" `List.isPrefixOf` reason = "invalid-info"
+      | "invalid MSG" `List.isPrefixOf` reason = "invalid-msg"
+      | "invalid HMSG" `List.isPrefixOf` reason = "invalid-hmsg"
+      | otherwise = "malformed-frame"

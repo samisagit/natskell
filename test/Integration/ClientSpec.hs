@@ -43,6 +43,13 @@ pingWithCallback :: Client -> IO () -> IO ()
 pingWithCallback client action =
   void . forkIO $ void (ping client []) >> action
 
+awaitClosed :: Client -> IO ()
+awaitClosed client = do
+  status <- connectionState client
+  case status of
+    ConnectionClosed _ -> pure ()
+    _                  -> threadDelay 1000 >> awaitClosed client
+
 isValidationFailure :: Either NatsError a -> Bool
 isValidationFailure (Left (NatsValidationError _)) = True
 isValidationFailure _                              = False
@@ -95,6 +102,7 @@ data CapturedPublish = CapturedPublish
                          , capturedSubject :: BS.ByteString
                          , capturedReplyTo :: BS.ByteString
                          , capturedPayload :: BS.ByteString
+                         , capturedWire    :: BS.ByteString
                          }
   deriving (Eq, Show)
 
@@ -169,8 +177,11 @@ expectMVar failureMessage var = do
       pure value
 
 completeHandshake :: Socket -> IO BS.ByteString
-completeHandshake sock = do
-  sendAll sock defaultINFO
+completeHandshake sock = completeHandshakeWithInfo sock defaultINFO
+
+completeHandshakeWithInfo :: Socket -> BS.ByteString -> IO BS.ByteString
+completeHandshakeWithInfo sock info = do
+  sendAll sock info
   bytes <-
     expectClientBytes
       sock
@@ -178,6 +189,14 @@ completeHandshake sock = do
       "client did not complete the initial handshake"
   sendAll sock "PONG\r\n"
   pure bytes
+
+infoWithMaxPayload :: Int -> BS.ByteString
+infoWithMaxPayload maximumPayload =
+  BS.concat
+    [ "INFO {\"server_id\":\"limit-server\",\"version\":\"1.0.0\",\"go\":\"go1\",\"host\":\"127.0.0.1\",\"port\":4222,\"max_payload\":"
+    , C.pack (show maximumPayload)
+    , ",\"proto\":1}\r\n"
+    ]
 
 expectQueuedSub :: Socket -> BS.ByteString -> BS.ByteString -> BS.ByteString -> IO ()
 expectQueuedSub sock subject queueGroup sid =
@@ -253,6 +272,7 @@ parseCapturedPublish bytes = do
     , capturedSubject = subject'
     , capturedReplyTo = reply
     , capturedPayload = payloadBytes
+    , capturedWire = bytes
     }
   where
     wireLines = C.split '\n' bytes
@@ -442,6 +462,133 @@ spec = do
         sendAll serv "PONG\r\n"
         expectMVar "flush did not resolve after PONG" resultVar
           `shouldReturn` Right ()
+      it "bounds flush when the server does not send PONG" $ \(serv, client, _, _) -> do
+        resultVar <- newEmptyMVar
+        void . forkIO $
+          flush client [withFlushTimeout 0.05] >>= putMVar resultVar
+        expectClientCommand serv "PING\r\n"
+
+        timeout 500000 (takeMVar resultVar)
+          `shouldReturn` Just (Left NatsRequestTimedOut)
+      it "reports the terminal close reason to a pending ping" $ \(serv, client, _, _) -> do
+        resultVar <- newEmptyMVar
+        void . forkIO $ ping client [withPingTimeout 5] >>= putMVar resultVar
+        expectClientCommand serv "PING\r\n"
+
+        close client []
+
+        expectMVar "pending ping did not receive terminal close" resultVar
+          `shouldReturn` Left (NatsConnectionClosed ExitClosedByUser)
+      it "cleans up a one-shot subscription cancelled after queue commit" $ \_ -> do
+        queued <- newEmptyMVar
+        release <- newEmptyMVar
+        let capture entry =
+              when (leMessage entry == "subscription commands queued") $ do
+                putMVar queued ()
+                takeMVar release
+        bracket
+          (startClientWith [withLogAction capture])
+          stopClientSafely $ \(serv, client, _, _) -> do
+            finished <- newEmptyMVar
+            subscriptionThread <- forkIO $
+              void (subscribeOnce client "CANCEL.ONCE" [] (const (pure ())))
+                `finally` putMVar finished ()
+            expectMVar "subscribe did not commit its command batch" queued
+            expectClientCommand serv "SUB CANCEL.ONCE 1\r\nUNSUB 1 1\r\n"
+
+            killThread subscriptionThread
+
+            expectMVar "cancelled subscribe thread did not stop" finished
+            expectClientCommand serv "UNSUB 1\r\n"
+      it "removes an expired one-shot subscription from the server" $ \(serv, client, _, _) -> do
+        Right subscription <-
+          subscribeOnce client "EXPIRING.ONCE" [withSubscriptionExpiry 0.01] (const (pure ()))
+        let sid = subscriptionSid subscription
+        expectClientCommand serv $
+          BS.concat ["SUB EXPIRING.ONCE ", sid, "\r\nUNSUB ", sid, " 1\r\n"]
+
+        expectClientCommand serv (BS.concat ["UNSUB ", sid, "\r\n"])
+      it "does not let a server error handler block a following PONG" $ \_ -> do
+        observed <- newEmptyMVar
+        releaseHandler <- newEmptyMVar
+        let handler serverError = do
+              putMVar observed (serverErrorReason serverError)
+              takeMVar releaseHandler
+        bracket
+          (startClientWith [withServerErrorHandler handler])
+          stopClientSafely $ \(serv, client, _, _) -> do
+            pingResult <- newEmptyMVar
+            void . forkIO $ ping client [] >>= putMVar pingResult
+            expectClientCommand serv "PING\r\n"
+            sendAll
+              serv
+              "-ERR 'Permissions Violation For Publish To PRIVATE'\r\nPONG\r\n"
+
+            expectMVar "server error callback did not run" observed
+              `shouldReturn` "Permissions Violation For Publish To PRIVATE"
+            expectMVar "PONG waited for the server error handler" pingResult
+              `shouldReturn` Right ()
+            putMVar releaseHandler ()
+      it "allows a server error handler to close its own client" $ \_ -> do
+        clientRef <- newEmptyMVar
+        handlerReturned <- newEmptyMVar
+        let handler _ = do
+              client <- readMVar clientRef
+              close client []
+              putMVar handlerReturned ()
+        bracket
+          (startClientWith [withServerErrorHandler handler])
+          stopClientSafely $ \(serv, client, _, _) -> do
+            putMVar clientRef client
+
+            sendAll serv "-ERR 'Permissions Violation For Publish To PRIVATE'\r\n"
+
+            void (expectMVar "server error handler deadlocked in close" handlerReturned)
+            timeout 1000000 (awaitClosed client) `shouldReturn` Just ()
+      it "allows a message callback to close its own client" $ \_ -> do
+        clientRef <- newEmptyMVar
+        callbackReturned <- newEmptyMVar
+        bracket startClient stopClientSafely $ \(serv, client, _, _) -> do
+          putMVar clientRef client
+          Right subscription <- subscribe client "CLOSE.FROM.CALLBACK" [] $ \_ -> do
+            callbackClient <- readMVar clientRef
+            close callbackClient []
+            putMVar callbackReturned ()
+          expectClientCommand serv
+            ("SUB CLOSE.FROM.CALLBACK " <> subscriptionSid subscription <> "\r\n")
+
+          sendAll serv (msgFrame "CLOSE.FROM.CALLBACK" (subscriptionSid subscription) "close")
+
+          void (expectMVar "message callback deadlocked in close" callbackReturned)
+          timeout 1000000 (awaitClosed client) `shouldReturn` Just ()
+      it "does not put message or malformed bytes in debug logs" $ \_ -> do
+        logMessages <- newIORef ([] :: [String])
+        let capture entry =
+              atomicModifyIORef' logMessages $ \messages ->
+                (leMessage entry : messages, ())
+        bracket
+          (startClientWith [withLogAction capture])
+          stopClientSafely $ \(serv, client, _, _) -> do
+            delivered <- newEmptyMVar
+            Right subscription <- subscribe client "SECRET.LOG" [] (putMVar delivered)
+            let subscriptionId = subscriptionSid subscription
+            expectClientCommand serv ("SUB SECRET.LOG " <> subscriptionId <> "\r\n")
+            sendAll serv $
+              hmsgFrame
+                "SECRET.LOG"
+                subscriptionId
+                [("x-private-header", "secret-header-sentinel")]
+                "secret-payload-sentinel"
+                <> "secret-malformed-sentinel"
+            void (expectMVar "secret message was not delivered" delivered)
+            sendAll serv "PING\r\n"
+            expectClientCommand serv "PONG\r\n"
+
+            messages <- readIORef logMessages
+            let combined = unlines messages
+            combined `shouldNotContain` "secret-header-sentinel"
+            combined `shouldNotContain` "secret-payload-sentinel"
+            combined `shouldNotContain` "secret-malformed-sentinel"
       it "subscribes with a queue group" $ \(serv, client, _, _) -> do
         Right subscription <- subscribe client "JOBS" [withQueueGroup "WORKERS"] (const (pure ()))
         expectQueuedSub serv "JOBS" "WORKERS" (subscriptionSid subscription)
@@ -727,6 +874,39 @@ spec = do
           expectClientCommand serv "PONG\r\n"
           putMVar releaseCallback ()
 
+      around (withClientWith [withCallbackConcurrency 1]) $ do
+        it "returns an accepted reply after disconnect while its callback is queued" $ \(serv, client, _, _) -> do
+          callbackStarted <- newEmptyMVar
+          releaseCallback <- newEmptyMVar
+          Right subscription <- subscribe client "SLOW.REQUEST.BARRIER" [] $ \_ -> do
+            putMVar callbackStarted ()
+            takeMVar releaseCallback
+          let sid = subscriptionSid subscription
+          expectClientCommand serv (BS.concat ["SUB SLOW.REQUEST.BARRIER ", sid, "\r\n"])
+          sendAll serv (msgFrame "SLOW.REQUEST.BARRIER" sid "busy")
+          expectMVar "blocking callback did not start" callbackStarted
+
+          requestResult <- newEmptyMVar
+          void . forkIO $
+            request client "SERVICE.ACCEPTED" "request" [withRequestTimeout 5]
+              >>= putMVar requestResult
+          captured <- capturePublish serv "SERVICE.ACCEPTED"
+          sendAll serv $
+            msgFrame (capturedInbox captured) (capturedSid captured) "reply"
+              <> "PING\r\n"
+          expectClientCommand serv "PONG\r\n"
+          Network.Socket.close serv
+
+          timeout 1000000 (awaitClosed client) `shouldReturn` Just ()
+          tryTakeMVar requestResult `shouldReturn` Nothing
+          putMVar releaseCallback ()
+          reply <- expectMVar "accepted request reply did not complete" requestResult
+          case reply of
+            Left err ->
+              expectationFailure ("accepted request failed after disconnect: " ++ show err)
+            Right message ->
+              payload message `shouldBe` "reply"
+
       it "cleans up no responders replies for expiring requests" $ do
         bracket startClient stopClientSafely $ \(serv, client, _, _) -> do
           replyBox <- newEmptyMVar
@@ -770,20 +950,33 @@ spec = do
           Nothing ->
             expectationFailure "client did not connect"
           Just client -> do
+            requestResult <- newEmptyMVar
             void . forkIO $
-              void (request client "SERVICE.RECONNECT" "ping" [withRequestTimeout 5])
+              request client "SERVICE.RECONNECT" "ping" [withRequestTimeout 5]
+                >>= putMVar requestResult
             captured <- capturePublish firstConn "SERVICE.RECONNECT"
+            let replySetup = BS.concat
+                  [ "SUB "
+                  , capturedInbox captured
+                  , " "
+                  , capturedSid captured
+                  , "\r\nUNSUB "
+                  , capturedSid captured
+                  , " 1\r\n"
+                  ]
+            capturedWire captured `shouldSatisfy` BS.isInfixOf replySetup
             Network.Socket.close firstConn
+            expectMVar "request did not fail at its connection boundary" requestResult
+              `shouldReturn` Left (NatsConnectionClosed ExitResetRequested)
             (secondConn, _) <- accept sock
             void (completeHandshake secondConn)
-            let replySubCommand = BS.concat ["SUB ", capturedInbox captured]
             pingBox <- newEmptyMVar
             pingWithCallback client (putMVar pingBox ())
             expectNoClientBytesBefore
               secondConn
-              (BS.isInfixOf replySubCommand)
+              (BS.isInfixOf (capturedInbox captured))
               "PING\r\n"
-              "reply inbox was resubscribed"
+              "reply inbox protocol crossed the reconnect boundary"
             sendAll secondConn "PONG\r\n"
             expectMVar "PING failed after reconnect" pingBox
             close client []
@@ -1211,6 +1404,284 @@ spec = do
           close client []
           Network.Socket.close secondConn
       Network.Socket.close sock
+    it "waits reconnecting operations until the connection is ready" $ do
+      (p, sock) <- openFreePort
+      listen sock 2
+      clientVar <- newEmptyMVar
+      void . forkIO $ do
+        client <-
+          newClientOrFail
+            [("127.0.0.1", p)]
+            [ withConnectionAttempts 2
+            , withConnectName "state-client"
+            ]
+        putMVar clientVar client
+      (firstConn, _) <- accept sock
+      void (completeHandshake firstConn)
+      client <- expectMVar "client did not connect" clientVar
+      connectionState client `shouldReturn` ConnectionConnected
+
+      Network.Socket.close firstConn
+      (secondConn, _) <- accept sock
+      stateBeforeHandshake <- timeout 1000000 $ do
+        let awaitReconnecting = do
+              state <- connectionState client
+              if state == ConnectionReconnecting
+                then pure state
+                else threadDelay 1000 >> awaitReconnecting
+        awaitReconnecting
+      stateBeforeHandshake `shouldBe` Just ConnectionReconnecting
+      publishResult <- newEmptyMVar
+      void . forkIO $
+        publish client "RECOVERED.SUBJECT" "ready" [] >>= putMVar publishResult
+      timeout 50000 (takeMVar publishResult) `shouldReturn` Nothing
+
+      void (completeHandshake secondConn)
+      expectMVar "publish did not recover after reconnect" publishResult
+        `shouldReturn` Right ()
+      expectClientCommand secondConn "PUB RECOVERED.SUBJECT 5\r\nready\r\n"
+      connectionState client `shouldReturn` ConnectionConnected
+      close client []
+      finalState <- connectionState client
+      case finalState of
+        ConnectionClosed ExitClosedByUser -> pure ()
+        other -> expectationFailure ("unexpected final connection state: " ++ show other)
+      Network.Socket.close secondConn
+      Network.Socket.close sock
+    it "reports disconnect, reconnect, and terminal close in order" $ do
+      (p, sock) <- openFreePort
+      listen sock 2
+      observed <- newTQueueIO
+      clientVar <- newEmptyMVar
+      void . forkIO $ do
+        client <-
+          newClientOrFail
+            [("127.0.0.1", p)]
+            [ withConnectionAttempts 2
+            , withConnectionEventHandler (atomically . writeTQueue observed)
+            ]
+        putMVar clientVar client
+      (firstConn, _) <- accept sock
+      void (completeHandshake firstConn)
+      client <- expectMVar "client did not connect" clientVar
+      atomically (tryReadTQueue observed) `shouldReturn` Nothing
+
+      Network.Socket.close firstConn
+      (secondConn, _) <- accept sock
+      void (completeHandshake secondConn)
+      timeout 1000000 (atomically (readTQueue observed))
+        `shouldReturn` Just ConnectionEventDisconnected
+      timeout 1000000 (atomically (readTQueue observed))
+        `shouldReturn` Just ConnectionEventReconnected
+
+      close client []
+      timeout 1000000 (atomically (readTQueue observed))
+        `shouldReturn` Just (ConnectionEventClosed ExitClosedByUser)
+      Network.Socket.close secondConn
+      Network.Socket.close sock
+    it "allows a disconnect callback to close its own client" $ do
+      (p, sock) <- openFreePort
+      listen sock 2
+      clientRef <- newEmptyMVar
+      clientVar <- newEmptyMVar
+      handlerReturned <- newEmptyMVar
+      observed <- newTQueueIO
+      let handler event = do
+            atomically (writeTQueue observed event)
+            when (event == ConnectionEventDisconnected) $ do
+              client <- readMVar clientRef
+              close client []
+              putMVar handlerReturned ()
+      void . forkIO $ do
+        client <-
+          newClientOrFail
+            [("127.0.0.1", p)]
+            [ withConnectionAttempts 2
+            , withConnectionEventHandler handler
+            ]
+        putMVar clientVar client
+      (firstConn, _) <- accept sock
+      void (completeHandshake firstConn)
+      client <- expectMVar "client did not connect" clientVar
+      putMVar clientRef client
+
+      Network.Socket.close firstConn
+      void (expectMVar "disconnect callback deadlocked in close" handlerReturned)
+      timeout 1000000 (awaitClosed client) `shouldReturn` Just ()
+      timeout 1000000 (atomically (readTQueue observed))
+        `shouldReturn` Just ConnectionEventDisconnected
+      timeout 1000000 (atomically (readTQueue observed))
+        `shouldReturn` Just (ConnectionEventClosed ExitClosedByUser)
+      Network.Socket.close sock
+    it "resets after ping cancellation without poisoning the next PONG" $ do
+      (p, sock) <- openFreePort
+      listen sock 2
+      clientVar <- newEmptyMVar
+      void . forkIO $ do
+        client <-
+          newClientOrFail
+            [("127.0.0.1", p)]
+            [ withConnectionAttempts 2
+            , withConnectName "cancelled-ping-client"
+            ]
+        putMVar clientVar client
+      (firstConn, _) <- accept sock
+      void (completeHandshake firstConn)
+      client <- expectMVar "client did not connect" clientVar
+      abandonedResult <- newEmptyMVar
+      pingThread <- forkIO $
+        ping client [withPingTimeout 5] >>= putMVar abandonedResult
+      expectClientCommand firstConn "PING\r\n"
+
+      killThread pingThread
+      (secondConn, _) <- accept sock
+      void (completeHandshake secondConn)
+      nextResult <- newEmptyMVar
+      void . forkIO $
+        ping client [withPingTimeout 1] >>= putMVar nextResult
+      expectClientCommand secondConn "PING\r\n"
+      timeout 50000 (takeMVar nextResult) `shouldReturn` Nothing
+      sendAll secondConn "PONG\r\n"
+      expectMVar "next ping did not receive its own PONG" nextResult
+        `shouldReturn` Right ()
+      tryTakeMVar abandonedResult `shouldReturn` Nothing
+
+      close client []
+      Network.Socket.close firstConn
+      Network.Socket.close secondConn
+      Network.Socket.close sock
+    it "classifies an established TCP connection timeout as handshake timeout" $ do
+      (p, sock) <- openFreePort
+      listen sock 1
+      clientResult <- newEmptyMVar
+      void . forkIO $
+        newClient
+          [("127.0.0.1", p)]
+          [ withConnectionAttempts 1
+          , withConnectTimeoutMicros 50000
+          ]
+          >>= putMVar clientResult
+      (serverConn, _) <- accept sock
+
+      result <- expectMVar "client did not finish after handshake timeout" clientResult
+      case result of
+        Left (ConnectAttemptsExhausted [ConnectAttemptError _ ConnectHandshakeTimeout]) ->
+          pure ()
+        Left err ->
+          expectationFailure ("unexpected connection timeout: " ++ show err)
+        Right client -> do
+          close client []
+          expectationFailure "client connected without a handshake"
+      Network.Socket.close serverConn
+      Network.Socket.close sock
+    it "closes the socket when initial connection waiting is cancelled" $ do
+      (p, sock) <- openFreePort
+      listen sock 1
+      accepted <- newEmptyMVar
+      void . forkIO $ do
+        (serverConn, _) <- accept sock
+        putMVar accepted serverConn
+
+      clientFinished <- newEmptyMVar
+      clientThread <- forkIO $
+        void
+          ( newClient
+              [("127.0.0.1", p)]
+              [ withConnectionAttempts 1
+              , withConnectTimeoutMicros (5 * 1000000)
+              ]
+          )
+          `finally` putMVar clientFinished ()
+      serverConn <- expectMVar "client never opened its initial socket" accepted
+      killThread clientThread
+      void (expectMVar "cancelled client did not stop" clientFinished)
+      timeout 1000000 (recv serverConn 1) `shouldReturn` Just BS.empty
+      Network.Socket.close serverConn
+      Network.Socket.close sock
+    it "revalidates a waiting publish against the reconnect target" $ do
+      (p, sock) <- openFreePort
+      listen sock 2
+      clientVar <- newEmptyMVar
+      void . forkIO $
+        newClientOrFail
+          [("127.0.0.1", p)]
+          [ withConnectionAttempts 2
+          , withMessageLimit 4096
+          ]
+          >>= putMVar clientVar
+      (firstConn, _) <- accept sock
+      void (completeHandshakeWithInfo firstConn (infoWithMaxPayload 4096))
+      client <- expectMVar "publish boundary client did not connect" clientVar
+
+      Network.Socket.close firstConn
+      (secondConn, _) <- accept sock
+      publishResult <- newEmptyMVar
+      void . forkIO $
+        publish client "LIMIT.PUBLISH" (BS.replicate 2048 _x) []
+          >>= putMVar publishResult
+      timeout 50000 (takeMVar publishResult) `shouldReturn` Nothing
+
+      void (completeHandshakeWithInfo secondConn (infoWithMaxPayload 1024))
+      expectMVar "publish did not revalidate on reconnect" publishResult
+        `shouldReturn` Left (NatsPayloadTooLarge 2048 1024)
+      pingResult <- newEmptyMVar
+      void . forkIO $ ping client [] >>= putMVar pingResult
+      expectNoClientBytesBefore
+        secondConn
+        (BS.isInfixOf "LIMIT.PUBLISH")
+        "PING\r\n"
+        "oversized publish reached the reconnect target"
+      sendAll secondConn "PONG\r\n"
+      expectMVar "ping failed after rejected reconnect publish" pingResult
+        `shouldReturn` Right ()
+
+      close client []
+      Network.Socket.close secondConn
+      Network.Socket.close sock
+    it "revalidates a waiting request against the reconnect target" $ do
+      (p, sock) <- openFreePort
+      listen sock 2
+      clientVar <- newEmptyMVar
+      void . forkIO $
+        newClientOrFail
+          [("127.0.0.1", p)]
+          [ withConnectionAttempts 2
+          , withMessageLimit 4096
+          ]
+          >>= putMVar clientVar
+      (firstConn, _) <- accept sock
+      void (completeHandshakeWithInfo firstConn (infoWithMaxPayload 4096))
+      client <- expectMVar "request boundary client did not connect" clientVar
+
+      Network.Socket.close firstConn
+      (secondConn, _) <- accept sock
+      requestResult <- newEmptyMVar
+      void . forkIO $
+        request
+          client
+          "LIMIT.REQUEST"
+          (BS.replicate 2048 _x)
+          [withRequestTimeout 5]
+          >>= putMVar requestResult
+      timeout 50000 (takeMVar requestResult) `shouldReturn` Nothing
+
+      void (completeHandshakeWithInfo secondConn (infoWithMaxPayload 1024))
+      expectMVar "request did not revalidate on reconnect" requestResult
+        `shouldReturn` Left (NatsPayloadTooLarge 2048 1024)
+      pingResult <- newEmptyMVar
+      void . forkIO $ ping client [] >>= putMVar pingResult
+      expectNoClientBytesBefore
+        secondConn
+        (BS.isInfixOf "LIMIT.REQUEST")
+        "PING\r\n"
+        "oversized request reached the reconnect target"
+      sendAll secondConn "PONG\r\n"
+      expectMVar "ping failed after rejected reconnect request" pingResult
+        `shouldReturn` Right ()
+
+      close client []
+      Network.Socket.close secondConn
+      Network.Socket.close sock
     it "resubscribes with a queue group after reconnect" $ do
       (p, sock) <- openFreePort
       listen sock 2
@@ -1238,6 +1709,104 @@ spec = do
           expectQueuedSub secondConn "JOBS" "WORKERS" sid
           close client []
           Network.Socket.close secondConn
+      Network.Socket.close sock
+    it "resubscribes one-shot subscriptions with the server-side limit" $ do
+      (p, sock) <- openFreePort
+      listen sock 2
+      clientVar <- newEmptyMVar
+      void . forkIO $ do
+        client <-
+          newClientOrFail
+            [("127.0.0.1", p)]
+            [ withConnectionAttempts 2
+            , withConnectName "one-shot-client"
+            ]
+        putMVar clientVar client
+      (firstConn, _) <- accept sock
+      void (completeHandshake firstConn)
+      client <- expectMVar "one-shot client did not connect" clientVar
+      delivered <- newIORef ([] :: [Message])
+      Right subscription <- subscribeOnce client "ONCE.RECONNECT" [] $ \message ->
+        atomicModifyIORef' delivered $ \messages -> (messages ++ [message], ())
+      let sid = subscriptionSid subscription
+          subscribeCommand = BS.concat ["SUB ONCE.RECONNECT ", sid, "\r\n"]
+          limitCommand = BS.concat ["UNSUB ", sid, " 1\r\n"]
+      firstWire <- expectClientBytes
+        firstConn
+        (\bytes -> BS.isInfixOf subscribeCommand bytes && BS.isInfixOf limitCommand bytes)
+        "initial one-shot commands were not sent"
+      unless (appearsBefore subscribeCommand limitCommand firstWire) $
+        expectationFailure ("one-shot limit preceded SUB: " ++ show firstWire)
+
+      Network.Socket.close firstConn
+      (secondConn, _) <- accept sock
+      void (completeHandshake secondConn)
+      secondWire <- expectClientBytes
+        secondConn
+        (\bytes -> BS.isInfixOf subscribeCommand bytes && BS.isInfixOf limitCommand bytes)
+        "resumed one-shot commands were not sent"
+      unless (appearsBefore subscribeCommand limitCommand secondWire) $
+        expectationFailure ("resumed one-shot limit preceded SUB: " ++ show secondWire)
+
+      barrierDone <- newEmptyMVar
+      Right barrier <- subscribe client "ONCE.BARRIER" [] (const (putMVar barrierDone ()))
+      let barrierSid = subscriptionSid barrier
+      expectClientCommand secondConn (BS.concat ["SUB ONCE.BARRIER ", barrierSid, "\r\n"])
+      sendAll secondConn $
+        BS.concat
+          [ msgFrame "ONCE.RECONNECT" sid "first"
+          , msgFrame "ONCE.RECONNECT" sid "second"
+          , msgFrame "ONCE.BARRIER" barrierSid "done"
+          ]
+      expectMVar "one-shot callback barrier did not run" barrierDone
+      messages <- readIORef delivered
+      fmap payload messages `shouldBe` ["first"]
+
+      close client []
+      Network.Socket.close secondConn
+      Network.Socket.close sock
+    it "does not revive a one-shot subscription that expires during reconnect" $ do
+      (p, sock) <- openFreePort
+      listen sock 2
+      clientVar <- newEmptyMVar
+      void . forkIO $ do
+        client <-
+          newClientOrFail
+            [("127.0.0.1", p)]
+            [ withConnectionAttempts 2
+            , withConnectName "expiring-reconnect-client"
+            ]
+        putMVar clientVar client
+      (firstConn, _) <- accept sock
+      void (completeHandshake firstConn)
+      client <- expectMVar "expiring client did not connect" clientVar
+      Right subscription <-
+        subscribeOnce
+          client
+          "EXPIRY.RECONNECT"
+          [withSubscriptionExpiry 0.01]
+          (const (pure ()))
+      let sid = subscriptionSid subscription
+      expectClientCommand firstConn $
+        BS.concat ["SUB EXPIRY.RECONNECT ", sid, "\r\nUNSUB ", sid, " 1\r\n"]
+
+      Network.Socket.close firstConn
+      (secondConn, _) <- accept sock
+      threadDelay 1500000
+      void (completeHandshake secondConn)
+      pingResult <- newEmptyMVar
+      void . forkIO $ ping client [] >>= putMVar pingResult
+      expectNoClientBytesBefore
+        secondConn
+        (BS.isInfixOf "EXPIRY.RECONNECT")
+        "PING\r\n"
+        "expired one-shot subscription was revived"
+      sendAll secondConn "PONG\r\n"
+      expectMVar "ping failed after reconnect expiry" pingResult
+        `shouldReturn` Right ()
+
+      close client []
+      Network.Socket.close secondConn
       Network.Socket.close sock
     it "resubscribes JetStream push consumers after reconnect" $ do
       (p, sock) <- openFreePort

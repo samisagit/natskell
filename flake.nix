@@ -77,6 +77,10 @@
           inherit (buildEnv) buildInputs nativeBuildInputs;
         } (withCabalEnv ''cabal test natskell:test:fuzz-test --only --test-show-details=failures'');
 
+        publicApiTest = pkgs.runCommand "public-api-test" {
+          inherit (buildEnv) buildInputs nativeBuildInputs;
+        } (withCabalEnv ''cabal test natskell:test:public-api-test --only --test-show-details=failures'');
+
         cabalCheck = pkgs.runCommand "cabal-check" {
           inherit (buildEnv) buildInputs nativeBuildInputs;
         } (withCabalEnv "cabal check");
@@ -138,6 +142,7 @@
           cabal-check = cabalCheck;
           unit-test = unitTest;
           fuzz-test = fuzzTest;
+          public-api-test = publicApiTest;
           lint-check = lintCheck;
           fmt-check = fmtCheck;
         };

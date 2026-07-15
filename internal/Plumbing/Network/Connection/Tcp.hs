@@ -1,11 +1,10 @@
-{-# LANGUAGE TypeApplications #-}
-
 module Network.Connection.Tcp
   ( connectTcp
   ) where
 
-import           Control.Exception
+import           Control.Exception         (displayException, mask, onException)
 import qualified Data.ByteString.Lazy      as LBS
+import           Lib.Exception             (trySync)
 import           Network.Connection.Core   (pointTransport)
 import qualified Network.Connection.Tls    as Tls
 import           Network.Connection.Types  (Conn, Transport (..))
@@ -21,25 +20,22 @@ tcpTransport sock =
     , transportWriteLazy = NSB.sendMany sock . LBS.toChunks
     , transportFlush = pure ()
     , transportClose = NS.close sock
+    , transportAbort = NS.close sock
     , transportUpgrade = Just (Tls.upgradeTcp sock)
     }
 
-openTcpTransport :: String -> Int -> IO (Either String Transport)
-openTcpTransport host port = do
-  result <- try @SomeException $ do
-    (sock, _) <- TCP.connectSock host (show port)
-    NS.setSocketOption sock NS.NoDelay 1
-    NS.setSocketOption sock NS.Cork 0
-    pure (tcpTransport sock)
-  case result of
-    Left err        -> return (Left (show err))
-    Right transport -> return (Right transport)
-
 connectTcp :: Conn -> String -> Int -> IO (Either String ())
 connectTcp conn host port = do
-  result <- openTcpTransport host port
-  case result of
-    Left err -> return (Left err)
-    Right transport -> do
-      pointTransport conn transport
-      return (Right ())
+  result <- trySync (mask $ \restore -> do
+    (sock, _) <- TCP.connectSock host (show port)
+    let transport = tcpTransport sock
+    restore
+      (do
+        NS.setSocketOption sock NS.NoDelay 1
+        NS.setSocketOption sock NS.Cork 0)
+      `onException` NS.close sock
+    pointTransport conn transport `onException` transportClose transport)
+  pure $
+    case result of
+      Left err -> Left (displayException err)
+      Right () -> Right ()

@@ -82,6 +82,7 @@ handleReaderApi =
         case result of
           Left err    -> return $ Left (show err)
           Right bytes -> return $ Right bytes
+    , bufferRead = \_ _ -> pure ()
     , closeReader = hClose
     , openReader = \_ -> pure ()
     }
@@ -148,11 +149,18 @@ spec = do
         ctx <- newLogContext
         q <- newQueue
         output <- newTVarIO []
+        done <- newEmptyMVar
         let pub = Pub.Pub "FOO" Nothing Nothing (Just "0123456789")
         let BroadcastingAPI runBroadcasting = broadcastingApi
+        _ <- forkIO $
+          runWithLogger dl ctx
+            (runBroadcasting q captureWriterApi (CaptureWriter output) :: AppM ())
+            `finally` putMVar done ()
         enqueue q (QueueItem pub) `shouldReturn` Right ()
+        atomically $
+          assertTVarWithRetry output ["PUB FOO 10\r\n0123456789\r\n"]
         close q
-        runWithLogger dl ctx (runBroadcasting q captureWriterApi (CaptureWriter output) :: AppM ())
+        takeMVar done
         readTVarIO output `shouldReturn` ["PUB FOO 10\r\n0123456789\r\n"]
 
 ensureTVarIsEmpty :: TVar ByteString -> STM ()

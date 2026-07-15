@@ -1,6 +1,10 @@
 module Subscription.Types
   ( SubscribeConfig (..)
+  , SubscriptionKind (..)
   , SubscriptionMeta (..)
+  , isOneShotSubscription
+  , isResumableSubscription
+  , tracksSubscriptionExpiry
   , PendingLimits (..)
   , defaultPendingLimits
   ) where
@@ -13,12 +17,28 @@ data SubscribeConfig = SubscribeConfig
                          , subscribeQueueGroup :: Maybe Subject
                          }
 
+data SubscriptionKind = StandardSubscription | OneShotSubscription | RequestReplySubscription
+  deriving (Eq, Show)
+
 data SubscriptionMeta = SubscriptionMeta
                           { subject    :: Subject
                           , queueGroup :: Maybe Subject
-                          , isReply    :: Bool
+                          , kind       :: SubscriptionKind
                           }
   deriving (Eq, Show)
+
+isOneShotSubscription :: SubscriptionMeta -> Bool
+isOneShotSubscription meta =
+  case kind meta of
+    StandardSubscription     -> False
+    OneShotSubscription      -> True
+    RequestReplySubscription -> True
+
+isResumableSubscription :: SubscriptionMeta -> Bool
+isResumableSubscription meta = kind meta /= RequestReplySubscription
+
+tracksSubscriptionExpiry :: SubscriptionMeta -> Bool
+tracksSubscriptionExpiry meta = kind meta == OneShotSubscription
 
 data PendingLimits = PendingLimits
                        { pendingMessageLimit :: Int

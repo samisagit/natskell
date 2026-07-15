@@ -24,6 +24,8 @@ connect =
     , Client.withMessageLimit (1024 * 1024)
     , Client.withPendingDeliveryLimits 65536 (64 * 1024 * 1024)
     , Client.withErrorHandler (const (pure ()))
+    , Client.withServerErrorHandler (const (pure ()))
+    , Client.withConnectionEventHandler inspectConnectionEvent
     ]
 
 configuredServer :: Client.Server
@@ -61,9 +63,38 @@ coreOperations client = do
     "service.echo"
     "request"
     [Nats.withRequestTimeout 1]
-  _ <- Nats.ping client []
-  _ <- Nats.flush client []
+  _ <- Nats.ping client [Nats.withPingTimeout 1]
+  _ <- Nats.flush client [Nats.withFlushTimeout 1]
+  state <- Nats.connectionState client
+  inspectConnectionState state
   Nats.close client []
+
+inspectConnectionState :: Nats.ConnectionState -> IO ()
+inspectConnectionState state =
+  case state of
+    Nats.ConnectionConnecting   -> pure ()
+    Nats.ConnectionConnected    -> pure ()
+    Nats.ConnectionReconnecting -> pure ()
+    Nats.ConnectionClosing _    -> pure ()
+    Nats.ConnectionClosed _     -> pure ()
+
+inspectServerError :: Client.ServerError -> IO ()
+inspectServerError serverError = do
+  Client.serverErrorReason serverError `seq` pure ()
+  case Client.serverErrorKind serverError of
+    Client.ServerErrorAuthentication -> pure ()
+    Client.ServerErrorPermission     -> pure ()
+    Client.ServerErrorProtocol       -> pure ()
+    Client.ServerErrorResourceLimit  -> pure ()
+    Client.ServerErrorConnection     -> pure ()
+    Client.ServerErrorUnknown        -> pure ()
+
+inspectConnectionEvent :: Client.ConnectionEvent -> IO ()
+inspectConnectionEvent event =
+  case event of
+    Client.ConnectionEventDisconnected -> pure ()
+    Client.ConnectionEventReconnected  -> pure ()
+    Client.ConnectionEventClosed _     -> pure ()
 
 observeMessage :: Nats.Message -> IO ()
 observeMessage message = do
@@ -155,6 +186,7 @@ main =
   connect
     `seq` serverBuilders
     `seq` coreOperations
+    `seq` inspectServerError
     `seq` jetStreamContext
     `seq` jetStreamOperations
     `seq` messageOperations
