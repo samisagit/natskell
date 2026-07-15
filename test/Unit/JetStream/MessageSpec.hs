@@ -335,6 +335,7 @@ ackFakeClient publishCalls requestCalls response =
     , Nats.newInbox = pure "_INBOX.ack"
     , Nats.ping = \_ -> pure (Right ())
     , Nats.flush = \_ -> pure (Right ())
+    , Nats.connectionState = pure Nats.ConnectionConnected
     , Nats.reset = \_ -> pure ()
     , Nats.close = \_ -> pure ()
     }
