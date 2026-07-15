@@ -10,6 +10,7 @@ module Client.API
   , Subscription (..)
   , subscriptionSid
   , NatsError (..)
+  , ConnectionState (..)
   , Subject
   , Payload
   , Headers
@@ -33,13 +34,15 @@ module Client.API
   , withHeaders
   , withRequestTimeout
   , withRequestHeaders
+  , withPingTimeout
+  , withFlushTimeout
   ) where
 
 import qualified Data.ByteString    as BS
 import           Data.Time.Clock    (NominalDiffTime)
 import           Lib.CallOption     (CallOption)
 import           Publish.Config     (PublishConfig (..))
-import           State.Types        (ClientExitReason)
+import           State.Types        (ClientExitReason, ConnectionState (..))
 import           Subscription.Types (SubscribeConfig (..))
 import           Types.Msg          (Headers, Payload, SID, Subject)
 
@@ -65,6 +68,8 @@ data Client = Client
                   -- ^ Round trip a PING through the server.
                 , flush :: [FlushOption] -> IO (Either NatsError ())
                   -- ^ Wait until all previously buffered writes reach the server.
+                , connectionState :: IO ConnectionState
+                  -- ^ Read the client's current connection lifecycle state.
                 , reset :: [ResetOption] -> IO ()
                   -- ^ Reset the client connection state.
                 , close :: [CloseOption] -> IO ()
@@ -119,10 +124,13 @@ type RequestOption = CallOption RequestConfig
 data UnsubscribeConfig = UnsubscribeConfig
 type UnsubscribeOption = CallOption UnsubscribeConfig
 
+-- Internal configuration constructors are not covered by public API stability.
 data PingConfig = PingConfig
+                | PingConfigTimeout NominalDiffTime
 type PingOption = CallOption PingConfig
 
 data FlushConfig = FlushConfig
+                 | FlushConfigTimeout NominalDiffTime
 type FlushOption = CallOption FlushConfig
 
 data ResetConfig = ResetConfig
@@ -155,3 +163,11 @@ withRequestTimeout timeout cfg = cfg { requestTimeout = max 0 timeout }
 -- | Set headers on an outgoing request.
 withRequestHeaders :: Headers -> RequestOption
 withRequestHeaders messageHeaders cfg = cfg { requestHeaders = Just messageHeaders }
+
+-- | Set the maximum time to wait for a ping response.
+withPingTimeout :: NominalDiffTime -> PingOption
+withPingTimeout timeout _ = PingConfigTimeout (max 0 timeout)
+
+-- | Set the maximum time to wait for a flush response.
+withFlushTimeout :: NominalDiffTime -> FlushOption
+withFlushTimeout timeout _ = FlushConfigTimeout (max 0 timeout)

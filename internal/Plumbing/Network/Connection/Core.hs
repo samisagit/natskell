@@ -1,5 +1,3 @@
-{-# LANGUAGE TypeApplications #-}
-
 module Network.Connection.Core
   ( ReadError
   , WriteError
@@ -16,20 +14,22 @@ module Network.Connection.Core
   , openWriter
   , openConn
   , closeConn
+  , abortConn
   , pointTransport
   , currentTransport
   , bufferRead
   , enableReadWorker
   ) where
 
-import           Control.Concurrent       (forkIO)
+import           Control.Concurrent       (forkIOWithUnmask)
 import           Control.Concurrent.STM
-import           Control.Exception
+import           Control.Exception        (SomeException, finally, onException)
 import           Control.Monad
 import           Data.ByteString          (ByteString)
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Lazy     as LBS
 import           Data.Maybe               (isJust, isNothing)
+import           Lib.Exception            (trySync)
 import           Network.Connection.Types
 
 newConn :: IO Conn
@@ -56,7 +56,9 @@ startReadWorker conn = do
       else do
         writeTVar (readWorkerRunning conn) True
         return True
-  when shouldStart . void $ forkIO (readWorkerLoop conn)
+  when shouldStart $
+    void (forkIOWithUnmask (\unmask -> unmask (readWorkerLoop conn)))
+      `onException` atomically (writeTVar (readWorkerRunning conn) False)
 
 readWorkerLoop :: Conn -> IO ()
 readWorkerLoop conn = do
@@ -76,7 +78,7 @@ readWorkerLoop conn = do
           case current of
             Nothing -> return ()
             Just currentTransport' -> do
-              result <- try @SomeException (transportRead currentTransport' readChunkSize)
+              result <- trySync (transportRead currentTransport' readChunkSize)
               shouldContinue <- enqueueReadResult conn result
               case result of
                 Left _  -> return ()
@@ -137,8 +139,8 @@ readData conn n = do
                       return $ Right chunk
                 else do
                   resultVar <- newEmptyTMVarIO
-                  _ <- forkIO $ do
-                    result <- try @SomeException (transportRead currentTransport' n)
+                  _ <- forkIOWithUnmask $ \unmask -> unmask $ do
+                    result <- trySync (transportRead currentTransport' n)
                     atomically . void $ tryPutTMVar resultVar result
                   result <- atomically $
                     (Left "Read operation is blocked" <$ readTMVar (readBlock conn))
@@ -169,7 +171,7 @@ writeData conn bytes = do
       case current of
         Nothing -> return $ Left "Transport not initialized"
         Just currentTransport' -> do
-          result <- try @SomeException $ do
+          result <- trySync $ do
             transportWrite currentTransport' bytes
             transportFlush currentTransport'
           case result of
@@ -186,7 +188,7 @@ writeDataLazy conn bytes = do
       case current of
         Nothing -> return $ Left "Transport not initialized"
         Just currentTransport' -> do
-          result <- try @SomeException $ do
+          result <- trySync $ do
             transportWriteLazy currentTransport' bytes
             transportFlush currentTransport'
           case result of
@@ -211,11 +213,18 @@ closeConn :: Conn -> IO ()
 closeConn conn = do
   closeReader conn
   closeWriter conn
-  current <- currentTransport conn
+  current <- atomically (tryTakeTMVar (transport conn))
   case current of
-    Nothing -> return ()
-    Just currentTransport' -> void $ try @SomeException (transportClose currentTransport')
+    Nothing                -> return ()
+    Just currentTransport' -> void $ trySync (transportClose currentTransport')
   waitForReadWorkerStopped conn
+
+abortConn :: Conn -> IO ()
+abortConn conn = do
+  current <- atomically (tryTakeTMVar (transport conn))
+  case current of
+    Nothing                -> pure ()
+    Just currentTransport' -> void $ trySync (transportAbort currentTransport')
 
 openConn :: Conn -> IO ()
 openConn conn = do

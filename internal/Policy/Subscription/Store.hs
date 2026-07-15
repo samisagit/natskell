@@ -3,20 +3,28 @@ module Subscription.Store
   , DispatchResult (..)
   , newSubscriptionStore
   , register
+  , registerWithAcceptance
+  , registerWithDispatchHooks
   , unregister
   , dispatchMessage
   , active
+  , closeStore
   , startWorkers
   , awaitCallbackDrain
+  , enqueueControl
   , startExpiryWorker
   , awaitNoTrackedExpiries
   , hasTrackedExpiries
   ) where
 
-import           Control.Concurrent     (forkIO, threadDelay)
+import           Control.Concurrent
+    ( ThreadId
+    , forkIOWithUnmask
+    , threadDelay
+    )
 import           Control.Concurrent.STM
 import           Control.Exception      (SomeException, finally)
-import           Control.Monad          (unless, void, when)
+import           Control.Monad          (unless, when)
 import qualified Data.Heap              as Heap
 import qualified Data.Map               as Map
 import           Data.Time.Clock
@@ -35,6 +43,8 @@ data SubscriptionState = SubscriptionState
 data SubscriptionCallback = SubscriptionCallback
                               { deliverMessage :: Maybe M.Msg -> IO ()
                               , dropMessage    :: IO ()
+                              , acceptMessage  :: STM ()
+                              , rejectMessage  :: STM ()
                               }
 
 data DispatchResult = DispatchMissing
@@ -70,7 +80,40 @@ emptySubscriptionState =
   SubscriptionState Map.empty Heap.empty Map.empty Map.empty
 
 register :: SubscriptionStore -> SID -> SubscriptionMeta -> SubscribeConfig -> (Maybe M.Msg -> IO ()) -> IO () -> IO ()
-register store sid meta cfg callback onDropped = do
+register store sid meta cfg =
+  registerWithAcceptance store sid meta cfg (pure ())
+
+registerWithAcceptance
+  :: SubscriptionStore
+  -> SID
+  -> SubscriptionMeta
+  -> SubscribeConfig
+  -> STM ()
+  -> (Maybe M.Msg -> IO ())
+  -> IO ()
+  -> IO ()
+registerWithAcceptance store sid meta cfg onAccepted callback onDropped = do
+  registerWithDispatchHooks
+    store
+    sid
+    meta
+    cfg
+    onAccepted
+    (pure ())
+    callback
+    onDropped
+
+registerWithDispatchHooks
+  :: SubscriptionStore
+  -> SID
+  -> SubscriptionMeta
+  -> SubscribeConfig
+  -> STM ()
+  -> STM ()
+  -> (Maybe M.Msg -> IO ())
+  -> IO ()
+  -> IO ()
+registerWithDispatchHooks store sid meta cfg onAccepted onRejected callback onDropped = do
   expiryAt <- case expiry cfg of
     Nothing  -> pure Nothing
     Just ttl -> Just . addUTCTime ttl <$> getCurrentTime
@@ -80,12 +123,12 @@ register store sid meta cfg callback onDropped = do
             { subscriptionCallbacks =
                 Map.insert
                   sid
-                  (SubscriptionCallback callback onDropped)
+                  (SubscriptionCallback callback onDropped onAccepted onRejected)
                   (subscriptionCallbacks state)
             , subscriptionMeta = Map.insert sid meta (subscriptionMeta state)
             }
     in case expiryAt of
-        Just expiresAt | isReply meta ->
+        Just expiresAt | tracksSubscriptionExpiry meta ->
           trackSubscriptionExpiry sid expiresAt stateWithCallback
         _ ->
           stateWithCallback
@@ -104,8 +147,9 @@ dispatchMessage store msg = do
       Nothing ->
         pure (DispatchMissing, pure ())
       Just callback -> do
+        acceptMessage callback
         let shouldRemove =
-              maybe False isReply (Map.lookup sid (subscriptionMeta state))
+              maybe False isOneShotSubscription (Map.lookup sid (subscriptionMeta state))
             nextState =
               if shouldRemove
                 then removeSubscriptionLocal sid state
@@ -118,6 +162,7 @@ dispatchMessage store msg = do
             enqueueDeliverySTM store messageBytes (deliverMessage callback (Just msg))
             pure (DispatchQueued, pure ())
           else do
+            rejectMessage callback
             alreadySlow <- readTVar (storeSlowConsumer store)
             unless alreadySlow $ do
               writeTVar (storeSlowConsumer store) True
@@ -130,7 +175,11 @@ active :: SubscriptionStore -> IO [(SID, SubscriptionMeta)]
 active store =
   Map.toList . subscriptionMeta <$> readTVarIO (storeState store)
 
-startWorkers :: Int -> SubscriptionStore -> STM () -> (SomeException -> IO ()) -> IO ()
+closeStore :: SubscriptionStore -> IO ()
+closeStore store =
+  atomically (writeTVar (storeState store) emptySubscriptionState)
+
+startWorkers :: Int -> SubscriptionStore -> STM () -> (SomeException -> IO ()) -> IO [ThreadId]
 startWorkers concurrency store =
   startWorkerPool (max 1 concurrency) (storeCallbackQueue store)
 
@@ -139,9 +188,12 @@ awaitCallbackDrain store = do
   pending <- readTVar (storeCallbackPending store)
   check (pending == 0)
 
-startExpiryWorker :: SubscriptionStore -> IO Bool -> IO ()
+enqueueControl :: SubscriptionStore -> IO () -> IO ()
+enqueueControl store = atomically . enqueueControlCallbackSTM store
+
+startExpiryWorker :: SubscriptionStore -> IO Bool -> IO ThreadId
 startExpiryWorker store shouldStop =
-  void . forkIO $ loop
+  forkIOWithUnmask (\unmask -> unmask loop)
   where
     loop = do
       stop <- shouldStop

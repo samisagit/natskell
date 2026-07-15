@@ -13,6 +13,7 @@ connectionApi =
     { newConn = Core.newConn
     , reader = ReaderAPI
         { readData = Core.readData
+        , bufferRead = Core.bufferRead
         , closeReader = Core.closeReader
         , openReader = Core.openReader
         }
@@ -24,6 +25,7 @@ connectionApi =
         }
     , open = Core.openConn
     , close = Core.closeConn
+    , abort = Core.abortConn
     , connectTcp = Tcp.connectTcp
     , configure = Tls.configureTransport
     }

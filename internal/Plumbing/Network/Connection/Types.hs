@@ -21,6 +21,7 @@ data Transport = Transport
                    , transportWriteLazy :: LBS.ByteString -> IO ()
                    , transportFlush :: IO ()
                    , transportClose :: IO ()
+                   , transportAbort :: IO ()
                    , transportUpgrade :: Maybe (TLS.ClientParams -> IO (Either String Transport))
                    }
 

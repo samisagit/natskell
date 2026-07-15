@@ -130,6 +130,24 @@ batch limit leave their server settings unset. Stream and consumer info expose
 effective values through `streamConfigMaxMessageSize`, `consumerConfigBackoff`,
 and `consumerConfigMaxRequestBatch`.
 
+The existing `ack`, `nak`, `inProgress`, and `term` dispositions are
+asynchronous when their request-options list is empty. Supplying a request
+option to one of these operations or to `nakWithDelay` asks JetStream to confirm
+the disposition; `ackSync` always requests confirmation. `termSync` provides
+the same guarantee for terminal dispositions as a natskell convenience.
+Delayed redelivery requires NATS Server 2.7.1 or newer and uses a validated,
+whole-nanosecond duration:
+
+```haskell
+case JetStream.nakDelay 30 of
+  Nothing -> pure ()
+  Just delay ->
+    JetStream.nakWithDelay (JetStream.messages jetStream) message delay []
+```
+
+`nakDelay` rejects durations below one nanosecond and values outside the
+JetStream signed 64-bit nanosecond range.
+
 ### Exit handling
 
 ```haskell
@@ -143,6 +161,42 @@ result <- Client.connect [endpoint] opts
 `connect` waits for the initial INFO/TLS/CONNECT/PING/PONG handshake and
 returns `Left ConnectError` if every configured endpoint fails. Later terminal
 disconnects are reported to `withExitAction`.
+
+### Connection lifecycle and protocol errors
+
+`Nats.connectionState` reports `ConnectionConnecting`,
+`ConnectionConnected`, `ConnectionReconnecting`, `ConnectionClosing reason`,
+or `ConnectionClosed reason`. Publish, subscribe, request, ping, and flush
+operations issued during a reconnect wait for the next ready connection or
+return `NatsConnectionClosed` if the client becomes terminal. Unsubscribe
+removes local subscription state immediately; the reconnect boundary removes
+its old server-side subscription.
+
+A successful core `publish` means the at-most-once command was queued. Buffered
+publishes may survive a reconnect. If the next server negotiates a smaller
+`max_payload`, oversized buffered publishes are dropped and reported through
+`Client.withErrorHandler` rather than written to that server.
+
+Use `Client.withConnectionEventHandler` for serial notifications after a
+connection disconnects, reconnects, or closes. Closed events include the
+terminal `ClientExitReason`; the initial connection does not emit a reconnect
+event. Polling `Nats.connectionState` remains available for snapshots.
+
+`ping` and `flush` have finite two-second defaults. Override them per call with
+`Nats.withPingTimeout` and `Nats.withFlushTimeout`. A timeout or cancellation
+resets the current connection before reconnecting, so an old PONG cannot
+complete a later call.
+
+Use `Client.withServerErrorHandler` to receive typed server `-ERR` values,
+including non-fatal permission errors. `Client.serverErrorKind` classifies
+authentication, permission, protocol, resource-limit, connection, and unknown
+errors without requiring callers to inspect the server's text. Handlers run on
+a dedicated serial worker rather than the socket reader. The server-error
+backlog is bounded; lifecycle transitions have reserved delivery and preserve
+their order with server errors. Protocol work such as PONG handling continues
+immediately. Excess non-fatal server errors are dropped instead of blocking or
+resetting the connection. Fatal errors are still reported through
+`withExitAction` and close the client.
 
 Configuration options are applied in declaration order; when options overlap,
 the last option wins.
@@ -159,6 +213,10 @@ an empty `ByteString`, not `Nothing`.
 Operations return explicit `Either` errors and reserve final option-list
 arguments for additive evolution. JetStream sequence numbers use `Word64`, and
 server-defined JetStream enums preserve unknown wire values.
+
+The private `natskell-internal` sublibrary shares implementation code with the
+test suites. Its modules and constructors are intentionally unstable and are
+not part of the public compatibility contract above.
 
 ## Contributing
 Pull requests are welcome. Please open an issue first to discuss what you would like to change.
