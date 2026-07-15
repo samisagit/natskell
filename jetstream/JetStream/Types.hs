@@ -23,6 +23,7 @@ module JetStream.Types
   , byteStringToJSON
   , parseByteString
   , diffTimeNanosToJSON
+  , diffTimeToNanoseconds
   , applyCallOptions
   ) where
 
@@ -259,7 +260,12 @@ parseByteString =
 
 diffTimeNanosToJSON :: NominalDiffTime -> Value
 diffTimeNanosToJSON diffTime =
-  Number (fromInteger (floor (realToFrac diffTime * (1000000000 :: Double))))
+  Number (fromInteger (diffTimeToNanoseconds diffTime))
+
+-- | Convert seconds to whole nanoseconds using exact arithmetic and floor.
+diffTimeToNanoseconds :: NominalDiffTime -> Integer
+diffTimeToNanoseconds =
+  floor . (* 1000000000) . toRational
 
 instance FromJSON AccountInfo where
   parseJSON value@(Object obj) =

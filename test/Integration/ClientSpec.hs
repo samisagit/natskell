@@ -47,6 +47,10 @@ isValidationFailure :: Either NatsError a -> Bool
 isValidationFailure (Left (NatsValidationError _)) = True
 isValidationFailure _                              = False
 
+isJetStreamDecodeFailure :: Either JetStream.JetStreamError a -> Bool
+isJetStreamDecodeFailure (Left (JetStream.JetStreamDecodeError _)) = True
+isJetStreamDecodeFailure _                                         = False
+
 tooLongMSG = "MSG a b 5000\r\n" <> BS.replicate 5000 _x <> "\r\n"
 
 headerBlock :: [(BS.ByteString, BS.ByteString)] -> BS.ByteString
@@ -328,11 +332,11 @@ replyStatusToCapturedPublish sock captured status description =
 
 protoStreamInfoResponse :: BS.ByteString
 protoStreamInfoResponse =
-  "{\"config\":{\"name\":\"PROTO_STREAM\",\"subjects\":[\"PROTO.SUBJECT\"],\"retention\":\"limits\",\"storage\":\"memory\",\"discard\":\"new\",\"max_msgs\":1,\"max_bytes\":-1,\"max_age\":0,\"num_replicas\":1,\"allow_direct\":false},\"created\":\"2024-01-01T00:00:00Z\",\"state\":{\"messages\":0,\"bytes\":0,\"first_seq\":0,\"first_ts\":\"2024-01-01T00:00:00Z\",\"last_seq\":0,\"last_ts\":\"2024-01-01T00:00:00Z\",\"consumer_count\":0}}"
+  "{\"config\":{\"name\":\"PROTO_STREAM\",\"subjects\":[\"PROTO.SUBJECT\"],\"retention\":\"limits\",\"storage\":\"memory\",\"discard\":\"new\",\"max_msgs\":1,\"max_bytes\":-1,\"max_age\":0,\"max_msg_size\":64,\"num_replicas\":1,\"allow_direct\":false},\"created\":\"2024-01-01T00:00:00Z\",\"state\":{\"messages\":0,\"bytes\":0,\"first_seq\":0,\"first_ts\":\"2024-01-01T00:00:00Z\",\"last_seq\":0,\"last_ts\":\"2024-01-01T00:00:00Z\",\"consumer_count\":0}}"
 
 protoConsumerInfoResponse :: BS.ByteString
 protoConsumerInfoResponse =
-  "{\"stream_name\":\"PROTO_STREAM\",\"name\":\"PROTO_CONSUMER\",\"created\":\"2024-01-01T00:00:00Z\",\"config\":{\"deliver_policy\":\"all\",\"ack_policy\":\"explicit\",\"replay_policy\":\"instant\",\"filter_subjects\":[\"PROTO.A\",\"PROTO.B\"]}}"
+  "{\"stream_name\":\"PROTO_STREAM\",\"name\":\"PROTO_CONSUMER\",\"created\":\"2024-01-01T00:00:00Z\",\"config\":{\"deliver_policy\":\"all\",\"ack_policy\":\"explicit\",\"replay_policy\":\"instant\",\"filter_subjects\":[\"PROTO.A\",\"PROTO.B\"],\"backoff\":[100000001,250000000],\"max_batch\":32}}"
 
 protoPushConsumerInfoResponse :: BS.ByteString
 protoPushConsumerInfoResponse =
@@ -801,12 +805,14 @@ spec = do
               ["PROTO.SUBJECT"]
               [ JetStream.withStorage JetStream.MemoryStorage
               , JetStream.withMaxMessages 1
+              , JetStream.withMaxMessageSize 64
               , JetStream.withDiscard JetStream.DiscardNew
               ]
               []
             putMVar done result
           captured <- capturePublish serv "$JS.API.STREAM.CREATE.PROTO_STREAM"
           capturedPayload captured `shouldSatisfy` BS.isInfixOf "\"max_msgs\":1"
+          capturedPayload captured `shouldSatisfy` BS.isInfixOf "\"max_msg_size\":64"
           capturedPayload captured `shouldSatisfy` BS.isInfixOf "\"discard\":\"new\""
           replyToCapturedPublish serv captured protoStreamInfoResponse
           result <- timeout 1000000 (takeMVar done)
@@ -815,8 +821,9 @@ spec = do
               expectationFailure "stream create did not complete"
             Just (Left err) ->
               expectationFailure ("stream create failed: " ++ show err)
-            Just (Right info) ->
+            Just (Right info) -> do
               JetStream.streamConfigName (JetStream.streamInfoConfig info) `shouldBe` "PROTO_STREAM"
+              JetStream.streamConfigMaxMessageSize (JetStream.streamInfoConfig info) `shouldBe` 64
 
         it "sends only the selected consumer filter representation" $ \(serv, client, _, _) -> do
           let Right jetStream = newJetStream client []
@@ -832,12 +839,16 @@ spec = do
               , JetStream.withConsumerAckPolicy JetStream.AckExplicit
               , JetStream.withConsumerFilter
                   (JetStream.ConsumerFilterSubjects ["PROTO.A", "PROTO.B"])
+              , JetStream.withConsumerBackoff [0.100000001, 0.25]
+              , JetStream.withConsumerMaxRequestBatch 32
               ]
               []
             putMVar done result
           captured <- capturePublish serv "$JS.API.CONSUMER.DURABLE.CREATE.PROTO_STREAM.PROTO_CONSUMER"
           capturedPayload captured `shouldSatisfy` BS.isInfixOf "\"filter_subjects\":[\"PROTO.A\",\"PROTO.B\"]"
           capturedPayload captured `shouldSatisfy` not . BS.isInfixOf "\"filter_subject\":"
+          capturedPayload captured `shouldSatisfy` BS.isInfixOf "\"backoff\":[100000001,250000000]"
+          capturedPayload captured `shouldSatisfy` BS.isInfixOf "\"max_batch\":32"
           replyToCapturedPublish serv captured protoConsumerInfoResponse
           result <- timeout 1000000 (takeMVar done)
           case result of
@@ -845,8 +856,64 @@ spec = do
               expectationFailure "consumer create did not complete"
             Just (Left err) ->
               expectationFailure ("consumer create failed: " ++ show err)
-            Just (Right info) ->
+            Just (Right info) -> do
               JetStream.consumerInfoName info `shouldBe` "PROTO_CONSUMER"
+              JetStream.consumerConfigBackoff (JetStream.consumerInfoConfig info)
+                `shouldBe` Just [0.100000001, 0.25]
+              JetStream.consumerConfigMaxRequestBatch (JetStream.consumerInfoConfig info)
+                `shouldBe` Just 32
+
+        it "rejects invalid resource configs before publishing" $ \(serv, client, _, _) -> do
+          let Right jetStream = newJetStream client []
+          invalidStream <- JetStream.create
+            (JetStream.streams jetStream)
+            "INVALID_STREAM"
+            ["INVALID.STREAM"]
+            [JetStream.withMaxMessageSize (-2)]
+            []
+          invalidStream `shouldSatisfy` isJetStreamDecodeFailure
+
+          invalidBatch <- JetStream.putConsumer
+            (JetStream.consumers jetStream)
+            "PROTO_STREAM"
+            JetStream.ConsumerCreate
+            (JetStream.DurableConsumer "INVALID_BATCH")
+            JetStream.PullConsumer
+            [JetStream.withConsumerMaxRequestBatch (-1)]
+            []
+          invalidBatch `shouldSatisfy` isJetStreamDecodeFailure
+
+          invalidBackoff <- JetStream.putConsumer
+            (JetStream.consumers jetStream)
+            "PROTO_STREAM"
+            JetStream.ConsumerCreate
+            (JetStream.DurableConsumer "INVALID_BACKOFF")
+            JetStream.PullConsumer
+            [JetStream.withConsumerBackoff [10000000000]]
+            []
+          invalidBackoff `shouldSatisfy` isJetStreamDecodeFailure
+
+          invalidBackoffLength <- JetStream.putConsumer
+            (JetStream.consumers jetStream)
+            "PROTO_STREAM"
+            JetStream.ConsumerCreate
+            (JetStream.DurableConsumer "INVALID_BACKOFF_LENGTH")
+            JetStream.PullConsumer
+            [ JetStream.withConsumerMaxDeliver 1
+            , JetStream.withConsumerBackoff [1, 2]
+            ]
+            []
+          invalidBackoffLength `shouldSatisfy` isJetStreamDecodeFailure
+
+          pingBox <- newEmptyMVar
+          pingWithCallback client (putMVar pingBox ())
+          expectNoClientBytesBefore
+            serv
+            (BS.isInfixOf "$JS.API.")
+            "PING\r\n"
+            "invalid JetStream config published a request"
+          sendAll serv "PONG\r\n"
+          expectMVar "PING failed after local JetStream validation" pingBox
 
         it "sends push consumer create requests with a delivery subject" $ \(serv, client, _, _) -> do
           let Right jetStream = newJetStream client []

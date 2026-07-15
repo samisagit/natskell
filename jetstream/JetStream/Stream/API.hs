@@ -27,6 +27,7 @@ module JetStream.Stream.API
   , streamConfigMaxMessages
   , streamConfigMaxBytes
   , streamConfigMaxAge
+  , streamConfigMaxMessageSize
   , streamConfigReplicas
   , streamConfigDuplicateWindow
   , streamConfigAllowDirect
@@ -37,6 +38,7 @@ module JetStream.Stream.API
   , withMaxMessages
   , withMaxBytes
   , withMaxAge
+  , withMaxMessageSize
   , withReplicas
   , withDuplicateWindow
   , withAllowDirect

@@ -10,7 +10,12 @@ import           Data.Aeson
     , (.=)
     )
 import qualified Data.ByteString.Lazy     as LBS
+import           Data.Int                 (Int64)
+import           Data.Ratio               ((%))
 import           JetStream.Consumer.Types
+import           JetStream.Error
+    ( JetStreamError (JetStreamDecodeError)
+    )
 import           Test.Hspec
 
 spec :: Spec
@@ -34,6 +39,57 @@ spec = do
       eitherDecode (encode request)
         `shouldBe` Right (object ["deliver_policy" .= ("last" :: String)])
 
+    it "encodes backoff durations as exact integer nanoseconds" $ do
+      let request = consumerConfigRequest
+            [ withConsumerBackoff
+                [ fromRational (1234567891 % 1000000000)
+                , fromRational (1 % 1000000000)
+                ]
+            , withConsumerMaxRequestBatch maxBound
+            ]
+      validateConsumerConfigRequest request `shouldBe` Right ()
+      eitherDecode (encode request) `shouldBe` Right (object
+        [ "backoff" .= [1234567891 :: Integer, 1]
+        , "max_batch" .= (maxBound :: Int)
+        ])
+
+    it "floors backoff at sub-nanosecond and Int64 boundaries" $ do
+      let request = consumerConfigRequest
+            [withConsumerBackoff [subNanosecond, oneNanosecond, maxInt64Nanoseconds]]
+      validateConsumerConfigRequest request `shouldBe` Right ()
+      eitherDecode (encode request) `shouldBe` Right (object
+        ["backoff" .= [0 :: Integer, 1, toInteger (maxBound :: Int64)]])
+
+    it "rejects negative and overflowing backoff durations" $ do
+      validateConsumerConfigRequest
+        (consumerConfigRequest [withConsumerBackoff [negativeSubNanosecond]])
+        `shouldBe` Left (JetStreamDecodeError backoffRangeError)
+      validateConsumerConfigRequest
+        (consumerConfigRequest [withConsumerBackoff [overflowingNanoseconds]])
+        `shouldBe` Left (JetStreamDecodeError backoffRangeError)
+
+    it "rejects negative max request batch" $ do
+      validateConsumerConfigRequest
+        (consumerConfigRequest [withConsumerMaxRequestBatch (-1)])
+        `shouldBe` Left (JetStreamDecodeError "consumer max request batch must be zero or greater")
+
+    it "allows backoff no longer than positive max deliver" $ do
+      validateConsumerConfigRequest (backoffWithMaxDeliver 2 [1]) `shouldBe` Right ()
+      validateConsumerConfigRequest (backoffWithMaxDeliver 2 [1, 2]) `shouldBe` Right ()
+      validateConsumerConfigRequest (backoffWithMaxDeliver 0 [1, 2, 3]) `shouldBe` Right ()
+      validateConsumerConfigRequest (backoffWithMaxDeliver (-1) [1, 2, 3]) `shouldBe` Right ()
+      validateConsumerConfigRequest (backoffWithMaxDeliver 2 [1, 2, 3])
+        `shouldBe` Left (JetStreamDecodeError
+          "consumer backoff length cannot exceed positive max deliver")
+
+    it "omits empty backoff and zero max request batch values" $ do
+      let request = consumerConfigRequest
+            [ withConsumerBackoff []
+            , withConsumerMaxRequestBatch 0
+            ]
+      validateConsumerConfigRequest request `shouldBe` Right ()
+      eitherDecode (encode request) `shouldBe` Right (object [])
+
   describe "Consumer reset request JSON" $ do
     it "encodes an optional reset sequence" $ do
       eitherDecode (encode (consumerResetRequest [withConsumerResetSequence 7]))
@@ -42,6 +98,15 @@ spec = do
   describe "ConsumerInfo JSON" .
     it "decodes server responses into concrete fields" $ do
       eitherDecode consumerInfoJSON `shouldBe` Right consumerInfoFixture
+
+  describe "ConsumerConfig response JSON" $ do
+    it "normalizes absent backoff and zero max request batch to unset" $ do
+      fmap configResourceLimits (eitherDecode zeroMaxBatchConsumerConfigJSON)
+        `shouldBe` Right (Nothing, Nothing)
+
+    it "round-trips backoff and max request batch" $ do
+      eitherDecode (encode (consumerInfoConfig consumerInfoFixture))
+        `shouldBe` Right (consumerInfoConfig consumerInfoFixture)
 
   describe "ConsumerResetResponse JSON" .
     it "decodes reset metadata with the updated consumer info" $ do
@@ -66,6 +131,30 @@ spec = do
           , consumerNamesLimit = 1024
           , consumerNamesConsumers = ["orders-puller", "orders-worker"]
           }
+
+configResourceLimits config =
+  (consumerConfigBackoff config, consumerConfigMaxRequestBatch config)
+
+backoffWithMaxDeliver maxDeliver backoff =
+  consumerConfigRequest
+    [ withConsumerMaxDeliver maxDeliver
+    , withConsumerBackoff backoff
+    ]
+
+subNanosecond = fromRational (1 % 2000000000)
+
+negativeSubNanosecond = fromRational ((-1) % 2000000000)
+
+oneNanosecond = fromRational (1 % 1000000000)
+
+maxInt64Nanoseconds =
+  fromRational (toInteger (maxBound :: Int64) % 1000000000)
+
+overflowingNanoseconds =
+  fromRational ((toInteger (maxBound :: Int64) + 1) % 1000000000)
+
+backoffRangeError =
+  "consumer backoff durations must floor to nanoseconds between 0 and 9223372036854775807"
 
 durablePullConsumerConfigRequest :: ConsumerConfigRequest
 durablePullConsumerConfigRequest =
@@ -142,7 +231,11 @@ targetKindConsumerConfigValue = object
 
 consumerInfoJSON :: LBS.ByteString
 consumerInfoJSON =
-  "{\"type\":\"io.nats.jetstream.api.v1.consumer_info_response\",\"stream_name\":\"ORDERS\",\"name\":\"orders-puller\",\"created\":\"2024-01-01T00:00:00Z\",\"config\":{\"deliver_policy\":\"all\",\"ack_policy\":\"explicit\",\"replay_policy\":\"instant\"},\"delivered\":{\"consumer_seq\":2,\"stream_seq\":10},\"ack_floor\":{\"consumer_seq\":1,\"stream_seq\":9},\"num_ack_pending\":1,\"num_redelivered\":0,\"num_waiting\":0,\"num_pending\":3}"
+  "{\"type\":\"io.nats.jetstream.api.v1.consumer_info_response\",\"stream_name\":\"ORDERS\",\"name\":\"orders-puller\",\"created\":\"2024-01-01T00:00:00Z\",\"config\":{\"deliver_policy\":\"all\",\"ack_policy\":\"explicit\",\"replay_policy\":\"instant\",\"backoff\":[1000000001,2],\"max_batch\":128},\"delivered\":{\"consumer_seq\":2,\"stream_seq\":10},\"ack_floor\":{\"consumer_seq\":1,\"stream_seq\":9},\"num_ack_pending\":1,\"num_redelivered\":0,\"num_waiting\":0,\"num_pending\":3}"
+
+zeroMaxBatchConsumerConfigJSON :: LBS.ByteString
+zeroMaxBatchConsumerConfigJSON =
+  "{\"deliver_policy\":\"all\",\"ack_policy\":\"explicit\",\"replay_policy\":\"instant\",\"max_batch\":0}"
 
 consumerResetJSON :: LBS.ByteString
 consumerResetJSON =
@@ -150,7 +243,7 @@ consumerResetJSON =
 
 consumerListJSON :: LBS.ByteString
 consumerListJSON =
-  "{\"type\":\"io.nats.jetstream.api.v1.consumer_list_response\",\"total\":1,\"offset\":0,\"limit\":1024,\"consumers\":[{\"type\":\"io.nats.jetstream.api.v1.consumer_info_response\",\"stream_name\":\"ORDERS\",\"name\":\"orders-puller\",\"created\":\"2024-01-01T00:00:00Z\",\"config\":{\"deliver_policy\":\"all\",\"ack_policy\":\"explicit\",\"replay_policy\":\"instant\"},\"delivered\":{\"consumer_seq\":2,\"stream_seq\":10},\"ack_floor\":{\"consumer_seq\":1,\"stream_seq\":9},\"num_ack_pending\":1,\"num_redelivered\":0,\"num_waiting\":0,\"num_pending\":3}]}"
+  "{\"type\":\"io.nats.jetstream.api.v1.consumer_list_response\",\"total\":1,\"offset\":0,\"limit\":1024,\"consumers\":[{\"type\":\"io.nats.jetstream.api.v1.consumer_info_response\",\"stream_name\":\"ORDERS\",\"name\":\"orders-puller\",\"created\":\"2024-01-01T00:00:00Z\",\"config\":{\"deliver_policy\":\"all\",\"ack_policy\":\"explicit\",\"replay_policy\":\"instant\",\"backoff\":[1000000001,2],\"max_batch\":128},\"delivered\":{\"consumer_seq\":2,\"stream_seq\":10},\"ack_floor\":{\"consumer_seq\":1,\"stream_seq\":9},\"num_ack_pending\":1,\"num_redelivered\":0,\"num_waiting\":0,\"num_pending\":3}]}"
 
 consumerNamesJSON :: LBS.ByteString
 consumerNamesJSON =
@@ -176,6 +269,8 @@ consumerInfoFixture = ConsumerInfo
       , consumerConfigMaxDeliver = Nothing
       , consumerConfigMaxWaiting = Nothing
       , consumerConfigMaxAckPending = Nothing
+      , consumerConfigBackoff = Just [fromRational (1000000001 % 1000000000), fromRational (2 % 1000000000)]
+      , consumerConfigMaxRequestBatch = Just 128
       , consumerConfigInactiveThreshold = Nothing
       , consumerConfigIdleHeartbeat = Nothing
       , consumerConfigHeadersOnly = Nothing

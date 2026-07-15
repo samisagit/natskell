@@ -111,6 +111,25 @@ The focused contracts live under `JetStream.API.Stream`,
 `JetStream.API.Management`. Every network operation has a final request-options
 argument, so future call options can be added without changing its type.
 
+Stream configuration supports a per-message encoded-size limit with
+`withMaxMessageSize`; the limit includes headers as well as payload bytes, and
+`-1` means unlimited.
+
+On NATS Server 2.7.1 or later, `withConsumerBackoff` configures redelivery after
+acknowledgment timeouts. It does not affect explicit NAK redelivery. The first
+delay overrides `AckWait`, later entries apply to successive redeliveries, and
+the final entry repeats after the schedule is exhausted. A non-empty schedule
+cannot be longer than a positive `MaxDeliver`. Durations are converted with
+exact arithmetic and floored to whole nanoseconds, so a non-negative duration
+below one nanosecond becomes zero; the wire values must fit signed 64-bit
+nanoseconds.
+
+`withConsumerMaxRequestBatch` caps pull-request batch size on NATS Server 2.7.0
+or later and is only meaningful for pull consumers. Empty backoff and a zero
+batch limit leave their server settings unset. Stream and consumer info expose
+effective values through `streamConfigMaxMessageSize`, `consumerConfigBackoff`,
+and `consumerConfigMaxRequestBatch`.
+
 ### Exit handling
 
 ```haskell

@@ -31,6 +31,8 @@ module JetStream.Consumer.API
   , consumerConfigMaxDeliver
   , consumerConfigMaxWaiting
   , consumerConfigMaxAckPending
+  , consumerConfigBackoff
+  , consumerConfigMaxRequestBatch
   , consumerConfigInactiveThreshold
   , consumerConfigIdleHeartbeat
   , consumerConfigHeadersOnly
@@ -80,6 +82,7 @@ module JetStream.Consumer.API
   , ReplayPolicy (..)
   , withConsumerAckPolicy
   , withConsumerAckWait
+  , withConsumerBackoff
   , withConsumerDescription
   , withConsumerDeliverGroup
   , withConsumerDeliverPolicy
@@ -89,6 +92,7 @@ module JetStream.Consumer.API
   , withConsumerInactiveThreshold
   , withConsumerListOffset
   , withConsumerMaxAckPending
+  , withConsumerMaxRequestBatch
   , withConsumerMaxDeliver
   , withConsumerMaxWaiting
   , withConsumerMemoryStorage

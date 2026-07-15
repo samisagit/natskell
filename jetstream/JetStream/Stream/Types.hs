@@ -8,13 +8,16 @@ module JetStream.Stream.Types
   , DiscardPolicy (..)
   , StreamConfig (..)
   , StreamConfigOption
+  , StreamConfigRequest
   , streamConfigRequest
+  , validateStreamConfigRequest
   , withRetention
   , withStorage
   , withDiscard
   , withMaxMessages
   , withMaxBytes
   , withMaxAge
+  , withMaxMessageSize
   , withReplicas
   , withDuplicateWindow
   , withAllowDirect
@@ -51,10 +54,11 @@ import           Data.Aeson
 import           Data.Aeson.Types       (Pair, Parser)
 import qualified Data.ByteString        as BS
 import qualified Data.ByteString.Base64 as Base64
+import           Data.Int               (Int32)
 import           Data.Maybe             (catMaybes)
 import           Data.Time.Clock        (NominalDiffTime, UTCTime)
 import           Data.Word              (Word64)
-import           JetStream.Error        (JetStreamError)
+import           JetStream.Error        (JetStreamError (JetStreamDecodeError))
 import           JetStream.Types
     ( CallOption
     , DiscardPolicy (..)
@@ -66,6 +70,7 @@ import           JetStream.Types
     , Subject
     , applyCallOptions
     , byteStringToJSON
+    , diffTimeToNanoseconds
     , parseByteString
     )
 
@@ -98,6 +103,7 @@ data StreamConfigRequest = StreamConfigRequest
                              , streamConfigRequestMaxMessages :: Maybe Integer
                              , streamConfigRequestMaxBytes :: Maybe Integer
                              , streamConfigRequestMaxAge :: Maybe NominalDiffTime
+                             , streamConfigRequestMaxMessageSize :: Maybe Int32
                              , streamConfigRequestReplicas :: Maybe Int
                              , streamConfigRequestDuplicateWindow :: Maybe NominalDiffTime
                              , streamConfigRequestAllowDirect :: Maybe Bool
@@ -118,10 +124,20 @@ streamConfigRequest name subjects options =
       , streamConfigRequestMaxMessages = Nothing
       , streamConfigRequestMaxBytes = Nothing
       , streamConfigRequestMaxAge = Nothing
+      , streamConfigRequestMaxMessageSize = Nothing
       , streamConfigRequestReplicas = Nothing
       , streamConfigRequestDuplicateWindow = Nothing
       , streamConfigRequestAllowDirect = Nothing
       }
+
+validateStreamConfigRequest :: StreamConfigRequest -> Either JetStreamError ()
+validateStreamConfigRequest config =
+  case streamConfigRequestMaxMessageSize config of
+    Just maxMessageSize
+      | maxMessageSize < (-1) ->
+          Left (JetStreamDecodeError "stream max message size must be -1 or greater")
+    _ ->
+      Right ()
 
 withRetention :: RetentionPolicy -> StreamConfigOption
 withRetention retention config =
@@ -147,6 +163,12 @@ withMaxAge :: NominalDiffTime -> StreamConfigOption
 withMaxAge maxAge config =
   config { streamConfigRequestMaxAge = Just maxAge }
 
+-- | Limit the total encoded bytes of one stored message, including headers.
+-- Use @-1@ for unlimited.
+withMaxMessageSize :: Int32 -> StreamConfigOption
+withMaxMessageSize maxMessageSize config =
+  config { streamConfigRequestMaxMessageSize = Just maxMessageSize }
+
 withReplicas :: Int -> StreamConfigOption
 withReplicas replicas config =
   config { streamConfigRequestReplicas = Just replicas }
@@ -168,6 +190,7 @@ data StreamConfig = StreamConfig
                       , streamConfigMaxMessages     :: Integer
                       , streamConfigMaxBytes        :: Integer
                       , streamConfigMaxAge          :: NominalDiffTime
+                      , streamConfigMaxMessageSize  :: Int32
                       , streamConfigReplicas        :: Int
                       , streamConfigDuplicateWindow :: Maybe NominalDiffTime
                       , streamConfigAllowDirect     :: Bool
@@ -363,6 +386,7 @@ instance ToJSON StreamConfigRequest where
         , maybePair "max_msgs" (streamConfigRequestMaxMessages config)
         , maybePair "max_bytes" (streamConfigRequestMaxBytes config)
         , maybeDurationPair "max_age" (streamConfigRequestMaxAge config)
+        , maybePair "max_msg_size" (streamConfigRequestMaxMessageSize config)
         , maybePair "num_replicas" (streamConfigRequestReplicas config)
         , maybeDurationPair "duplicate_window" (streamConfigRequestDuplicateWindow config)
         , maybePair "allow_direct" (streamConfigRequestAllowDirect config)
@@ -379,6 +403,7 @@ instance ToJSON StreamConfig where
       , Just ("max_msgs" .= streamConfigMaxMessages config)
       , Just ("max_bytes" .= streamConfigMaxBytes config)
       , Just ("max_age" .= durationToNanoseconds (streamConfigMaxAge config))
+      , Just ("max_msg_size" .= streamConfigMaxMessageSize config)
       , Just ("num_replicas" .= streamConfigReplicas config)
       , maybeDurationPair "duplicate_window" (streamConfigDuplicateWindow config)
       , Just ("allow_direct" .= streamConfigAllowDirect config)
@@ -396,6 +421,7 @@ instance FromJSON StreamConfig where
         <*> value .: "max_msgs"
         <*> value .: "max_bytes"
         <*> parseDurationField value "max_age"
+        <*> value .:? "max_msg_size" .!= (-1)
         <*> value .: "num_replicas"
         <*> parseOptionalDurationField value "duplicate_window"
         <*> value .: "allow_direct"
@@ -638,8 +664,8 @@ parseStoredMessage =
       <*> value .: "time"
 
 durationToNanoseconds :: NominalDiffTime -> Integer
-durationToNanoseconds duration =
-  round (realToFrac duration * (1000000000 :: Double))
+durationToNanoseconds =
+  diffTimeToNanoseconds
 
 nanosecondsToDuration :: Integer -> NominalDiffTime
 nanosecondsToDuration nanoseconds =

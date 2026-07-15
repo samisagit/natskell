@@ -25,6 +25,7 @@ module JetStream.Consumer.Types
   , applyConsumerKind
   , applyConsumerTarget
   , consumerConfigRequest
+  , validateConsumerConfigRequest
   , consumerActionValue
   , consumerListRequest
   , consumerNamesRequest
@@ -32,6 +33,7 @@ module JetStream.Consumer.Types
   , consumerResetRequest
   , withConsumerAckPolicy
   , withConsumerAckWait
+  , withConsumerBackoff
   , withConsumerDescription
   , withConsumerDeliverGroup
   , withConsumerDurableName
@@ -42,6 +44,7 @@ module JetStream.Consumer.Types
   , withConsumerInactiveThreshold
   , withConsumerListOffset
   , withConsumerMaxAckPending
+  , withConsumerMaxRequestBatch
   , withConsumerMaxDeliver
   , withConsumerMaxWaiting
   , withConsumerMemoryStorage
@@ -55,11 +58,12 @@ module JetStream.Consumer.Types
 import           Data.Aeson
 import           Data.Aeson.Types (Pair, Parser)
 import qualified Data.ByteString  as BS
+import           Data.Int         (Int64)
 import           Data.Maybe       (catMaybes)
 import qualified Data.Text        as T
 import           Data.Time.Clock  (NominalDiffTime, UTCTime)
 import           Data.Word        (Word64)
-import           JetStream.Error  (JetStreamError)
+import           JetStream.Error  (JetStreamError (JetStreamDecodeError))
 import           JetStream.Types
     ( AckPolicy (..)
     , CallOption
@@ -72,6 +76,7 @@ import           JetStream.Types
     , applyCallOptions
     , byteStringToJSON
     , diffTimeNanosToJSON
+    , diffTimeToNanoseconds
     , parseByteString
     )
 
@@ -109,6 +114,8 @@ data ConsumerConfigRequest = ConsumerConfigRequest
                                , consumerConfigRequestMaxDeliver :: Maybe Int
                                , consumerConfigRequestMaxWaiting :: Maybe Int
                                , consumerConfigRequestMaxAckPending :: Maybe Int
+                               , consumerConfigRequestBackoff :: Maybe [NominalDiffTime]
+                               , consumerConfigRequestMaxRequestBatch :: Maybe Int
                                , consumerConfigRequestInactiveThreshold :: Maybe NominalDiffTime
                                , consumerConfigRequestIdleHeartbeat :: Maybe NominalDiffTime
                                , consumerConfigRequestHeadersOnly :: Maybe Bool
@@ -156,12 +163,50 @@ emptyConsumerConfigRequest =
     , consumerConfigRequestMaxDeliver = Nothing
     , consumerConfigRequestMaxWaiting = Nothing
     , consumerConfigRequestMaxAckPending = Nothing
+    , consumerConfigRequestBackoff = Nothing
+    , consumerConfigRequestMaxRequestBatch = Nothing
     , consumerConfigRequestInactiveThreshold = Nothing
     , consumerConfigRequestIdleHeartbeat = Nothing
     , consumerConfigRequestHeadersOnly = Nothing
     , consumerConfigRequestReplicas = Nothing
     , consumerConfigRequestMemoryStorage = Nothing
     }
+
+validateConsumerConfigRequest :: ConsumerConfigRequest -> Either JetStreamError ()
+validateConsumerConfigRequest config = do
+  validateMaxRequestBatch
+  validateBackoffRange
+  validateBackoffLength
+  where
+    validateMaxRequestBatch =
+      case consumerConfigRequestMaxRequestBatch config of
+        Just maxRequestBatch
+          | maxRequestBatch < 0 ->
+              Left (JetStreamDecodeError
+                "consumer max request batch must be zero or greater")
+        _ ->
+          Right ()
+    validateBackoffRange =
+      case consumerConfigRequestBackoff config of
+        Nothing ->
+          Right ()
+        Just backoff ->
+          mapM_ validateBackoffDuration backoff
+    validateBackoffDuration duration =
+      let nanoseconds = diffTimeToNanoseconds duration
+          maxNanoseconds = toInteger (maxBound :: Int64)
+      in if nanoseconds >= 0 && nanoseconds <= maxNanoseconds
+           then Right ()
+           else Left (JetStreamDecodeError
+             "consumer backoff durations must floor to nanoseconds between 0 and 9223372036854775807")
+    validateBackoffLength =
+      case (consumerConfigRequestMaxDeliver config, consumerConfigRequestBackoff config) of
+        (Just maxDeliver, Just backoff)
+          | maxDeliver > 0 && not (null (drop maxDeliver backoff)) ->
+              Left (JetStreamDecodeError
+                "consumer backoff length cannot exceed positive max deliver")
+        _ ->
+          Right ()
 
 applyConsumerTarget :: ConsumerTarget -> ConsumerConfigRequest -> ConsumerConfigRequest
 applyConsumerTarget EphemeralConsumer config =
@@ -233,6 +278,15 @@ withConsumerAckWait :: NominalDiffTime -> ConsumerConfigOption
 withConsumerAckWait ackWait config =
   config { consumerConfigRequestAckWait = Just ackWait }
 
+-- | Configure acknowledgment-timeout redelivery delays (NATS Server 2.7.1+).
+-- This overrides AckWait and does not control explicit NAK redelivery. Values
+-- are floored to whole nanoseconds. The first delay becomes AckWait, the final
+-- delay repeats after the schedule, and the schedule cannot be longer than a
+-- positive MaxDeliver. An empty list leaves the server default.
+withConsumerBackoff :: [NominalDiffTime] -> ConsumerConfigOption
+withConsumerBackoff backoff config =
+  config { consumerConfigRequestBackoff = nonEmpty backoff }
+
 withConsumerMaxDeliver :: Int -> ConsumerConfigOption
 withConsumerMaxDeliver maxDeliver config =
   config { consumerConfigRequestMaxDeliver = Just maxDeliver }
@@ -244,6 +298,12 @@ withConsumerMaxWaiting maxWaiting config =
 withConsumerMaxAckPending :: Int -> ConsumerConfigOption
 withConsumerMaxAckPending maxAckPending config =
   config { consumerConfigRequestMaxAckPending = Just maxAckPending }
+
+-- | Limit a pull consumer request batch (NATS Server 2.7.0+). Zero leaves the
+-- limit unset. This option is only meaningful for pull consumers.
+withConsumerMaxRequestBatch :: Int -> ConsumerConfigOption
+withConsumerMaxRequestBatch maxRequestBatch config =
+  config { consumerConfigRequestMaxRequestBatch = nonZero maxRequestBatch }
 
 withConsumerInactiveThreshold :: NominalDiffTime -> ConsumerConfigOption
 withConsumerInactiveThreshold inactiveThreshold config =
@@ -280,6 +340,8 @@ data ConsumerConfig = ConsumerConfig
                         , consumerConfigMaxDeliver :: Maybe Int
                         , consumerConfigMaxWaiting :: Maybe Int
                         , consumerConfigMaxAckPending :: Maybe Int
+                        , consumerConfigBackoff :: Maybe [NominalDiffTime]
+                        , consumerConfigMaxRequestBatch :: Maybe Int
                         , consumerConfigInactiveThreshold :: Maybe NominalDiffTime
                         , consumerConfigIdleHeartbeat :: Maybe NominalDiffTime
                         , consumerConfigHeadersOnly :: Maybe Bool
@@ -401,6 +463,8 @@ instance ToJSON ConsumerConfigRequest where
       , maybePair "max_deliver" (consumerConfigRequestMaxDeliver config)
       , maybePair "max_waiting" (consumerConfigRequestMaxWaiting config)
       , maybePair "max_ack_pending" (consumerConfigRequestMaxAckPending config)
+      , maybeJsonPair "backoff" (durationListToJSON <$> consumerConfigRequestBackoff config)
+      , maybePair "max_batch" (consumerConfigRequestMaxRequestBatch config)
       , maybeJsonPair "inactive_threshold" (diffTimeNanosToJSON <$> consumerConfigRequestInactiveThreshold config)
       , maybeJsonPair "idle_heartbeat" (diffTimeNanosToJSON <$> consumerConfigRequestIdleHeartbeat config)
       , maybePair "headers_only" (consumerConfigRequestHeadersOnly config)
@@ -425,6 +489,8 @@ instance ToJSON ConsumerConfig where
       , maybePair "max_deliver" (consumerConfigMaxDeliver config)
       , maybePair "max_waiting" (consumerConfigMaxWaiting config)
       , maybePair "max_ack_pending" (consumerConfigMaxAckPending config)
+      , maybeJsonPair "backoff" (durationListToJSON <$> (consumerConfigBackoff config >>= nonEmpty))
+      , maybePair "max_batch" (consumerConfigMaxRequestBatch config >>= nonZero)
       , maybeJsonPair "inactive_threshold" (diffTimeNanosToJSON <$> consumerConfigInactiveThreshold config)
       , maybeJsonPair "idle_heartbeat" (diffTimeNanosToJSON <$> consumerConfigIdleHeartbeat config)
       , maybePair "headers_only" (consumerConfigHeadersOnly config)
@@ -449,6 +515,8 @@ instance FromJSON ConsumerConfig where
       <*> obj .:? "max_deliver"
       <*> obj .:? "max_waiting"
       <*> obj .:? "max_ack_pending"
+      <*> parseOptionalDurationListField obj "backoff"
+      <*> parseOptionalNonZeroIntField obj "max_batch"
       <*> parseOptionalDurationField obj "inactive_threshold"
       <*> parseOptionalDurationField obj "idle_heartbeat"
       <*> obj .:? "headers_only"
@@ -636,6 +704,27 @@ parseOptionalByteStringListField obj key = do
 parseOptionalDurationField :: Object -> Key -> Parser (Maybe NominalDiffTime)
 parseOptionalDurationField obj key =
   fmap nanosToDiffTime <$> obj .:? key
+
+parseOptionalDurationListField :: Object -> Key -> Parser (Maybe [NominalDiffTime])
+parseOptionalDurationListField obj key = do
+  durations <- obj .:? key
+  pure (durations >>= nonEmpty . fmap nanosToDiffTime)
+
+parseOptionalNonZeroIntField :: Object -> Key -> Parser (Maybe Int)
+parseOptionalNonZeroIntField obj key =
+  fmap (>>= nonZero) (obj .:? key)
+
+durationListToJSON :: [NominalDiffTime] -> Value
+durationListToJSON =
+  toJSON . fmap diffTimeToNanoseconds
+
+nonEmpty :: [value] -> Maybe [value]
+nonEmpty []     = Nothing
+nonEmpty values = Just values
+
+nonZero :: (Eq value, Num value) => value -> Maybe value
+nonZero 0     = Nothing
+nonZero value = Just value
 
 nanosToDiffTime :: Integer -> NominalDiffTime
 nanosToDiffTime nanoseconds =
