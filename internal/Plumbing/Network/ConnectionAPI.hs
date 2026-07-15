@@ -19,6 +19,7 @@ import           Network.Connection.Types
 
 data ReaderAPI reader = ReaderAPI
                           { readData :: reader -> Int -> IO (Either ReadError ByteString)
+                          , bufferRead :: reader -> ByteString -> IO ()
                           , closeReader :: reader -> IO ()
                           , openReader :: reader -> IO ()
                           }
@@ -36,6 +37,7 @@ data ConnectionAPI = ConnectionAPI
                        , writer :: WriterAPI Conn
                        , open :: Conn -> IO ()
                        , close :: Conn -> IO ()
+                       , abort :: Conn -> IO ()
                        , connectTcp :: Conn -> String -> Int -> IO (Either String ())
                        , configure :: Conn -> TransportOption -> IO (Either String ())
                        }

@@ -148,6 +148,7 @@ fakeClient publishCalls unsubscribeCalls callbackRef =
     , Nats.newInbox = pure "_INBOX.batch"
     , Nats.ping = \_ -> pure (Right ())
     , Nats.flush = \_ -> pure (Right ())
+    , Nats.connectionState = pure Nats.ConnectionConnected
     , Nats.reset = \_ -> pure ()
     , Nats.close = \_ -> pure ()
     }
@@ -182,6 +183,7 @@ silentFakeClient publishCalls unsubscribeCalls =
     , Nats.newInbox = pure "_INBOX.timeout"
     , Nats.ping = \_ -> pure (Right ())
     , Nats.flush = \_ -> pure (Right ())
+    , Nats.connectionState = pure Nats.ConnectionConnected
     , Nats.reset = \_ -> pure ()
     , Nats.close = \_ -> pure ()
     }

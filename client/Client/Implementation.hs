@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | High-level client implementation for NATS.
@@ -34,6 +35,8 @@ module Client.Implementation
   , withMessageLimit
   , withPendingDeliveryLimits
   , withErrorHandler
+  , withServerErrorHandler
+  , withConnectionEventHandler
   , withBufferLimit
   , withExitAction
   , LogLevel (..)
@@ -54,8 +57,11 @@ module Client.Implementation
   , TLSCertData
   , TLSConfig (..)
   , ClientExitReason (..)
+  , ConnectionEvent (..)
   , ServerError
+  , ServerErrorKind (..)
   , serverErrorReason
+  , serverErrorKind
   , ConnectError (..)
   , ConnectAttemptError (..)
   , ConnectFailure (..)
@@ -92,22 +98,32 @@ import           Client.API
     , Subscription (..)
     , UnsubscribeConfig (..)
     )
-import           Control.Concurrent       (forkIO)
+import           Control.Concurrent
+    ( forkIOWithUnmask
+    , killThread
+    , myThreadId
+    )
 import           Control.Concurrent.STM
 import           Control.Exception
     ( SomeException
-    , displayException
+    , finally
     , mask
+    , mask_
     , onException
     )
 import           Control.Monad            (forM_, void, when)
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Char8    as BC
 import           Data.Char                (isAsciiUpper)
-import           Data.Maybe               (fromMaybe)
+import           Data.Maybe               (fromMaybe, isJust)
 import           Data.Time.Clock          (NominalDiffTime)
 import           Data.Version             (showVersion)
-import           Engine                   (closeClient, resetClient, runEngine)
+import           Engine
+    ( closeClient
+    , interruptConnection
+    , resetClient
+    , runEngine
+    )
 import           Lib.CallOption           (CallOption, applyCallOptions)
 import           Lib.Logger
     ( LogEntry (..)
@@ -119,52 +135,81 @@ import           Lib.Logger
     , renderLogEntry
     )
 import           Network.Connection       (connectionApi)
-import           Network.ConnectionAPI    (newConn)
+import           Network.ConnectionAPI    (ConnectionAPI, newConn)
+import qualified Network.ConnectionAPI    as Connection
 import           Parser.Attoparsec        (parserApiWithMessageLimit)
 import qualified Paths_natskell           as Package
 import           Pipeline.Broadcasting    (broadcastingApi)
 import           Pipeline.Streaming       (streamingApi)
 import           Publish                  (defaultPublishConfig)
 import           Publish.Config           (PublishConfig (..))
-import           Queue.API                (QueueItem (QueueItem))
+import           Queue.API
+    ( QueueItem (QueueBatch, QueueConnectionScoped, QueueItem, QueuePayloadBound)
+    , TryEnqueueResult (..)
+    )
 import           Queue.TransactionalQueue (newQueue)
 import           State.Store
     ( ClientState
+    , PingResult (..)
+    , PublishEnqueueResult (..)
     , config
     , enqueue
+    , enqueueOnGenerationTracked
+    , enqueuePublishOnConnected
+    , enqueuePublishOnConnectedGenerationTracked
+    , isManagedThread
+    , markClosed
     , newClientState
     , nextInbox
     , nextSid
-    , pushPingAction
-    , readServerInfo
+    , readConnectionGeneration
     , readStatus
+    , registerManagedThread
+    , registerPingWaiterAndEnqueue
     , runClient
+    , setClosing
     , setConnectName
+    , startCallbackWorker
+    , stopCallbackWorker
+    , tryEnqueue
+    , tryEnqueueOnGeneration
+    , unregisterManagedThread
+    , waitForCallbackWorker
     , waitForClosed
+    , waitForConnected
+    , waitForConnectionGenerationLoss
     , waitForInitialConnection
     , waitForNotRunning
+    , withSubscriptionGate
     )
 import           State.Types
     ( ClientConfig (..)
     , ClientExitReason (..)
-    , ClientStatus (..)
     , ConnectAttemptError (..)
     , ConnectError (..)
     , ConnectFailure (..)
+    , ConnectionEvent (..)
+    , ConnectionState (..)
     , ServerError
+    , ServerErrorKind (..)
     , TLSCertData
     , TLSConfig (..)
     , TLSPrivateKey
     , TLSPublicKey
     , defaultTLSConfig
+    , serverErrorKind
     , serverErrorReason
     )
 import           Subscription.Store
     ( SubscriptionStore
+    , awaitCallbackDrain
     , awaitNoTrackedExpiries
+    , closeStore
+    , enqueueControl
     , hasTrackedExpiries
     , newSubscriptionStore
     , register
+    , registerWithDispatchHooks
     , startExpiryWorker
     , startWorkers
     , unregister
@@ -172,11 +217,13 @@ import           Subscription.Store
 import           Subscription.Types
     ( PendingLimits (..)
     , SubscribeConfig (..)
+    , SubscriptionKind (..)
     , SubscriptionMeta (SubscriptionMeta)
     , defaultPendingLimits
+    , isOneShotSubscription
     )
+import           System.Timeout           (timeout)
 import qualified Types.Connect            as Connect
-import qualified Types.Info               as Info
 import qualified Types.Msg                as Msg
 import           Types.Ping               (Ping (..))
 import qualified Types.Pub                as Pub
@@ -185,19 +232,25 @@ import qualified Types.Unsub              as Unsub
 import           Validators.Validators    (validate)
 
 data ClientOptions = ClientOptions
-                       { optionConnectConfig        :: Connect.Connect
-                       , optionAuth                 :: Auth
-                       , optionTlsConfig            :: Maybe TLSConfig
-                       , optionLoggerConfig         :: LoggerConfig
-                       , optionConnectionAttempts   :: Int
+                       { optionConnectConfig :: Connect.Connect
+                       , optionAuth :: Auth
+                       , optionTlsConfig :: Maybe TLSConfig
+                       , optionLoggerConfig :: LoggerConfig
+                       , optionConnectionAttempts :: Int
                        , optionConnectTimeoutMicros :: Int
-                       , optionCallbackConcurrency  :: Int
-                       , optionMessageLimit         :: Int
-                       , optionPendingLimits        :: PendingLimits
-                       , optionErrorHandler         :: NatsError -> IO ()
-                       , optionExitAction           :: ClientExitReason -> IO ()
-                       , optionConnectOptions       :: [(String, Int)]
+                       , optionCallbackConcurrency :: Int
+                       , optionMessageLimit :: Int
+                       , optionPendingLimits :: PendingLimits
+                       , optionErrorHandler :: NatsError -> IO ()
+                       , optionServerErrorHandler :: ServerError -> IO ()
+                       , optionConnectionEventHandler :: ConnectionEvent -> IO ()
+                       , optionExitAction :: ClientExitReason -> IO ()
+                       , optionConnectOptions :: [(String, Int)]
                        }
+
+data SubscriptionQueueResult = SubscriptionQueued | SubscriptionReconnect
+
+data UnsubscribeQueueResult = UnsubscribeQueued | UnsubscribeReconnect | UnsubscribeReset
 
 -- | An opaque NATS server endpoint.
 --
@@ -234,7 +287,7 @@ connect servers =
 
 -- | Compatibility connection entry point using raw @(host, port)@ tuples.
 newClient :: [(String, Int)] -> [ConfigOption] -> IO (Either ConnectError Client)
-newClient servers configOptions = do
+newClient servers configOptions = mask $ \restoreInitialWait -> do
   loggerConfig' <- defaultLogger
   ctx <- newLogContext
   let defaultOptions = applyCallOptions configOptions ClientOptions
@@ -248,6 +301,8 @@ newClient servers configOptions = do
         , optionMessageLimit = 1024 * 1024
         , optionPendingLimits = defaultPendingLimits
         , optionErrorHandler = const (pure ())
+        , optionServerErrorHandler = const (pure ())
+        , optionConnectionEventHandler = const (pure ())
         , optionExitAction = const (pure ())
         , optionConnectOptions = servers
         }
@@ -260,6 +315,8 @@ newClient servers configOptions = do
           , connectConfig = optionConnectConfig defaultOptions
           , loggerConfig = optionLoggerConfig defaultOptions
           , tlsConfig = optionTlsConfig defaultOptions
+          , serverErrorHandler = optionServerErrorHandler defaultOptions
+          , connectionEventHandler = optionConnectionEventHandler defaultOptions
           , exitAction = optionExitAction defaultOptions
           , connectOptions = optionConnectOptions defaultOptions
           }
@@ -276,37 +333,76 @@ newClient servers configOptions = do
   setConnectName clientState (Connect.name (optionConnectConfig defaultOptions))
   logStaticConfiguration clientState defaultOptions
 
-  startWorkers
+  callbackThreads <- startWorkers
     (callbackConcurrency clientConfig)
     store
     (do
         waitForClosed clientState
+        awaitCallbackDrain store
         awaitNoTrackedExpiries store)
     (handleCallbackError clientState)
 
-  startExpiryWorker store $
+  expiryThread <- startExpiryWorker store $
     shouldStopExpiryWorker clientState store
 
-  void . forkIO $
-    runEngine
-      connectionApi
-      streamingApi
-      broadcastingApi
-      (parserApiWithMessageLimit (messageLimit clientConfig))
-      clientState
-      store
-      configuredAuth
+  mapM_ (registerManagedThread clientState) (expiryThread : callbackThreads)
+  callbackWorker <- startCallbackWorker clientState
+
+  engineDone <- newEmptyTMVarIO
+  engineThread <- forkIOWithUnmask $ \unmask ->
+    do
+      threadId <- myThreadId
+      registerManagedThread clientState threadId
+      unmask
+        ( runEngine
+            connectionApi
+            streamingApi
+            broadcastingApi
+            (parserApiWithMessageLimit (messageLimit clientConfig))
+            clientState
+            store
+            configuredAuth
+        )
+        `finally` do
+          unregisterManagedThread clientState threadId
+          atomically (void (tryPutTMVar engineDone ()))
+
+  let auxiliaryThreads = expiryThread : callbackThreads
+      stopAuxiliaryThreads excluded =
+        mapM_ killThread (filter (/= excluded) auxiliaryThreads)
+      finishClose excluded = do
+        atomically (readTMVar engineDone)
+        Connection.close connectionApi conn
+        atomically (awaitCallbackDrain store)
+        stopAuxiliaryThreads excluded
+        atomically (waitForCallbackWorker callbackWorker)
+      scheduleFinish excluded = do
+        _ <- forkIOWithUnmask $ \unmask -> unmask (finishClose excluded)
+        pure ()
+      closeAndFinish = mask $ \restore -> do
+        current <- myThreadId
+        closeClient connectionApi clientState store
+          `onException` scheduleFinish current
+        managed <- isManagedThread clientState current
+        if managed
+          then scheduleFinish current
+          else restore (finishClose current) `onException` scheduleFinish current
 
   let client = Client
         { publish = \subject payload publishOptions -> do
             let cfg = applyCallOptions publishOptions defaultPublishConfig
-            publishClient clientState subject payload cfg
+            publishClient
+              clientState
+              (enqueueControl store . optionErrorHandler defaultOptions)
+              subject
+              payload
+              cfg
         , subscribe = \subject subscribeOptions callback -> do
             let cfg = applyCallOptions subscribeOptions defaultSubscribeConfig
-            subscribeClient clientState store False subject cfg callback
+            subscribeClient clientState store StandardSubscription subject cfg callback
         , subscribeOnce = \subject subscribeOptions callback -> do
             let cfg = applyCallOptions subscribeOptions defaultSubscribeConfig
-            subscribeClient clientState store True subject cfg callback
+            subscribeClient clientState store OneShotSubscription subject cfg callback
         , request = \subject payload requestOptions -> do
             let cfg = applyCallOptions requestOptions defaultRequestConfig
             requestClient clientState store subject payload cfg
@@ -315,21 +411,50 @@ newClient servers configOptions = do
               UnsubscribeConfig -> unsubscribeClient clientState store subscription
         , newInbox = nextInbox clientState
         , ping = \options ->
-            case applyCallOptions options PingConfig of
-              PingConfig -> flushClient clientState
+            case applyCallOptions options defaultPingConfig of
+              PingConfig -> flushClient connectionApi clientState defaultRoundTripTimeout
+              PingConfigTimeout timeoutSeconds ->
+                flushClient connectionApi clientState timeoutSeconds
         , flush = \options ->
-            case applyCallOptions options FlushConfig of
-              FlushConfig -> flushClient clientState
+            case applyCallOptions options defaultFlushConfig of
+              FlushConfig -> flushClient connectionApi clientState defaultRoundTripTimeout
+              FlushConfigTimeout timeoutSeconds ->
+                flushClient connectionApi clientState timeoutSeconds
+        , connectionState = readStatus clientState
         , reset = \options ->
             case applyCallOptions options ResetConfig of
               ResetConfig -> resetClient connectionApi clientState store
         , close = \options ->
             case applyCallOptions options CloseConfig of
-              CloseConfig -> closeClient connectionApi clientState store
+              CloseConfig -> closeAndFinish
         }
 
-  initialResult <- atomically (waitForInitialConnection clientState)
-  pure (client <$ initialResult)
+  let abortInitialWait = do
+        setClosing clientState ExitClosedByUser
+        closeStore store
+        void (interruptConnection connectionApi clientState)
+        killThread engineThread
+        atomically (readTMVar engineDone)
+        Connection.close connectionApi conn
+        void (markClosed clientState ExitClosedByUser)
+        stopCallbackWorker callbackWorker
+        current <- myThreadId
+        stopAuxiliaryThreads current
+  initialResult <-
+    restoreInitialWait
+      (atomically $
+        waitForInitialConnection clientState
+          `orElse` (Left (ConnectAttemptsExhausted []) <$ readTMVar engineDone))
+      `onException` abortInitialWait
+  case initialResult of
+    Left err -> do
+      atomically (readTMVar engineDone)
+      Connection.close connectionApi conn
+      stopCallbackWorker callbackWorker
+      current <- myThreadId
+      stopAuxiliaryThreads current
+      pure (Left err)
+    Right () -> pure (Right client)
 
 type ConfigOption = CallOption ClientOptions
 
@@ -433,8 +558,9 @@ withConnectionAttempts :: Int -> ConfigOption
 withConnectionAttempts attempts config =
   config { optionConnectionAttempts = max 1 attempts }
 
--- | Set the maximum time for INFO, TLS, CONNECT, and PONG negotiation on each
--- server attempt. Values below one microsecond are clamped to one.
+-- | Set the total time budget for TCP acquisition, INFO, TLS, CONNECT, PONG,
+-- and reconnect resubscription/readiness on each server attempt. Values below
+-- one microsecond are clamped to one.
 withConnectTimeoutMicros :: Int -> ConfigOption
 withConnectTimeoutMicros timeoutMicros config =
   config { optionConnectTimeoutMicros = max 1 timeoutMicros }
@@ -467,6 +593,19 @@ withPendingDeliveryLimits maximumMessages maximumBytes config =
 withErrorHandler :: (NatsError -> IO ()) -> ConfigOption
 withErrorHandler handler config =
   config { optionErrorHandler = handler }
+
+-- | Receive protocol @-ERR@ values on a bounded, dedicated serial worker.
+-- Protocol processing, including PONG handling, does not wait for the handler.
+withServerErrorHandler :: (ServerError -> IO ()) -> ConfigOption
+withServerErrorHandler handler config =
+  config { optionServerErrorHandler = handler }
+
+-- | Receive completed disconnect, reconnect, and close transitions on the
+-- same serial callback worker as server errors. Lifecycle delivery is reserved
+-- independently from the bounded server-error backlog.
+withConnectionEventHandler :: (ConnectionEvent -> IO ()) -> ConfigOption
+withConnectionEventHandler handler config =
+  config { optionConnectionEventHandler = handler }
 
 -- | Compatibility alias for 'withMessageLimit'.
 withBufferLimit :: Int -> ConfigOption
@@ -504,6 +643,15 @@ defaultSubscribeConfig = SubscribeConfig Nothing Nothing
 defaultRequestConfig :: RequestConfig
 defaultRequestConfig = RequestConfig 2 Nothing
 
+defaultPingConfig :: PingConfig
+defaultPingConfig = PingConfig
+
+defaultFlushConfig :: FlushConfig
+defaultFlushConfig = FlushConfig
+
+defaultRoundTripTimeout :: NominalDiffTime
+defaultRoundTripTimeout = 2
+
 logStaticConfiguration :: ClientState -> ClientOptions -> IO ()
 logStaticConfiguration client options =
   runClient client $ do
@@ -520,9 +668,9 @@ logStaticConfiguration client options =
           logMessage Warn "tls certificate verification is disabled"
 
 handleCallbackError :: ClientState -> SomeException -> IO ()
-handleCallbackError client err =
+handleCallbackError client _ =
   runClient client $
-    logMessage Error ("callback failed: " ++ displayException err)
+    logMessage Error "callback failed"
 
 handleSlowConsumer :: ClientState -> (NatsError -> IO ()) -> IO ()
 handleSlowConsumer client handler = do
@@ -536,8 +684,8 @@ shouldStopExpiryWorker client store = do
   tracked <- hasTrackedExpiries store
   pure $
     case status of
-      Closed _ -> not tracked
-      _        -> False
+      ConnectionClosed _ -> not tracked
+      _                  -> False
 
 toMessage :: Msg.Msg -> Message
 toMessage msg =
@@ -551,11 +699,12 @@ toMessage msg =
 
 publishClient
   :: ClientState
+  -> (NatsError -> IO ())
   -> Msg.Subject
   -> Msg.Payload
   -> PublishConfig
   -> IO (Either NatsError ())
-publishClient client subject messagePayload cfg = do
+publishClient client errorHandler subject messagePayload cfg = do
   runClient client $
     logMessage Debug ("publishing to subject: " ++ show subject)
   let publishMessage =
@@ -566,70 +715,81 @@ publishClient client subject messagePayload cfg = do
           , Pub.replyTo = publishReplyTo cfg
           , Pub.headers = publishHeaders cfg
           }
-  validation <- canPublish client publishMessage
+      actualSize = Pub.messageSize publishMessage
+      queuedPublish =
+        QueuePayloadBound
+          actualSize
+          (errorHandler . NatsPayloadTooLarge actualSize)
+          (QueueItem publishMessage)
+  validation <- validatePublish client publishMessage
   case validation of
     Left err -> pure (Left err)
     Right () -> do
-      enqueue client (QueueItem publishMessage)
-      pure (Right ())
+      enqueueResult <- enqueuePublishOnConnected client actualSize queuedPublish
+      publishEnqueueResult client actualSize enqueueResult
 
-canPublish :: ClientState -> Pub.Pub -> IO (Either NatsError ())
-canPublish client publishMessage =
+validatePublish :: ClientState -> Pub.Pub -> IO (Either NatsError ())
+validatePublish client publishMessage =
   case validate publishMessage of
     Left reason -> do
       runClient client $
         logMessage Error ("rejecting invalid publish: " ++ BC.unpack reason)
       pure (Left (NatsValidationError reason))
     Right () -> do
-      statusResult <- runningResult client
-      case statusResult of
-        Left err -> pure (Left err)
-        Right () -> do
-          serverInfo <- readServerInfo client
-          let actual = Pub.messageSize publishMessage
-              clientMaximum = messageLimit (config client)
-              maximumSize =
-                maybe
-                  clientMaximum
-                  (min clientMaximum . Info.max_payload)
-                  serverInfo
-          if actual > maximumSize
-            then do
-              runClient client $
-                logMessage Error
-                  ( "rejecting publish: message size "
-                      ++ show actual
-                      ++ " exceeds effective limit "
-                      ++ show maximumSize
-                  )
-              pure (Left (NatsPayloadTooLarge actual maximumSize))
-            else
-              pure (Right ())
+      let actualSize = Pub.messageSize publishMessage
+          clientMaximum = messageLimit (config client)
+      if actualSize > clientMaximum
+        then rejectPayloadTooLarge client actualSize clientMaximum
+        else pure (Right ())
+
+publishEnqueueResult
+  :: ClientState
+  -> Int
+  -> PublishEnqueueResult
+  -> IO (Either NatsError ())
+publishEnqueueResult client actualSize enqueueResult =
+  case enqueueResult of
+    PublishEnqueued _ -> pure (Right ())
+    PublishTooLarge maximumSize ->
+      rejectPayloadTooLarge client actualSize maximumSize
+    PublishConnectionClosed reason ->
+      pure (Left (NatsConnectionClosed reason))
+
+rejectPayloadTooLarge :: ClientState -> Int -> Int -> IO (Either NatsError a)
+rejectPayloadTooLarge client actualSize maximumSize = do
+  runClient client $
+    logMessage Error
+      ( "rejecting publish: message size "
+          ++ show actualSize
+          ++ " exceeds effective limit "
+          ++ show maximumSize
+      )
+  pure (Left (NatsPayloadTooLarge actualSize maximumSize))
 
 subscribeClient
   :: ClientState
   -> SubscriptionStore
-  -> Bool
+  -> SubscriptionKind
   -> Msg.Subject
   -> SubscribeConfig
   -> (Message -> IO ())
   -> IO (Either NatsError Subscription)
-subscribeClient client store isReply subject cfg callback =
-  subscribeRawClient client store isReply subject cfg (maybe (pure ()) (callback . toMessage))
+subscribeClient client store subscriptionKind subject cfg callback =
+  subscribeRawClient client store subscriptionKind subject cfg (maybe (pure ()) (callback . toMessage))
 
 subscribeRawClient
   :: ClientState
   -> SubscriptionStore
-  -> Bool
+  -> SubscriptionKind
   -> Msg.Subject
   -> SubscribeConfig
   -> (Maybe Msg.Msg -> IO ())
   -> IO (Either NatsError Subscription)
-subscribeRawClient client store isReply subject cfg callback = do
+subscribeRawClient client store subscriptionKind subject cfg callback = do
   subscribeRawClientWithOverflow
     client
     store
-    isReply
+    subscriptionKind
     subject
     cfg
     callback
@@ -638,47 +798,103 @@ subscribeRawClient client store isReply subject cfg callback = do
 subscribeRawClientWithOverflow
   :: ClientState
   -> SubscriptionStore
-  -> Bool
+  -> SubscriptionKind
   -> Msg.Subject
   -> SubscribeConfig
   -> (Maybe Msg.Msg -> IO ())
   -> IO ()
   -> IO (Either NatsError Subscription)
-subscribeRawClientWithOverflow client store isReply subject cfg callback onDropped = do
-  runClient client $
-    logMessage Debug ("subscribing to subject: " ++ show subject)
-  statusResult <- runningResult client
-  let queueGroup = subscribeQueueGroup cfg
-  sid <- nextSid client
-  let
-      subscriptionMessage =
-        Sub.Sub
-          { Sub.subject = subject
-          , Sub.queueGroup = queueGroup
-          , Sub.sid = sid
-          }
-  case validate subscriptionMessage of
-    Left reason -> do
-      runClient client $
-        logMessage Error ("rejecting invalid subscription: " ++ BC.unpack reason)
-      pure (Left (NatsValidationError reason))
-    Right () -> case statusResult of
-      Left err -> pure (Left err)
+subscribeRawClientWithOverflow client store subscriptionKind subject cfg callback onDropped =
+  mask $ \restore -> do
+    runClient client $
+      logMessage Debug ("subscribing to subject: " ++ show subject)
+    let queueGroup = subscribeQueueGroup cfg
+    sid <- nextSid client
+    registeredGeneration <- newEmptyTMVarIO
+    committedGeneration <- newEmptyTMVarIO
+    let subscriptionMessage =
+          Sub.Sub
+            { Sub.subject = subject
+            , Sub.queueGroup = queueGroup
+            , Sub.sid = sid
+            }
+        meta = SubscriptionMeta subject queueGroup subscriptionKind
+        subscription = Subscription sid
+        cleanup =
+          cleanupResumableSubscription
+            client
+            store
+            registeredGeneration
+            committedGeneration
+            subscription
+        deliver maybeMessage = do
+          case maybeMessage of
+            Nothing -> cleanup
+            Just _  -> pure ()
+          callback maybeMessage
+        commands =
+          QueueItem subscriptionMessage :
+            [ QueueItem
+                Unsub.Unsub
+                  { Unsub.sid = sid
+                  , Unsub.maxMsg = Just 1
+                  }
+            | isOneShotSubscription meta
+            ]
+        queuedCommands = QueueConnectionScoped (QueueBatch commands)
+    case validate subscriptionMessage of
+      Left reason -> do
+        runClient client $
+          logMessage Error ("rejecting invalid subscription: " ++ BC.unpack reason)
+        pure (Left (NatsValidationError reason))
       Right () -> do
-        let meta =
-              SubscriptionMeta subject queueGroup isReply
-        register store sid meta cfg callback onDropped
-        enqueue client $
-          QueueItem
-            subscriptionMessage
-        when isReply $
-          enqueue client
-            (QueueItem
-              Unsub.Unsub
-                { Unsub.sid = sid
-                , Unsub.maxMsg = Just 1
-                })
-        pure (Right (Subscription sid))
+        let waitForServerRegistration = do
+              statusResult <- runningResult client
+              case statusResult of
+                Left err -> cleanup >> pure (Left err)
+                Right () -> pure (Right subscription)
+            acquireGate = do
+              statusResult <- runningResult client
+              case statusResult of
+                Left err -> pure (Left err)
+                Right () -> do
+                  gated <- withSubscriptionGate client $ do
+                    status <- readStatus client
+                    case status of
+                      ConnectionConnected -> do
+                        generation <- readConnectionGeneration client
+                        atomically (void (tryPutTMVar registeredGeneration generation))
+                        register store sid meta cfg deliver onDropped
+                        enqueueResult <-
+                          enqueueOnGenerationTracked
+                            client
+                            generation
+                            committedGeneration
+                            queuedCommands
+                        case enqueueResult of
+                          Right _ ->
+                            pure (Just (Right SubscriptionQueued))
+                          Left _ -> do
+                            nextStatus <- readStatus client
+                            case nextStatus of
+                              ConnectionClosing reason ->
+                                pure (Just (Left (NatsConnectionClosed reason)))
+                              ConnectionClosed reason ->
+                                pure (Just (Left (NatsConnectionClosed reason)))
+                              _ ->
+                                pure (Just (Right SubscriptionReconnect))
+                      _ -> pure Nothing
+                  maybe acquireGate pure gated
+            subscribeOperation = do
+              queueResult <- acquireGate
+              case queueResult of
+                Left err                    -> cleanup >> pure (Left err)
+                Right SubscriptionQueued -> do
+                  runClient client $
+                    logMessage Debug "subscription commands queued"
+                  pure (Right subscription)
+                Right SubscriptionReconnect -> waitForServerRegistration
+        restore subscribeOperation `onException` cleanup
 
 requestClient
   :: ClientState
@@ -687,10 +903,25 @@ requestClient
   -> Msg.Payload
   -> RequestConfig
   -> IO (Either NatsError Message)
-requestClient client store requestSubject requestPayload cfg =
+requestClient client store requestSubject requestPayload cfg = do
+  timedResult <-
+    timeout
+      (durationMicros (requestTimeout cfg))
+      (requestBeforeDeadline client store requestSubject requestPayload cfg)
+  pure (fromMaybe (Left NatsRequestTimedOut) timedResult)
+
+requestBeforeDeadline
+  :: ClientState
+  -> SubscriptionStore
+  -> Msg.Subject
+  -> Msg.Payload
+  -> RequestConfig
+  -> IO (Either NatsError Message)
+requestBeforeDeadline client store requestSubject requestPayload cfg =
   mask $ \restore -> do
     response <- newEmptyTMVarIO
-    deadline <- registerDelay (durationMicros (requestTimeout cfg))
+    accepted <- newEmptyTMVarIO
+    committedGeneration <- newEmptyTMVarIO
     inbox <- nextInbox client
     let subscriptionConfig = SubscribeConfig Nothing Nothing
         deliver Nothing = atomically (void (tryPutTMVar response (Left NatsRequestTimedOut)))
@@ -701,53 +932,103 @@ requestClient client store requestSubject requestPayload cfg =
                  then Left NatsNoResponders
                  else Right message
         rejectSlowConsumer =
-          atomically (void (tryPutTMVar response (Left NatsSlowConsumer)))
-    subscriptionResult <-
-      subscribeRawClientWithOverflow
-        client
-        store
-        True
-        inbox
-        subscriptionConfig
-        deliver
-        rejectSlowConsumer
-    case subscriptionResult of
-      Left err -> pure (Left err)
-      Right subscription -> do
-        let publishConfig = PublishConfig (requestHeaders cfg) (Just inbox)
-            cleanup = void (unsubscribeClient client store subscription)
-        publishResult <- publishClient client requestSubject requestPayload publishConfig
-        case publishResult of
-          Left err -> cleanup >> pure (Left err)
+          void (tryPutTMVar response (Left NatsSlowConsumer))
+    sid <- nextSid client
+    let subscription = Subscription sid
+        subscriptionMessage =
+          Sub.Sub
+            { Sub.subject = inbox
+            , Sub.queueGroup = Nothing
+            , Sub.sid = sid
+            }
+        unsubscribeMessage =
+          Unsub.Unsub
+            { Unsub.sid = sid
+            , Unsub.maxMsg = Just 1
+            }
+        publishMessage =
+          Pub.Pub
+            { Pub.subject = requestSubject
+            , Pub.payload =
+                if BS.null requestPayload then Nothing else Just requestPayload
+            , Pub.replyTo = Just inbox
+            , Pub.headers = requestHeaders cfg
+            }
+        commands = QueueConnectionScoped . QueueBatch $
+          [ QueueItem subscriptionMessage
+          , QueueItem unsubscribeMessage
+          , QueueItem publishMessage
+          ]
+        meta = SubscriptionMeta inbox Nothing RequestReplySubscription
+    case validate subscriptionMessage of
+      Left reason -> pure (Left (NatsValidationError reason))
+      Right () -> do
+        publishValidation <- validatePublish client publishMessage
+        case publishValidation of
+          Left err -> pure (Left err)
           Right () -> do
-            result <- restore (awaitRequest client deadline response) `onException` cleanup
-            cleanup
-            pure result
+            registerWithDispatchHooks
+              store
+              sid
+              meta
+              subscriptionConfig
+              (void (tryPutTMVar accepted ()))
+              rejectSlowConsumer
+              deliver
+              (pure ())
+            let cleanupCommitted = do
+                  committed <- atomically (tryReadTMVar committedGeneration)
+                  case committed of
+                    Nothing -> unregister store sid
+                    Just generation ->
+                      cleanupRequestSubscription client store generation subscription
+            let publishSize = Pub.messageSize publishMessage
+            queued <- restore
+              ( enqueuePublishOnConnectedGenerationTracked
+                  client
+                  committedGeneration
+                  publishSize
+                  commands
+              )
+              `onException` cleanupCommitted
+            case queued of
+              PublishConnectionClosed reason -> do
+                unregister store sid
+                pure (Left (NatsConnectionClosed reason))
+              PublishTooLarge maximumSize -> do
+                unregister store sid
+                rejectPayloadTooLarge client publishSize maximumSize
+              PublishEnqueued generation -> do
+                let cleanup =
+                      cleanupRequestSubscription client store generation subscription
+                result <- restore (awaitRequest client generation accepted response)
+                  `onException` cleanup
+                cleanup
+                pure result
 
 awaitRequest
   :: ClientState
-  -> TVar Bool
+  -> Int
+  -> TMVar ()
   -> TMVar (Either NatsError Message)
   -> IO (Either NatsError Message)
-awaitRequest client deadline response = do
-  outcome <- atomically $
-    (Just <$> readTMVar response)
-      `orElse` (do
-        expired <- readTVar deadline
-        check expired
-        pure (Just (Left NatsRequestTimedOut)))
-      `orElse` (Nothing <$ waitForNotRunning client)
-  case outcome of
-    Just result -> pure result
-    Nothing     -> do
-      status <- readStatus client
-      pure (Left (closedError status))
+awaitRequest client generation accepted response =
+  atomically $
+    readTMVar response
+      `orElse`
+        do
+          acceptedReply <- tryReadTMVar accepted
+          case acceptedReply of
+            Just () -> retry
+            Nothing ->
+              Left . NatsConnectionClosed
+                <$> waitForConnectionGenerationLoss client generation
 
 durationMicros :: NominalDiffTime -> Int
 durationMicros duration =
   fromInteger (min (toInteger (maxBound :: Int)) micros)
   where
-    micros = max 0 (floor (realToFrac duration * (1000000 :: Double)))
+    micros = max 0 (floor (toRational duration * 1000000))
 
 isNoResponders :: Message -> Bool
 isNoResponders message =
@@ -767,58 +1048,137 @@ unsubscribeClient
   -> SubscriptionStore
   -> Subscription
   -> IO (Either NatsError ())
-unsubscribeClient client store (Subscription sid) = do
-  runClient client $
-    logMessage Debug ("unsubscribing SID: " ++ show sid)
-  unregister store sid
-  statusResult <- runningResult client
-  case statusResult of
-    Left err -> pure (Left err)
-    Right () -> do
-      enqueue client $
-        QueueItem
+unsubscribeClient client store (Subscription sid) =
+  mask $ \restore -> do
+    runClient client $
+      logMessage Debug ("unsubscribing SID: " ++ show sid)
+    let command = QueueConnectionScoped . QueueItem $
           Unsub.Unsub
             { Unsub.sid = sid
             , Unsub.maxMsg = Nothing
             }
-      pure (Right ())
+        unregisterAndTry = do
+          unregister store sid
+          tryEnqueue client command >>= \case
+            TryEnqueued    -> pure (Right UnsubscribeQueued)
+            TryQueueClosed -> pure (Right UnsubscribeReconnect)
+            TryQueueFull   -> pure (Right UnsubscribeReset)
+    queueResult <- withSubscriptionGate client $ do
+      status <- readStatus client
+      case status of
+        ConnectionConnected -> do
+          unregister store sid
+          enqueueResult <-
+            restore (enqueue client command)
+              `onException` interruptConnection connectionApi client
+          case enqueueResult of
+            Right () -> pure (Right UnsubscribeQueued)
+            Left _ -> do
+              nextStatus <- readStatus client
+              case nextStatus of
+                ConnectionClosing reason ->
+                  pure (Left (NatsConnectionClosed reason))
+                ConnectionClosed reason ->
+                  pure (Left (NatsConnectionClosed reason))
+                _ -> pure (Right UnsubscribeReconnect)
+        ConnectionConnecting -> unregisterAndTry
+        ConnectionReconnecting -> unregisterAndTry
+        ConnectionClosing reason -> do
+          unregister store sid
+          pure (Left (NatsConnectionClosed reason))
+        ConnectionClosed reason -> do
+          unregister store sid
+          pure (Left (NatsConnectionClosed reason))
+    case queueResult of
+      Left err                    -> pure (Left err)
+      Right UnsubscribeQueued    -> pure (Right ())
+      Right UnsubscribeReconnect -> pure (Right ())
+      Right UnsubscribeReset     -> do
+        interruptConnection connectionApi client
+        pure (Right ())
 
-pingClient :: ClientState -> IO () -> IO ()
-pingClient client action = do
-  runClient client $
-    logMessage Debug "sending ping to server"
-  pushPingAction client action
-  enqueue client (QueueItem Ping)
+cleanupResumableSubscription
+  :: ClientState
+  -> SubscriptionStore
+  -> TMVar Int
+  -> TMVar Int
+  -> Subscription
+  -> IO ()
+cleanupResumableSubscription client store registeredGeneration committedGeneration (Subscription sid) =
+  mask_ $ do
+    resetRequired <- withSubscriptionGate client $ do
+      unregister store sid
+      status <- readStatus client
+      case status of
+        ConnectionConnected -> do
+          generation <- readConnectionGeneration client
+          registered <- atomically (tryReadTMVar registeredGeneration)
+          committed <- atomically (tryReadTMVar committedGeneration)
+          let serverMayKnow =
+                isJust committed || maybe False (< generation) registered
+          if serverMayKnow
+            then do
+              result <- tryEnqueueOnGeneration client generation unsubscribeCommand
+              pure (result == TryQueueFull)
+            else pure False
+        _ -> pure False
+    when resetRequired (void (interruptConnection connectionApi client))
+  where
+    unsubscribeCommand = QueueConnectionScoped . QueueItem $
+      Unsub.Unsub { Unsub.sid = sid, Unsub.maxMsg = Nothing }
 
-flushClient :: ClientState -> IO (Either NatsError ())
-flushClient client = do
-  statusResult <- runningResult client
-  case statusResult of
-    Left err -> pure (Left err)
-    Right () -> do
-      ponged <- newEmptyTMVarIO
-      pingClient client (atomically (void (tryPutTMVar ponged ())))
-      outcome <- atomically $
-        (True <$ readTMVar ponged)
-          `orElse` (False <$ waitForNotRunning client)
-      if outcome
-        then pure (Right ())
-        else do
-          status <- readStatus client
-          pure (Left (closedError status))
+cleanupRequestSubscription :: ClientState -> SubscriptionStore -> Int -> Subscription -> IO ()
+cleanupRequestSubscription client store generation (Subscription sid) = mask_ $ do
+  unregister store sid
+  result <- tryEnqueueOnGeneration client generation . QueueConnectionScoped . QueueItem $
+    Unsub.Unsub { Unsub.sid = sid, Unsub.maxMsg = Nothing }
+  case result of
+    TryEnqueued    -> pure ()
+    TryQueueClosed -> pure ()
+    TryQueueFull   -> void (interruptConnection connectionApi client)
+
+flushClient :: ConnectionAPI -> ClientState -> NominalDiffTime -> IO (Either NatsError ())
+flushClient connectionApi' client timeoutSeconds =
+  mask $ \restore -> do
+    let reset = interruptConnection connectionApi' client
+    timedResult <-
+      restore (timeout (durationMicros timeoutSeconds) (awaitPong client))
+        `onException` reset
+    case timedResult of
+      Nothing     -> reset >> pure (Left NatsRequestTimedOut)
+      Just result -> pure result
+  where
+    awaitPong client' = do
+      waiter <- newEmptyTMVarIO
+      registered <- registerPingWaiterAndEnqueue
+        client'
+        waiter
+        (QueueConnectionScoped (QueueItem Ping))
+      case registered of
+        Left reason -> pure (Left (NatsConnectionClosed reason))
+        Right _ -> do
+          result <- atomically $
+            (Just <$> readTMVar waiter)
+              `orElse` (Nothing <$ waitForNotRunning client')
+          case result of
+            Just PingReceived -> pure (Right ())
+            Just PingConnectionLost ->
+              Left . closedError <$> readStatus client'
+            Nothing -> do
+              status <- readStatus client'
+              pure (Left (closedError status))
 
 runningResult :: ClientState -> IO (Either NatsError ())
 runningResult client = do
-  status <- readStatus client
+  result <- atomically (waitForConnected client)
   pure $
-    case status of
-      Running        -> Right ()
-      Closing reason -> Left (NatsConnectionClosed reason)
-      Closed reason  -> Left (NatsConnectionClosed reason)
+    case result of
+      Left reason -> Left (NatsConnectionClosed reason)
+      Right ()    -> Right ()
 
-closedError :: ClientStatus -> NatsError
+closedError :: ConnectionState -> NatsError
 closedError status =
   case status of
-    Closing reason -> NatsConnectionClosed reason
-    Closed reason  -> NatsConnectionClosed reason
-    Running        -> NatsConnectionClosed ExitResetRequested
+    ConnectionClosing reason -> NatsConnectionClosed reason
+    ConnectionClosed reason  -> NatsConnectionClosed reason
+    _                        -> NatsConnectionClosed ExitResetRequested

@@ -6,11 +6,13 @@ module Handshake.Nats
 import           Auth.Resolver             (applyAuthPatch, buildAuthPatch)
 import           Auth.Types
 import qualified Data.ByteString           as BS
+import           Data.List                 (isPrefixOf)
 import           Data.Maybe                (fromMaybe, isJust)
 import           Network.ConnectionAPI
     ( Conn
     , ConnectionAPI
     , TransportOption (..)
+    , bufferRead
     , configure
     , readData
     , reader
@@ -26,11 +28,14 @@ import           Parser.API
 import           State.Store
     ( ClientState
     , config
+    , notifyServerError
     , setServerInfo
     , updateLogContextFromInfo
     )
-import           State.Types               (ClientConfig (..))
-import           System.Timeout            (timeout)
+import           State.Types
+    ( ClientConfig (..)
+    , serverErrorFromProtocol
+    )
 import           Transformers.Transformers (Transformer (transform))
 import qualified Types.Connect             as Connect
 import qualified Types.Err                 as Err
@@ -43,13 +48,13 @@ data HandshakeError = HandshakeTransportError String
                     | HandshakeTLSError String
                     | HandshakeProtocolError String
                     | HandshakeAuthError AuthError
-                    | HandshakeTimeout
   deriving (Eq, Show)
 
+handshakeControlFrameLimit :: Int
+handshakeControlFrameLimit = 64 * 1024
+
 performHandshake :: ConnectionAPI -> ParserAPI ParsedMessage -> ClientState -> Auth -> Conn -> String -> IO (Either HandshakeError ())
-performHandshake connectionApi parserApi state auth conn host = do
-  result <- timeout (max 1 (connectTimeoutMicros (config state))) handshake
-  pure (fromMaybe (Left HandshakeTimeout) result)
+performHandshake connectionApi parserApi state auth conn host = handshake
   where
     handshake = do
       infoResult <- readInitialInfo
@@ -107,9 +112,9 @@ performHandshake connectionApi parserApi state auth conn host = do
                           awaitPong mempty
 
     readInitialInfo :: IO (Either HandshakeError (I.Info, BS.ByteString))
-    readInitialInfo = go mempty
+    readInitialInfo = readMore mempty
       where
-        go acc = do
+        readMore acc = do
           result <- readData (reader connectionApi) conn 4096
           case result of
             Left err ->
@@ -117,24 +122,32 @@ performHandshake connectionApi parserApi state auth conn host = do
             Right chunk ->
               if BS.null chunk
                 then pure (Left (HandshakeTransportError "read returned empty chunk before INFO"))
-                else do
-                  let bytes = acc <> chunk
-                  case parse parserApi bytes of
-                    NeedMore ->
-                      go bytes
-                    DropPrefix n _ ->
-                      go (BS.drop n bytes)
-                    Reject reason ->
-                      pure (Left (HandshakeProtocolError reason))
-                    Emit (ParsedInfo info) rest ->
-                      pure (Right (info, rest))
-                    Emit (ParsedErr err) _
-                      | isAuthenticationError err ->
-                          pure (Left (HandshakeAuthError (AuthError (show err))))
-                      | otherwise ->
-                          pure (Left (HandshakeProtocolError ("server error before INFO: " ++ show err)))
-                    Emit _ rest ->
-                      go rest
+                else consumeInfoFrames (acc <> chunk)
+
+        consumeInfoFrames bytes =
+          case parse parserApi bytes of
+            NeedMore ->
+              retainIncompleteFrame "INFO" bytes readMore
+            DropPrefix n _
+              | n <= 0 ->
+                  pure (Left (HandshakeProtocolError "malformed protocol frame"))
+              | otherwise ->
+                  continueInfoWith (BS.drop n bytes)
+            Reject reason ->
+              pure (Left (HandshakeProtocolError (reasonCategory reason)))
+            Emit (ParsedInfo info) rest ->
+              pure (Right (info, rest))
+            Emit (ParsedErr err) _ -> do
+              notifyServerError state (serverErrorFromProtocol err)
+              if isAuthenticationError err
+                then pure (Left (HandshakeAuthError (AuthError (show err))))
+                else pure (Left (HandshakeProtocolError "server error before INFO"))
+            Emit _ rest ->
+              continueInfoWith rest
+
+        continueInfoWith rest
+          | BS.null rest = readMore mempty
+          | otherwise = consumeInfoFrames rest
 
     awaitPong :: BS.ByteString -> IO (Either HandshakeError ())
     awaitPong acc = do
@@ -152,12 +165,13 @@ performHandshake connectionApi parserApi state auth conn host = do
     consumePongFrames bytes =
       case parse parserApi bytes of
         NeedMore ->
-          awaitPong bytes
+          retainIncompleteFrame "PONG" bytes awaitPong
         DropPrefix _ reason ->
-          pure (Left (HandshakeProtocolError reason))
+          pure (Left (HandshakeProtocolError (reasonCategory reason)))
         Reject reason ->
-          pure (Left (HandshakeProtocolError reason))
-        Emit (ParsedPong _) _ ->
+          pure (Left (HandshakeProtocolError (reasonCategory reason)))
+        Emit (ParsedPong _) rest -> do
+          bufferRead (reader connectionApi) conn rest
           pure (Right ())
         Emit (ParsedOk _) rest ->
           continueWith rest
@@ -170,17 +184,23 @@ performHandshake connectionApi parserApi state auth conn host = do
           setServerInfo state info
           updateLogContextFromInfo state info
           continueWith rest
-        Emit (ParsedErr err) _
-          | isAuthenticationError err ->
-              pure (Left (HandshakeAuthError (AuthError (show err))))
-          | otherwise ->
-              pure (Left (HandshakeProtocolError (show err)))
+        Emit (ParsedErr err) _ -> do
+          notifyServerError state (serverErrorFromProtocol err)
+          if isAuthenticationError err
+            then pure (Left (HandshakeAuthError (AuthError (show err))))
+            else pure (Left (HandshakeProtocolError "server error before PONG"))
         Emit message _ ->
-          pure (Left (HandshakeProtocolError ("unexpected frame before PONG: " ++ show message)))
+          pure (Left (HandshakeProtocolError ("unexpected " ++ frameKind message ++ " frame before PONG")))
 
     continueWith rest
       | BS.null rest = awaitPong mempty
       | otherwise = consumePongFrames rest
+
+    retainIncompleteFrame frame bytes continue
+      | BS.length bytes > handshakeControlFrameLimit =
+          pure . Left . HandshakeProtocolError $
+            frame ++ " control frame exceeds 65536 byte limit"
+      | otherwise = continue bytes
 
     isAuthenticationError (Err.ErrAuthViolation _)      = True
     isAuthenticationError (Err.ErrAuthTimeout _)        = True
@@ -188,3 +208,18 @@ performHandshake connectionApi parserApi state auth conn host = do
     isAuthenticationError (Err.ErrAuthRevoked _)        = True
     isAuthenticationError (Err.ErrAccountAuthExpired _) = True
     isAuthenticationError _                             = False
+
+    reasonCategory reason
+      | "unknown protocol prefix" `isPrefixOf` reason = "unknown protocol prefix"
+      | "invalid INFO" `isPrefixOf` reason = "invalid INFO frame"
+      | "invalid MSG" `isPrefixOf` reason = "invalid MSG frame"
+      | "invalid HMSG" `isPrefixOf` reason = "invalid HMSG frame"
+      | otherwise = "malformed protocol frame"
+
+    frameKind (ParsedMsg _)               = "MSG"
+    frameKind (ParsedInfo _)              = "INFO"
+    frameKind (ParsedPing _)              = "PING"
+    frameKind (ParsedPong _)              = "PONG"
+    frameKind (ParsedOk _)                = "+OK"
+    frameKind (ParsedErr _)               = "-ERR"
+    frameKind (ParsedMessageTooLarge _ _) = "oversized message"

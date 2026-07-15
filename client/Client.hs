@@ -32,6 +32,8 @@ module Client
   , withMessageLimit
   , withPendingDeliveryLimits
   , withErrorHandler
+  , withServerErrorHandler
+  , withConnectionEventHandler
   , withBufferLimit
   , withExitAction
   , LogLevel (..)
@@ -52,8 +54,11 @@ module Client
   , TLSCertData
   , TLSConfig (..)
   , ClientExitReason (..)
+  , ConnectionEvent (..)
   , ServerError
+  , ServerErrorKind (..)
   , serverErrorReason
+  , serverErrorKind
   , ConnectError (..)
   , ConnectAttemptError (..)
   , ConnectFailure (..)

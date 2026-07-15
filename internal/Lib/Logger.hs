@@ -14,6 +14,7 @@ import           Control.Exception
 import           Control.Monad
 import           Control.Monad.Reader
 import           Data.Maybe             (catMaybes, fromMaybe)
+import           Lib.Exception          (trySync)
 import           Lib.Logger.Types
 import           Lib.LoggerAPI          (LoggerAPI (LoggerAPI))
 
@@ -31,13 +32,13 @@ instance MonadWithLogger AppM where
 
 instance MonadLogger AppM where
   logEntry entry = AppM . ReaderT $ \(LoggerEnv (LoggerConfig minLvl out lock) _) ->
-    when (leLevel entry >= minLvl) (withLogLock lock (out entry))
+    when (leLevel entry >= minLvl) (safeLog lock (out entry))
   getLogContext = AppM . ReaderT $ \(LoggerEnv _ ctxVar) ->
     readTVarIO ctxVar
   logMessage lvl msg = AppM . ReaderT $ \(LoggerEnv (LoggerConfig minLvl out lock) ctxVar) ->
     when (lvl >= minLvl) $ do
       ctx <- readTVarIO ctxVar
-      withLogLock lock $
+      safeLog lock $
         out LogEntry
           { leLevel = lvl
           , leMessage = msg
@@ -45,6 +46,9 @@ instance MonadLogger AppM where
           , leConnectName = lcConnectName ctx
           , leServer = lcServer ctx
           }
+
+safeLog :: TMVar () -> IO () -> IO ()
+safeLog lock action = void (trySync (withLogLock lock action))
 
 renderLogEntry :: LogEntry -> String
 renderLogEntry entry =

@@ -116,6 +116,7 @@ fakeClient =
     , Nats.newInbox = pure "_INBOX.TEST"
     , Nats.ping = \_ -> pure (Right ())
     , Nats.flush = \_ -> pure (Right ())
+    , Nats.connectionState = pure Nats.ConnectionConnected
     , Nats.reset = \_ -> pure ()
     , Nats.close = \_ -> pure ()
     }
