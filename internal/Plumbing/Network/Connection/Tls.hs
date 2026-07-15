@@ -1,5 +1,3 @@
-{-# LANGUAGE TypeApplications #-}
-
 module Network.Connection.Tls
   ( configureTransport
   , upgradeTcp
@@ -12,6 +10,7 @@ import qualified Data.ByteString.Lazy       as LBS
 import           Data.Maybe                 (fromMaybe)
 import           Data.X509.CertificateStore (makeCertificateStore)
 import           Data.X509.Memory           (readSignedObjectFromMemory)
+import           Lib.Exception              (trySync)
 import           Network.Connection.Core
     ( bufferRead
     , currentTransport
@@ -37,29 +36,31 @@ tlsTransport ctx =
     , transportWriteLazy = TLS.sendData ctx
     , transportFlush = TLS.contextFlush ctx
     , transportClose = do
-        void $ try @SomeException (TLS.bye ctx)
-        void $ try @SomeException (TLS.contextClose ctx)
+        void $ trySync (TLS.bye ctx)
+        void $ trySync (TLS.contextClose ctx)
+    , transportAbort = void (trySync (TLS.contextClose ctx))
     , transportUpgrade = Nothing
     }
 
 upgradeTcp :: NS.Socket -> TLS.ClientParams -> IO (Either String Transport)
-upgradeTcp sock params = do
+upgradeTcp sock params = mask $ \restore -> do
   let backend = TLS.Backend
         { TLS.backendSend = NSB.sendAll sock
         , TLS.backendRecv = NSB.recv sock
         , TLS.backendFlush = pure ()
         , TLS.backendClose = NS.close sock
         }
-  result <- try @SomeException $ do
-    ctx <- TLS.contextNew backend params
-    TLS.handshake ctx
+  result <- trySync $ do
+    ctx <- TLS.contextNew backend params `onException` NS.close sock
+    restore (TLS.handshake ctx)
+      `onException` void (trySync (TLS.contextClose ctx))
     pure (tlsTransport ctx)
   case result of
     Left err        -> return $ Left (show err)
     Right transport -> return $ Right transport
 
 upgradeToTLS :: Conn -> TLS.ClientParams -> IO (Either String ())
-upgradeToTLS conn params = do
+upgradeToTLS conn params = mask_ $ do
   current <- currentTransport conn
   case current of
     Nothing -> return $ Left "Transport not initialized"
@@ -72,6 +73,7 @@ upgradeToTLS conn params = do
             Left err -> return $ Left err
             Right newTransport -> do
               pointTransport conn newTransport
+                `onException` transportClose newTransport
               return $ Right ()
 
 upgradeToTLSWithConfig :: Conn -> String -> TLSConfig -> IO (Either String ())
@@ -102,7 +104,7 @@ configureTransport conn transportOption = do
 
 buildTlsParams :: String -> TLSConfig -> IO (Either String TLS.ClientParams)
 buildTlsParams host tlsConfig = do
-  result <- try @SomeException $ do
+  result <- trySync $ do
     systemStore <- getSystemCertificateStore
     let verificationHost = fromMaybe host (tlsServerName tlsConfig)
         base = TLS.defaultParamsClient verificationHost (BC.pack verificationHost)
@@ -143,8 +145,5 @@ buildTlsParams host tlsConfig = do
                         }
                   }
   case result of
-    Left err ->
-      case fromException err :: Maybe SomeAsyncException of
-        Just _  -> throwIO err
-        Nothing -> pure (Left (displayException err))
+    Left err     -> pure (Left (displayException err))
     Right params -> pure (Right params)

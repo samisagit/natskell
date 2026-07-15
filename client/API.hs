@@ -10,6 +10,7 @@ module API
   , Subscription
   , subscriptionSid
   , NatsError (..)
+  , ConnectionState (..)
   , Subject
   , Payload
   , Headers
@@ -29,6 +30,7 @@ module API
   , newInbox
   , ping
   , flush
+  , connectionState
   , reset
   , close
   , subject
@@ -42,11 +44,14 @@ module API
   , withHeaders
   , withRequestTimeout
   , withRequestHeaders
+  , withPingTimeout
+  , withFlushTimeout
   ) where
 
 import           Client.API
     ( Client
     , CloseOption
+    , ConnectionState (..)
     , FlushOption
     , Headers
     , Message
@@ -62,6 +67,7 @@ import           Client.API
     , Subscription
     , UnsubscribeOption
     , close
+    , connectionState
     , flush
     , headers
     , newInbox
@@ -77,7 +83,9 @@ import           Client.API
     , subscribeOnce
     , subscriptionSid
     , unsubscribe
+    , withFlushTimeout
     , withHeaders
+    , withPingTimeout
     , withQueueGroup
     , withReplyTo
     , withRequestHeaders

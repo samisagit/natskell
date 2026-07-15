@@ -2,7 +2,7 @@ module Lib.WorkerPool
   ( startWorkerPool
   ) where
 
-import           Control.Concurrent     (forkIO)
+import           Control.Concurrent     (ThreadId, forkIOWithUnmask)
 import           Control.Concurrent.STM
     ( STM
     , TQueue
@@ -12,13 +12,19 @@ import           Control.Concurrent.STM
     , orElse
     , readTQueue
     )
-import           Control.Exception      (SomeException, try)
-import           Control.Monad          (replicateM_, void)
+import           Control.Exception
+    ( SomeAsyncException
+    , SomeException
+    , fromException
+    , throwIO
+    , try
+    )
+import           Control.Monad          (replicateM)
 
-startWorkerPool :: Int -> TQueue (IO ()) -> STM () -> (SomeException -> IO ()) -> IO ()
+startWorkerPool :: Int -> TQueue (IO ()) -> STM () -> (SomeException -> IO ()) -> IO [ThreadId]
 startWorkerPool concurrency queue stopSignal onError = do
   let workerCount = max 1 concurrency
-  replicateM_ workerCount (void (forkIO worker))
+  replicateM workerCount (forkIOWithUnmask (\unmask -> unmask worker))
   where
     worker = do
       let loop = do
@@ -35,7 +41,10 @@ startWorkerPool concurrency queue stopSignal onError = do
               Just job -> do
                 result <- (try job :: IO (Either SomeException ()))
                 case result of
-                  Left err -> onError err
+                  Left err ->
+                    case fromException err :: Maybe SomeAsyncException of
+                      Just _  -> throwIO err
+                      Nothing -> onError err
                   Right () -> pure ()
                 loop
       loop
