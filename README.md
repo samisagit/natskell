@@ -111,6 +111,24 @@ The focused contracts live under `JetStream.API.Stream`,
 `JetStream.API.Management`. Every network operation has a final request-options
 argument, so future call options can be added without changing its type.
 
+The existing `ack`, `nak`, `inProgress`, and `term` dispositions are
+asynchronous when their request-options list is empty. Supplying a request
+option to one of these operations or to `nakWithDelay` asks JetStream to confirm
+the disposition; `ackSync` always requests confirmation. `termSync` provides
+the same guarantee for terminal dispositions as a natskell convenience.
+Delayed redelivery requires NATS Server 2.7.1 or newer and uses a validated,
+whole-nanosecond duration:
+
+```haskell
+case JetStream.nakDelay 30 of
+  Nothing -> pure ()
+  Just delay ->
+    JetStream.nakWithDelay (JetStream.messages jetStream) message delay []
+```
+
+`nakDelay` rejects durations below one nanosecond and values outside the
+JetStream signed 64-bit nanosecond range.
+
 ### Exit handling
 
 ```haskell

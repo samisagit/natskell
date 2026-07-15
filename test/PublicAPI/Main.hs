@@ -172,7 +172,14 @@ messageOperations
 messageOperations messageAPI message = do
   JetStreamMessage.messageMetadata message `seq` pure ()
   _ <- JetStreamMessage.ack messageAPI message []
+  _ <- JetStreamMessage.ackSync messageAPI message []
   _ <- JetStreamMessage.nak messageAPI message []
+  case JetStreamMessage.nakDelay 1 of
+    Nothing -> pure ()
+    Just delay -> do
+      _ <- JetStreamMessage.nakWithDelay messageAPI message delay []
+      pure ()
+  _ <- JetStreamMessage.termSync messageAPI message []
   pure ()
 
 inspectJetStreamApiError :: JetStream.JetStreamApiError -> IO ()

@@ -3,11 +3,14 @@
 module JetStream.MessageSpec (spec) where
 
 import qualified Client.API              as Nats
+import           Data.Int                (Int64)
 import           Data.IORef
+import           Data.Ratio              ((%))
 import           JetStream.Error         (JetStreamError (..))
-import           JetStream.Message       (fetchMessages)
+import           JetStream.Message       (fetchMessages, messageAPI)
 import           JetStream.Message.Types
 import           JetStream.Options       (newJetStreamContext)
+import           JetStream.Types         (withRequestTimeout)
 import           Publish                 (defaultPublishConfig)
 import           Publish.Config          (publishReplyTo)
 import           Test.Hspec
@@ -38,6 +41,112 @@ spec = do
       nakPayload `shouldBe` "-NAK"
       inProgressPayload `shouldBe` "+WPI"
       termPayload `shouldBe` "+TERM"
+
+    it "encodes delayed NAKs as exact integer nanoseconds" $ do
+      fmap nakDelayPayload (nakDelay 1.234567891234)
+        `shouldBe` Just "-NAK {\"delay\":1234567891}"
+
+    it "rejects delays shorter than one nanosecond" $ do
+      nakDelay 0 `shouldBe` Nothing
+      nakDelay 0.000000000999 `shouldBe` Nothing
+      nakDelay (-1) `shouldBe` Nothing
+
+    it "accepts the exact signed 64-bit nanosecond boundaries" $ do
+      let oneNanosecond = fromRational (1 % 1000000000)
+          maxNanoseconds = toInteger (maxBound :: Int64)
+          maxDelay = fromRational (maxNanoseconds % 1000000000)
+          overflowDelay = fromRational ((maxNanoseconds + 1) % 1000000000)
+      fmap nakDelayPayload (nakDelay oneNanosecond)
+        `shouldBe` Just "-NAK {\"delay\":1}"
+      fmap nakDelayPayload (nakDelay maxDelay)
+        `shouldBe` Just "-NAK {\"delay\":9223372036854775807}"
+      nakDelay overflowDelay `shouldBe` Nothing
+
+  describe "message dispositions" $ do
+    it "keeps empty-option acknowledgements asynchronous" $ do
+      publishes <- newIORef []
+      requests <- newIORef []
+      let api = messageAPI
+            (newJetStreamContext (ackFakeClient publishes requests ackReply) [])
+            (error "unused consumer API")
+
+      ack api ackMessage [] `shouldReturn` Right ()
+      readIORef publishes `shouldReturn` [(ackSubject, "+ACK")]
+      readIORef requests `shouldReturn` []
+
+    it "uses request-reply when acknowledgement request options are supplied" $ do
+      publishes <- newIORef []
+      requests <- newIORef []
+      let api = messageAPI
+            (newJetStreamContext (ackFakeClient publishes requests ackReply) [])
+            (error "unused consumer API")
+
+      ack api ackMessage [withRequestTimeout 0.25] `shouldReturn` Right ()
+      readIORef publishes `shouldReturn` []
+      readIORef requests `shouldReturn` [(ackSubject, "+ACK")]
+
+    it "always confirms ackSync and termSync" $ do
+      publishes <- newIORef []
+      requests <- newIORef []
+      let api = messageAPI
+            (newJetStreamContext (ackFakeClient publishes requests ackReply) [])
+            (error "unused consumer API")
+
+      ackSync api ackMessage [] `shouldReturn` Right ()
+      termSync api ackMessage [] `shouldReturn` Right ()
+      readIORef publishes `shouldReturn` []
+      readIORef requests `shouldReturn`
+        [ (ackSubject, "+ACK")
+        , (ackSubject, "+TERM")
+        ]
+
+    it "sends delayed NAKs with the selected confirmation mode" $ do
+      publishes <- newIORef []
+      requests <- newIORef []
+      let api = messageAPI
+            (newJetStreamContext (ackFakeClient publishes requests ackReply) [])
+            (error "unused consumer API")
+          Just delay = nakDelay 2.5
+
+      nakWithDelay api ackMessage delay [] `shouldReturn` Right ()
+      nakWithDelay api ackMessage delay [withRequestTimeout 0.25]
+        `shouldReturn` Right ()
+      readIORef publishes `shouldReturn`
+        [(ackSubject, "-NAK {\"delay\":2500000000}")]
+      readIORef requests `shouldReturn`
+        [(ackSubject, "-NAK {\"delay\":2500000000}")]
+
+    it "maps confirmed acknowledgement timeouts" $ do
+      publishes <- newIORef []
+      requests <- newIORef []
+      let api = messageAPI
+            (newJetStreamContext
+              (ackFakeClient publishes requests (Left Nats.NatsRequestTimedOut))
+              [])
+            (error "unused consumer API")
+
+      ackSync api ackMessage [] `shouldReturn` Left JetStreamTimeout
+
+    it "maps confirmed acknowledgement status errors" $ do
+      publishes <- newIORef []
+      requests <- newIORef []
+      let response = Right (ackReplyMessage "" (Just [("Status", "409"), ("Description", "consumer deleted")]))
+          api = messageAPI
+            (newJetStreamContext (ackFakeClient publishes requests response) [])
+            (error "unused consumer API")
+
+      termSync api ackMessage []
+        `shouldReturn` Left (JetStreamStatusError 409 (Just "consumer deleted"))
+
+    it "accepts confirmed acknowledgement reply payloads" $ do
+      publishes <- newIORef []
+      requests <- newIORef []
+      let response = Right (ackReplyMessage "server metadata" Nothing)
+          api = messageAPI
+            (newJetStreamContext (ackFakeClient publishes requests response) [])
+            (error "unused consumer API")
+
+      ackSync api ackMessage [] `shouldReturn` Right ()
 
   describe "message metadata" $ do
     it "parses v1 JetStream ack reply subjects" $ do
@@ -181,6 +290,49 @@ silentFakeClient publishCalls unsubscribeCalls =
         modifyIORef' unsubscribeCalls (++ [sid])
         pure (Right ())
     , Nats.newInbox = pure "_INBOX.timeout"
+    , Nats.ping = \_ -> pure (Right ())
+    , Nats.flush = \_ -> pure (Right ())
+    , Nats.connectionState = pure Nats.ConnectionConnected
+    , Nats.reset = \_ -> pure ()
+    , Nats.close = \_ -> pure ()
+    }
+
+ackSubject :: Subject
+ackSubject = "$JS.ACK.ORDERS.WORKER.1.1.1"
+
+ackMessage :: Message
+ackMessage = Message "ORDERS.created" "payload" Nothing (Just ackSubject) Nothing
+
+ackReply :: Either Nats.NatsError Nats.MsgView
+ackReply = Right (ackReplyMessage "" Nothing)
+
+ackReplyMessage :: Payload -> Maybe Nats.Headers -> Nats.Message
+ackReplyMessage body responseHeaders =
+  Nats.Message
+    { Nats.subject = "_INBOX.ack"
+    , Nats.sid = "sid-ack"
+    , Nats.replyTo = Nothing
+    , Nats.payload = body
+    , Nats.headers = responseHeaders
+    }
+
+ackFakeClient
+  :: IORef [(Subject, Payload)]
+  -> IORef [(Subject, Payload)]
+  -> Either Nats.NatsError Nats.MsgView
+  -> Nats.Client
+ackFakeClient publishCalls requestCalls response =
+  Nats.Client
+    { Nats.publish = \subject body _ -> do
+        modifyIORef' publishCalls (++ [(subject, body)])
+        pure (Right ())
+    , Nats.subscribe = \_ _ _ -> pure (Right (Nats.Subscription "sid-ack"))
+    , Nats.subscribeOnce = \_ _ _ -> pure (Right (Nats.Subscription "sid-ack-once"))
+    , Nats.request = \subject body _ -> do
+        modifyIORef' requestCalls (++ [(subject, body)])
+        pure response
+    , Nats.unsubscribe = \_ _ -> pure (Right ())
+    , Nats.newInbox = pure "_INBOX.ack"
     , Nats.ping = \_ -> pure (Right ())
     , Nats.flush = \_ -> pure (Right ())
     , Nats.connectionState = pure Nats.ConnectionConnected
