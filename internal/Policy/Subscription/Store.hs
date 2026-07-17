@@ -34,10 +34,10 @@ import qualified Types.Msg              as M
 import           Types.Msg              (SID)
 
 data SubscriptionState = SubscriptionState
-                           { subscriptionCallbacks :: Map.Map SID SubscriptionCallback
-                           , subscriptionExpiryHeap :: Heap.MinHeap (UTCTime, SID)
-                           , subscriptionTrackedExpiries :: Map.Map SID UTCTime
-                           , subscriptionMeta :: Map.Map SID SubscriptionMeta
+                           { subscriptionCallbacks :: !(Map.Map SID SubscriptionCallback)
+                           , subscriptionExpiryHeap :: !(Heap.MinHeap (UTCTime, SID))
+                           , subscriptionTrackedExpiries :: !(Map.Map SID UTCTime)
+                           , subscriptionMeta :: !(Map.Map SID SubscriptionMeta)
                            }
 
 data SubscriptionCallback = SubscriptionCallback

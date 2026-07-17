@@ -5,6 +5,7 @@ module ClientRepliesSpec (spec) where
 import           API
     ( Client
     , NatsError (NatsNoResponders)
+    , Subject
     , close
     , flush
     , payload
@@ -16,14 +17,33 @@ import           API
     )
 import           Client
 import           Control.Exception (finally)
-import           Control.Monad     (void)
+import           Control.Monad     (replicateM_, void)
 import           Data.Maybe
+import           Data.Word         (Word64)
+import           GHC.Stats
+import           System.Mem        (performMajorGC)
 import           System.Timeout
 import           Test.Hspec
 import           TestSupport
 
 spec :: Spec
 spec = do
+  clientSystemTest "5ddbe840-2f87-42fb-ae3a-4bb9c483dc78" "keeps request state bounded" $ \_ (Endpoints natsHost natsPort) -> do
+    let topic = "REQ.SOAK"
+    remoteClient <- newTestClient [(natsHost, natsPort)] [withConnectName "request-soak-responder"]
+    promptClient <- newTestClient [(natsHost, natsPort)] [withConnectName "request-soak-requester"]
+    (do
+        void . subscribe remoteClient topic [] $ \msg ->
+          void (publish remoteClient (fromJust (replyTo msg)) "WORLD" [])
+        flush remoteClient [] `shouldReturn` Right ()
+        requestMany 100 promptClient topic
+        baselineBytes <- liveBytesAfterGC
+        requestMany 10000 promptClient topic
+        finalBytes <- liveBytesAfterGC
+        finalBytes - baselineBytes `shouldSatisfy` (< 2 * 1024 * 1024))
+      `finally` do
+        close remoteClient []
+        close promptClient []
   clientSystemTest "79b1247b-10b6-4c1c-8d78-20a9e9f30cc0" "replies are routed correctly" $ \loggerOptions (Endpoints natsHost natsPort) -> do
     let topic = "REQ.TOPIC"
     remoteClient <- newTestClient [(natsHost, natsPort)] $
@@ -55,3 +75,14 @@ spec = do
           Just other ->
             expectationFailure ("unexpected request result: " ++ show other))
       `finally` close requester []
+
+requestMany :: Int -> Client -> Subject -> IO ()
+requestMany total client topic =
+  replicateM_ total $ do
+    reply <- request client topic "HELLO" []
+    fmap payload reply `shouldBe` Right "WORLD"
+
+liveBytesAfterGC :: IO Word64
+liveBytesAfterGC = do
+  performMajorGC
+  gcdetails_live_bytes . gc <$> getRTSStats
