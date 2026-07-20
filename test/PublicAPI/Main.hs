@@ -168,6 +168,19 @@ jetStreamOperations jetStream = do
     "processor"
     [JetStreamMessage.withFetchBatch 10]
     []
+  pullSubscription <- JetStreamMessage.consumePull
+    (JetStream.messages jetStream)
+    "ORDERS"
+    "processor"
+    observePullEvent
+  case pullSubscription of
+    Left _ -> pure ()
+    Right handle -> do
+      _ <- JetStreamMessage.requestPull
+        handle
+        [JetStreamMessage.withFetchBatch 10]
+      _ <- JetStreamMessage.stopPullSubscription handle
+      pure ()
   _ <- JetStreamMessage.consumePush
     (JetStream.messages jetStream)
     "deliver.orders"
@@ -211,6 +224,14 @@ jetStreamOperations jetStream = do
             (JetStream.keyValues jetStream) handle []
           pure ()
   pure ()
+
+observePullEvent :: JetStreamMessage.PullEvent -> IO ()
+observePullEvent event =
+  case event of
+    JetStreamMessage.PullMessage message ->
+      JetStreamMessage.messagePayload message `seq` pure ()
+    JetStreamMessage.PullStatusMessage status ->
+      status `seq` pure ()
 
 messageOperations
   :: JetStream.MessageAPI

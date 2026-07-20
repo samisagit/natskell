@@ -1,6 +1,7 @@
 module JetStream.Message.API
   ( MessageAPI
   , fetch
+  , consumePull
   , consumePush
   , createOrderedConsumer
   , ack
@@ -39,6 +40,10 @@ module JetStream.Message.API
   , PushConsumeOption
   , PushSubscription
   , stopPushSubscription
+  , PullEvent (..)
+  , PullSubscription
+  , requestPull
+  , stopPullSubscription
   , PullResponse
   , pullResponseMessages
   , pullResponseStatus
@@ -64,12 +69,15 @@ import           JetStream.Message.Types
     , NakDelay
     , OrderedConsumer
     , OrderedConsumerOption
+    , PullEvent (..)
     , PullResponse
     , PullStatus (..)
+    , PullSubscription
     , PushConsumeOption
     , PushSubscription
     , ack
     , ackSync
+    , consumePull
     , consumePush
     , createOrderedConsumer
     , fetch
@@ -95,7 +103,9 @@ import           JetStream.Message.Types
     , orderedConsumerInfo
     , pullResponseMessages
     , pullResponseStatus
+    , requestPull
     , stopOrderedConsumer
+    , stopPullSubscription
     , stopPushSubscription
     , term
     , termSync

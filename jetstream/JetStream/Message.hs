@@ -10,6 +10,7 @@ module JetStream.Message
   ) where
 
 import qualified Client.API                 as Nats
+import           Control.Concurrent.MVar    (modifyMVar, newMVar)
 import           Control.Concurrent.STM
 import           Control.Exception          (bracket)
 import           Control.Monad              (unless, void)
@@ -69,6 +70,7 @@ messageAPI context consumerAPI =
   MessageAPI
     { fetch = \stream consumer options requestOptions ->
         fetchMessages context stream consumer (pullRequest options) requestOptions
+    , consumePull = consumePullMessages context
     , consumePush = \deliverSubject options _ handler ->
         consumePushMessages context deliverSubject (pushConsumeConfig options) handler
     , createOrderedConsumer = \stream options requestOptions ->
@@ -82,6 +84,62 @@ messageAPI context consumerAPI =
     , term = sendDisposition context ConfirmWhenRequested (ackPayload Term)
     , termSync = sendDisposition context ConfirmAlways (ackPayload Term)
     }
+
+consumePullMessages
+  :: JetStreamContext
+  -> StreamName
+  -> ConsumerName
+  -> (PullEvent -> IO ())
+  -> IO (Either JetStreamError PullSubscription)
+consumePullMessages context stream consumer handler = do
+  inbox <- Nats.newInbox natsClient
+  subscription <- Nats.subscribe natsClient inbox [] $ \msgView ->
+    let message = fromMsgView msgView
+    in case messageStatus message of
+         Nothing     -> handler (PullMessage message)
+         Just status -> handler (PullStatusMessage status)
+  case subscription of
+    Left err ->
+      pure (Left (JetStreamNatsError err))
+    Right handle -> do
+      stopped <- newMVar False
+      pure $ Right PullSubscription
+        { requestPull = \options ->
+            let request = pullRequest options
+            in modifyMVar stopped $ \isStopped ->
+                 if isStopped
+                   then pure (True, Left JetStreamNoReply)
+                   else do
+                     result <- requestPullMessages context stream consumer inbox request
+                     pure (False, result)
+        , stopPullSubscription =
+            modifyMVar stopped $ \isStopped ->
+              if isStopped
+                then pure (True, Right ())
+                else do
+                  result <- mapNatsResult <$> Nats.unsubscribe natsClient handle []
+                  pure (True, result)
+        }
+  where
+    natsClient = contextClient context
+
+requestPullMessages
+  :: JetStreamContext
+  -> StreamName
+  -> ConsumerName
+  -> Subject
+  -> PullRequest
+  -> IO (Either JetStreamError ())
+requestPullMessages context stream consumer inbox request
+  | pullRequestBatch request <= 0 =
+      pure (Right ())
+  | otherwise =
+      mapNatsResult <$>
+        Nats.publish
+          (contextClient context)
+          (Subject.consumerNextSubject context stream consumer)
+          (pullRequestPayload (pullRequestBatch request) request)
+          [Nats.withReplyTo inbox]
 
 consumePushMessages
   :: JetStreamContext

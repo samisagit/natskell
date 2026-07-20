@@ -2,22 +2,27 @@
 
 module JetStreamSpec (spec) where
 
-import qualified API                   as Nats
-import           Client                (withConnectName)
+import qualified API                     as Nats
+import           Client                  (withConnectName)
 import           Control.Concurrent
     ( newEmptyMVar
     , takeMVar
     , threadDelay
     , tryPutMVar
     )
-import           Control.Exception     (finally)
-import           Control.Monad         (forM_, unless, void, when)
-import qualified Data.ByteString       as BS
-import qualified Data.ByteString.Char8 as BC
-import           Data.IORef            (atomicModifyIORef', newIORef, readIORef)
-import           Data.List             (sort)
-import           Data.Maybe            (fromMaybe)
-import           Data.Time.Clock       (addUTCTime, getCurrentTime)
+import           Control.Concurrent.Chan (Chan, newChan, readChan, writeChan)
+import           Control.Exception       (finally)
+import           Control.Monad           (forM_, unless, void, when)
+import qualified Data.ByteString         as BS
+import qualified Data.ByteString.Char8   as BC
+import           Data.IORef
+    ( atomicModifyIORef'
+    , newIORef
+    , readIORef
+    )
+import           Data.List               (sort)
+import           Data.Maybe              (fromMaybe)
+import           Data.Time.Clock         (addUTCTime, getCurrentTime)
 import           JetStream.API
     ( JetStream
     , consumers
@@ -25,10 +30,10 @@ import           JetStream.API
     , publisher
     , streams
     )
-import qualified JetStream.API         as JetStream
-import           JetStream.Client      (newJetStream, withDomain)
+import qualified JetStream.API           as JetStream
+import           JetStream.Client        (newJetStream, withDomain)
 import           NatsServerConfig
-import           System.Timeout        (timeout)
+import           System.Timeout          (timeout)
 import           Test.Hspec
 import           TestSupport
 
@@ -39,6 +44,9 @@ spec =
       jetStreamSystemTest "33d3fe4e-d2b8-4e91-8f9e-58a817c5575f"
         "acks a durable pull message and reports no messages"
         durablePullConsumerTest
+      jetStreamSystemTest "4135c93b-a889-4ce4-9c72-59475778f29d"
+        "reuses a persistent pull subscription across batch requests"
+        persistentPullSubscriptionTest
       jetStreamSystemTest "a617d120-8846-48b0-a76d-b6a5975ee1c8"
         "deduplicates publishes by message id"
         duplicatePublishTest
@@ -184,6 +192,104 @@ durablePullConsumerTest jetStream = do
     JetStream.fetch (messages jetStream) streamName durableName shortFetch []
   JetStream.pullResponseMessages emptyFetch `shouldBe` []
   expectNoMessages emptyFetch
+
+persistentPullSubscriptionTest :: JetStream -> IO ()
+persistentPullSubscriptionTest jetStream = do
+  let stream = "NATSKELL_JS_PERSISTENT_PULL"
+      subject = "NATSKELL.JS.PERSISTENT.PULL"
+      consumer = "PERSISTENT_PULL_WORKER"
+  createStreamOrFail jetStream stream [subject] streamOptions
+  createDurableConsumerOrFail
+    jetStream
+    stream
+    consumer
+    (pullConsumerOptions consumer [])
+  events <- newChan
+  subscription <- expectRight "persistent pull subscribe" $
+    JetStream.consumePull
+      (messages jetStream)
+      stream
+      consumer
+      (writeChan events)
+
+  flip finally (void (JetStream.stopPullSubscription subscription)) $ do
+    mapM_ (publishPayload jetStream subject) ["one", "two", "three"]
+    JetStream.requestPull
+      subscription
+      [ JetStream.withFetchBatch 2
+      , JetStream.withFetchWait (JetStream.FetchExpiresMicros 1000000)
+      ]
+      `shouldReturn` Right ()
+    first <- nextPullMessage events
+    second <- nextPullMessage events
+    fmap JetStream.messagePayload [first, second]
+      `shouldBe` ["one", "two"]
+    mapM_ (ackOrFail jetStream) [first, second]
+
+    JetStream.requestPull
+      subscription
+      [ JetStream.withFetchBatch 1
+      , JetStream.withFetchWait (JetStream.FetchExpiresMicros 1000000)
+      ]
+      `shouldReturn` Right ()
+    third <- nextPullMessage events
+    JetStream.messagePayload third `shouldBe` "three"
+    ackOrFail jetStream third
+
+    publishPayload jetStream subject "partial"
+    JetStream.requestPull
+      subscription
+      [ JetStream.withFetchBatch 2
+      , JetStream.withFetchWait (JetStream.FetchExpiresMicros 100000)
+      ]
+      `shouldReturn` Right ()
+    partial <- nextPullMessage events
+    JetStream.messagePayload partial `shouldBe` "partial"
+    ackOrFail jetStream partial
+    nextPullStatus events
+      `shouldReturn` JetStream.PullRequestTimeout (Just "Request Timeout")
+
+    JetStream.requestPull
+      subscription
+      [ JetStream.withFetchBatch 1
+      , JetStream.withFetchWait (JetStream.FetchExpiresMicros 1000000)
+      ]
+      `shouldReturn` Right ()
+    publishPayload jetStream subject "after-timeout"
+    afterTimeout <- nextPullMessage events
+    JetStream.messagePayload afterTimeout `shouldBe` "after-timeout"
+    ackOrFail jetStream afterTimeout
+
+nextPullMessage
+  :: Chan JetStream.PullEvent
+  -> IO JetStream.Message
+nextPullMessage events = do
+  received <- timeout 5000000 (readChan events)
+  case received of
+    Just (JetStream.PullMessage message) ->
+      pure message
+    Just (JetStream.PullStatusMessage status) ->
+      expectationFailure ("unexpected persistent pull status: " ++ show status) >>
+        fail "unexpected persistent pull status"
+    Nothing ->
+      expectationFailure "persistent pull delivery timed out" >>
+        fail "persistent pull delivery timed out"
+
+nextPullStatus :: Chan JetStream.PullEvent -> IO JetStream.PullStatus
+nextPullStatus events = do
+  received <- timeout 5000000 (readChan events)
+  case received of
+    Just (JetStream.PullStatusMessage status) ->
+      pure status
+    Just (JetStream.PullMessage message) ->
+      expectationFailure
+        ( "unexpected persistent pull message while awaiting status: "
+            ++ show (JetStream.messagePayload message)
+        ) >>
+        fail "unexpected persistent pull message"
+    Nothing ->
+      expectationFailure "persistent pull status timed out" >>
+        fail "persistent pull status timed out"
 
 duplicatePublishTest :: JetStream -> IO ()
 duplicatePublishTest jetStream = do

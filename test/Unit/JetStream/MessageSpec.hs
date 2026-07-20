@@ -228,6 +228,63 @@ spec = do
       unsubscribeCalls' <- readIORef unsubscribeCalls
       unsubscribeCalls' `shouldBe` ["sid-timeout"]
 
+  describe "persistent pull" $ do
+    it "reuses one reply subscription across batched pull requests" $ do
+      publishCalls <- newIORef []
+      subscribeCalls <- newIORef []
+      unsubscribeCalls <- newIORef []
+      callbackRef <- newIORef Nothing
+      events <- newIORef []
+      let client = persistentPullFakeClient
+            publishCalls
+            subscribeCalls
+            unsubscribeCalls
+            callbackRef
+          api = messageAPI
+            (newJetStreamContext client [])
+            (error "unused consumer API")
+
+      subscriptionResult <- consumePull api "ORDERS" "WORKER" $ \event ->
+        modifyIORef' events (++ [event])
+      subscription <-
+        case subscriptionResult of
+          Left err ->
+            expectationFailure ("pull subscription failed: " ++ show err) >>
+              fail "pull subscription failed"
+          Right value ->
+            pure value
+
+      requestPull subscription [withFetchBatch 2] `shouldReturn` Right ()
+      requestPull
+        subscription
+        [ withFetchBatch 3
+        , withFetchWait (FetchNoWaitMicros 1000)
+        ]
+        `shouldReturn` Right ()
+
+      readIORef subscribeCalls `shouldReturn` ["_INBOX.persistent"]
+      readIORef publishCalls `shouldReturn`
+        [ ( "$JS.API.CONSUMER.MSG.NEXT.ORDERS.WORKER"
+          , "{\"batch\":2,\"expires\":1000000000}"
+          , Just "_INBOX.persistent"
+          )
+        , ( "$JS.API.CONSUMER.MSG.NEXT.ORDERS.WORKER"
+          , "{\"batch\":3,\"no_wait\":true}"
+          , Just "_INBOX.persistent"
+          )
+        ]
+      readIORef events `shouldReturn`
+        [ PullMessage (fromFakeMsg (fakeMsg "one"))
+        , PullMessage (fromFakeMsg (fakeMsg "two"))
+        , PullStatusMessage (PullNoMessages (Just "No Messages"))
+        ]
+
+      stopPullSubscription subscription `shouldReturn` Right ()
+      stopPullSubscription subscription `shouldReturn` Right ()
+      readIORef unsubscribeCalls `shouldReturn` ["sid-persistent"]
+      requestPull subscription [withFetchBatch 1]
+        `shouldReturn` Left JetStreamNoReply
+
 fakeClient
   :: IORef [(Subject, Payload, Maybe Subject)]
   -> IORef [SID]
@@ -270,6 +327,65 @@ fakeMsg body =
     , Nats.replyTo = Just "$JS.ACK.ORDERS.WORKER.1.1.1"
     , Nats.payload = body
     , Nats.headers = Nothing
+    }
+
+fromFakeMsg :: Nats.Message -> Message
+fromFakeMsg value =
+  Message
+    { messageSubject = Nats.subject value
+    , messagePayload = Nats.payload value
+    , messageHeaders = Nats.headers value
+    , messageReplyTo = Nats.replyTo value
+    , messageStatus = classifyStatusHeaders (Nats.headers value)
+    }
+
+persistentPullFakeClient
+  :: IORef [(Subject, Payload, Maybe Subject)]
+  -> IORef [Subject]
+  -> IORef [SID]
+  -> IORef (Maybe (Nats.MsgView -> IO ()))
+  -> Nats.Client
+persistentPullFakeClient publishCalls subscribeCalls unsubscribeCalls callbackRef =
+  Nats.Client
+    { Nats.publish = \subject body options -> do
+        let replyTo' = publishReplyTo (foldl (flip ($)) defaultPublishConfig options)
+        modifyIORef' publishCalls (++ [(subject, body, replyTo')])
+        callback <- readIORef callbackRef
+        case callback of
+          Nothing ->
+            pure ()
+          Just deliver
+            | body == "{\"batch\":2,\"expires\":1000000000}" -> do
+                deliver (fakeMsg "one")
+                deliver (fakeMsg "two")
+            | otherwise ->
+                deliver
+                  Nats.Message
+                    { Nats.subject = "_INBOX.persistent"
+                    , Nats.sid = "sid-persistent"
+                    , Nats.replyTo = Nothing
+                    , Nats.payload = ""
+                    , Nats.headers = Just
+                        [ ("Status", "404")
+                        , ("Description", "No Messages")
+                        ]
+                    }
+        pure (Right ())
+    , Nats.subscribe = \subject _ callback -> do
+        modifyIORef' subscribeCalls (++ [subject])
+        writeIORef callbackRef (Just callback)
+        pure (Right (Nats.Subscription "sid-persistent"))
+    , Nats.subscribeOnce = \_ _ _ -> pure (Right (Nats.Subscription "sid-once"))
+    , Nats.request = \_ _ _ -> pure (Left Nats.NatsRequestTimedOut)
+    , Nats.unsubscribe = \(Nats.Subscription sid) _ -> do
+        modifyIORef' unsubscribeCalls (++ [sid])
+        pure (Right ())
+    , Nats.newInbox = pure "_INBOX.persistent"
+    , Nats.ping = \_ -> pure (Right ())
+    , Nats.flush = \_ -> pure (Right ())
+    , Nats.connectionState = pure Nats.ConnectionConnected
+    , Nats.reset = \_ -> pure ()
+    , Nats.close = \_ -> pure ()
     }
 
 silentFakeClient
