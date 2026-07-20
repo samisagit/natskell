@@ -15,8 +15,10 @@ module JetStream.Message.Types
   , PushConsumeConfig (..)
   , PushConsumeOption
   , PushSubscription (..)
+  , PullEvent (..)
   , PullRequest (..)
   , PullResponse (..)
+  , PullSubscription (..)
   , PullStatus (..)
   , ackPayload
   , classifyStatusHeaders
@@ -73,6 +75,7 @@ import           JetStream.Types
 -- hides the constructor so this capability can grow additively.
 data MessageAPI = MessageAPI
                     { fetch :: StreamName -> ConsumerName -> [FetchOption] -> [JetStreamRequestOption] -> IO (Either JetStreamError PullResponse)
+                    , consumePull :: StreamName -> ConsumerName -> (PullEvent -> IO ()) -> IO (Either JetStreamError PullSubscription)
                     , consumePush :: Subject -> [PushConsumeOption] -> [JetStreamRequestOption] -> (Message -> IO ()) -> IO (Either JetStreamError PushSubscription)
                     , createOrderedConsumer :: StreamName -> [OrderedConsumerOption] -> [JetStreamRequestOption] -> IO (Either JetStreamError OrderedConsumer)
                     , ack :: Message -> [JetStreamRequestOption] -> IO (Either JetStreamError ())
@@ -121,6 +124,12 @@ data PullResponse = PullResponse
                       }
   deriving (Eq, Show)
 
+-- | One reply received by a persistent pull subscription. Status replies end
+-- or reject a server-side pull request without being application messages.
+data PullEvent = PullMessage Message
+               | PullStatusMessage PullStatus
+  deriving (Eq, Show)
+
 data Message = Message
                  { messageSubject :: Subject
                  , messagePayload :: Payload
@@ -143,6 +152,13 @@ data MessageMetadata = MessageMetadata
   deriving (Eq, Show)
 
 newtype PushSubscription = PushSubscription { stopPushSubscription :: IO (Either JetStreamError ()) }
+
+-- | One reusable reply inbox for explicit pull requests. Requests may select
+-- different batch sizes while the subscription remains active.
+data PullSubscription = PullSubscription
+                          { requestPull :: [FetchOption] -> IO (Either JetStreamError ())
+                          , stopPullSubscription :: IO (Either JetStreamError ())
+                          }
 
 newtype PushConsumeConfig = PushConsumeConfig { pushConsumeQueueGroup :: Maybe Subject }
 
