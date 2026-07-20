@@ -3,6 +3,7 @@
 module Parser.Attoparsec
   ( parserApi
   , parserApiWithMessageLimit
+  , parseHeaderBlock
   ) where
 
 import           Control.Applicative              ((<|>))
@@ -33,6 +34,10 @@ parserApi = parserApiWithMessageLimit maxBound
 parserApiWithMessageLimit :: Int -> ParserAPI ParsedMessage
 parserApiWithMessageLimit maximumMessageSize =
   ParserAPI (parseStep (max 1 maximumMessageSize))
+
+parseHeaderBlock :: BS.ByteString -> Either String [(BS.ByteString, BS.ByteString)]
+parseHeaderBlock =
+  A.parseOnly (headerBlockParser <* A.endOfInput)
 
 parseStep :: Int -> BS.ByteString -> ParseStep ParsedMessage
 parseStep maximumMessageSize bytes =

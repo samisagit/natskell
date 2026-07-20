@@ -153,8 +153,8 @@ orderedInfo state requestOptions = do
 
 fetchOrderedMessages :: OrderedState -> [FetchOption] -> [JetStreamRequestOption] -> IO (Either JetStreamError PullResponse)
 fetchOrderedMessages state options requestOptions = do
-  resetResult <- resetOrderedConsumer state requestOptions
-  case resetResult of
+  consumerResult <- currentOrResetOrderedConsumer state requestOptions
+  case consumerResult of
     Left err ->
       pure (Left err)
     Right info -> do
@@ -177,6 +177,27 @@ fetchOrderedMessages state options requestOptions = do
               atomically $
                 writeTVar (orderedStateNextSequence state) (Just nextSequence)
               pure (Right response)
+
+currentOrResetOrderedConsumer
+  :: OrderedState
+  -> [JetStreamRequestOption]
+  -> IO (Either JetStreamError ConsumerInfo)
+currentOrResetOrderedConsumer state requestOptions = do
+  stopped <- readTVarIO (orderedStateStopped state)
+  if stopped
+    then pure (Left JetStreamNoReply)
+    else do
+      currentName <- readTVarIO (orderedStateCurrentName state)
+      nextSequence <- readTVarIO (orderedStateNextSequence state)
+      case (currentName, nextSequence) of
+        (Just consumerName, Nothing) ->
+          consumerInfo
+            (orderedStateConsumers state)
+            (orderedStateStream state)
+            consumerName
+            requestOptions
+        _ ->
+          resetOrderedConsumer state requestOptions
 
 resetOrderedConsumer :: OrderedState -> [JetStreamRequestOption] -> IO (Either JetStreamError ConsumerInfo)
 resetOrderedConsumer state requestOptions = do

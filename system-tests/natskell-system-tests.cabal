@@ -50,6 +50,7 @@ test-suite test
     ClientCycleSpec
     ClientFatalErrorSpec
     JetStreamSpec
+    JetStreamKeyValueSpec
     ClientMessagesSpec
     ClientNoServersSpec
     ClientPingSpec
