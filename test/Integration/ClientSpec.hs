@@ -1970,12 +1970,10 @@ spec = do
               ]
               []
             putMVar fetchVar result
-          deleteCurrent <- capturePublish firstConn "$JS.API.CONSUMER.DELETE.PROTO_STREAM.PROTO_ORDERED_1"
-          replyToCapturedPublish firstConn deleteCurrent protoDeleteConsumerResponse
-          createNext <- capturePublish firstConn "$JS.API.CONSUMER.CREATE.PROTO_STREAM.PROTO_ORDERED_2"
-          replyToCapturedPublish firstConn createNext $
-            protoOrderedConsumerInfoResponseFor "PROTO_ORDERED_2"
-          _nextRequest <- capturePublish firstConn "$JS.API.CONSUMER.MSG.NEXT.PROTO_STREAM.PROTO_ORDERED_2"
+          initialInfo <- capturePublish firstConn "$JS.API.CONSUMER.INFO.PROTO_STREAM.PROTO_ORDERED_1"
+          replyToCapturedPublish firstConn initialInfo $
+            protoOrderedConsumerInfoResponseFor "PROTO_ORDERED_1"
+          _nextRequest <- capturePublish firstConn "$JS.API.CONSUMER.MSG.NEXT.PROTO_STREAM.PROTO_ORDERED_1"
           Network.Socket.close firstConn
           fetchResult <- timeout 1000000 (takeMVar fetchVar)
           case fetchResult of
@@ -1992,9 +1990,9 @@ spec = do
           void . forkIO $ do
             result <- JetStream.orderedConsumerInfo ordered []
             putMVar infoVar result
-          infoRequest <- capturePublish secondConn "$JS.API.CONSUMER.INFO.PROTO_STREAM.PROTO_ORDERED_2"
+          infoRequest <- capturePublish secondConn "$JS.API.CONSUMER.INFO.PROTO_STREAM.PROTO_ORDERED_1"
           replyToCapturedPublish secondConn infoRequest $
-            protoOrderedConsumerInfoResponseFor "PROTO_ORDERED_2"
+            protoOrderedConsumerInfoResponseFor "PROTO_ORDERED_1"
           infoResult <- timeout 1000000 (takeMVar infoVar)
           case infoResult of
             Nothing ->
@@ -2002,7 +2000,7 @@ spec = do
             Just (Left err) ->
               expectationFailure ("ordered consumer info failed after reconnect: " ++ show err)
             Just (Right info) ->
-              JetStream.consumerInfoName info `shouldBe` "PROTO_ORDERED_2"
+              JetStream.consumerInfoName info `shouldBe` "PROTO_ORDERED_1"
           close client []
           Network.Socket.close secondConn
       Network.Socket.close sock

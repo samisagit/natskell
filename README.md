@@ -107,9 +107,47 @@ case JetStreamClient.newJetStream client [] of
 ```
 
 The focused contracts live under `JetStream.API.Stream`,
-`JetStream.API.Consumer`, `JetStream.API.Publish`, `JetStream.API.Message`, and
-`JetStream.API.Management`. Every network operation has a final request-options
-argument, so future call options can be added without changing its type.
+`JetStream.API.Consumer`, `JetStream.API.Publish`, `JetStream.API.Message`,
+`JetStream.API.Management`, and `JetStream.API.KeyValue`. Every network
+operation has a final request-options argument, so future call options can be
+added without changing its type.
+
+Key-value buckets use the standard JetStream `KV_<bucket>` stream and
+`$KV.<bucket>.>` subjects. Bucket and key names are validated before network
+I/O. Values are strict `ByteString` payloads. `putKeyValueEntry` writes
+unconditionally, while `createKeyValueEntry`, `updateKeyValueEntry`, and the
+optional `withKeyValueLastRevision` delete guard use JetStream subject-sequence
+compare-and-set semantics.
+
+```haskell
+bucketResult <- JetStream.createKeyValueBucket
+  (JetStream.keyValues jetStream)
+  "PROCESS_STATE"
+  [ JetStream.withKeyValueHistory 3
+  , JetStream.withKeyValueMaxValueSize (1024 * 1024)
+  , JetStream.withKeyValueStorage JetStream.FileStorage
+  ]
+  []
+
+case bucketResult of
+  Left err -> print err
+  Right bucket -> do
+    revision <- JetStream.putKeyValueEntry
+      (JetStream.keyValues jetStream)
+      bucket
+      "tenant/process-instance"
+      binaryState
+      []
+    print revision
+```
+
+Watches are pull-based ordered consumers. `fetchKeyValueWatch` returns entries,
+the pull status, and `keyValueWatchInitialComplete`, which becomes true once the
+stable initial snapshot has arrived. Watch options support latest values,
+history, updates only, delete filtering, and metadata-only delivery. Bucket
+history is limited to 64 revisions per key, matching NATS clients.
+Bucket creation requires NATS Server 2.7.2 or later. S2 compression requires
+NATS Server 2.10.0 or later.
 
 Stream configuration supports a per-message encoded-size limit with
 `withMaxMessageSize`; the limit includes headers as well as payload bytes, and
@@ -204,7 +242,7 @@ the last option wins.
 ### Public API stability
 
 The public package deliberately exposes only `API`, `Client`, `JetStream.API`,
-the five focused `JetStream.API.*` contracts, and `JetStream.Client`. Public
+the six focused `JetStream.API.*` contracts, and `JetStream.Client`. Public
 clients, subscriptions, capability groups, resource handles, messages, and
 response records are abstract and are inspected through accessors. Core message
 payloads are strict `ByteString` values; an empty NATS payload is represented by

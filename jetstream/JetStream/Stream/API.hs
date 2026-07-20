@@ -18,30 +18,43 @@ module JetStream.Stream.API
   , RetentionPolicy (..)
   , StorageType (..)
   , DiscardPolicy (..)
+  , StreamCompression (..)
   , StreamConfig
   , streamConfigName
   , streamConfigSubjects
+  , streamConfigDescription
   , streamConfigRetention
   , streamConfigStorage
   , streamConfigDiscard
+  , streamConfigMaxConsumers
   , streamConfigMaxMessages
+  , streamConfigMaxMessagesPerSubject
   , streamConfigMaxBytes
   , streamConfigMaxAge
   , streamConfigMaxMessageSize
   , streamConfigReplicas
   , streamConfigDuplicateWindow
+  , streamConfigDenyDelete
+  , streamConfigAllowRollup
   , streamConfigAllowDirect
+  , streamConfigCompression
   , StreamConfigOption
   , withRetention
   , withStorage
   , withDiscard
+  , withDescription
+  , withMaxConsumers
   , withMaxMessages
+  , withMaxMessagesPerSubject
   , withMaxBytes
   , withMaxAge
   , withMaxMessageSize
   , withReplicas
   , withDuplicateWindow
+  , withDenyDelete
+  , withAllowRollup
   , withAllowDirect
+  , withCompression
   , PurgeStreamOption
   , withPurgeSubject
   , withPurgeSequence

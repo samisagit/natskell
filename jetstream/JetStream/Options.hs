@@ -19,6 +19,7 @@ module JetStream.Options
 import qualified Client.API               as Nats
 import qualified Data.ByteString          as BS
 import           JetStream.Consumer.API   (ConsumerAPI)
+import           JetStream.KeyValue.API   (KeyValueAPI)
 import           JetStream.Management.API (ManagementAPI)
 import           JetStream.Message.API    (MessageAPI)
 import           JetStream.Publish.API    (PublishAPI)
@@ -37,6 +38,7 @@ data JetStream = JetStream
                    , publisher  :: PublishAPI
                    , messages   :: MessageAPI
                    , management :: ManagementAPI
+                   , keyValues  :: KeyValueAPI
                    }
 
 data JetStreamConfig = JetStreamConfig

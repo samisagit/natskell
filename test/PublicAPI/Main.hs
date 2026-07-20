@@ -9,6 +9,7 @@ import qualified API                      as Nats
 import qualified Client
 import qualified JetStream.API            as JetStream
 import qualified JetStream.API.Consumer   as Consumer
+import qualified JetStream.API.KeyValue   as KeyValue
 import qualified JetStream.API.Management as Management
 import qualified JetStream.API.Message    as JetStreamMessage
 import qualified JetStream.API.Publish    as JetStreamPublish
@@ -173,6 +174,42 @@ jetStreamOperations jetStream = do
     []
     []
     (const (pure ()))
+  bucket <- KeyValue.createKeyValueBucket
+    (JetStream.keyValues jetStream)
+    "CACHE"
+    [ KeyValue.withKeyValueHistory 3
+    , KeyValue.withKeyValueMaxValueSize 1048576
+    , KeyValue.withKeyValueStorage Stream.MemoryStorage
+    ]
+    []
+  _ <- KeyValue.createOrUpdateKeyValueBucket
+    (JetStream.keyValues jetStream)
+    "CACHE"
+    [KeyValue.withKeyValueHistory 3]
+    []
+  case bucket of
+    Left _ -> pure ()
+    Right keyValue -> do
+      revision <- KeyValue.putKeyValueEntry
+        (JetStream.keyValues jetStream) keyValue "process/one" "snapshot" []
+      case revision of
+        Left _ -> pure ()
+        Right current -> do
+          _ <- KeyValue.updateKeyValueEntry
+            (JetStream.keyValues jetStream) keyValue "process/one" "new" current []
+          pure ()
+      watcher <- KeyValue.watchKeyValues
+        (JetStream.keyValues jetStream) keyValue ["process.*"] [] []
+      case watcher of
+        Left _ -> pure ()
+        Right handle -> do
+          _ <- KeyValue.fetchKeyValueWatch
+            (JetStream.keyValues jetStream) handle
+            [JetStreamMessage.withFetchBatch 10]
+            []
+          _ <- KeyValue.stopKeyValueWatch
+            (JetStream.keyValues jetStream) handle []
+          pure ()
   pure ()
 
 messageOperations

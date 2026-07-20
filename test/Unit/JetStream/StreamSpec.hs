@@ -46,6 +46,26 @@ spec = do
         (streamConfigRequest "ORDERS" [] [withMaxMessageSize minBound])
         `shouldBe` Left (JetStreamDecodeError "stream max message size must be -1 or greater")
 
+    it "encodes key-value backing stream controls" $ do
+      let request = streamConfigRequest "KV_ORDERS" ["$KV.ORDERS.>"]
+            [ withDescription "orders key-value bucket"
+            , withMaxConsumers (-1)
+            , withMaxMessagesPerSubject 3
+            , withDenyDelete True
+            , withAllowRollup True
+            , withCompression S2Compression
+            ]
+      eitherDecode (encode request) `shouldBe` Right (object
+        [ "name" .= ("KV_ORDERS" :: String)
+        , "subjects" .= ["$KV.ORDERS.>" :: String]
+        , "description" .= ("orders key-value bucket" :: String)
+        , "max_consumers" .= (-1 :: Int)
+        , "max_msgs_per_subject" .= (3 :: Integer)
+        , "deny_delete" .= True
+        , "allow_rollup_hdrs" .= True
+        , "compression" .= ("s2" :: String)
+        ])
+
   describe "StreamConfig response JSON" $ do
     it "normalizes a missing max message size to unlimited" $ do
       fmap streamConfigMaxMessageSize (eitherDecode streamConfigWithoutMaxMessageSizeJSON)
@@ -59,16 +79,22 @@ streamConfigFixture =
   StreamConfig
     { streamConfigName = "ORDERS"
     , streamConfigSubjects = Just ["orders.>"]
+    , streamConfigDescription = Just "order events"
     , streamConfigRetention = LimitsPolicy
     , streamConfigStorage = MemoryStorage
     , streamConfigDiscard = DiscardOld
+    , streamConfigMaxConsumers = -1
     , streamConfigMaxMessages = -1
+    , streamConfigMaxMessagesPerSubject = 3
     , streamConfigMaxBytes = -1
     , streamConfigMaxAge = 0
     , streamConfigMaxMessageSize = maxBound
     , streamConfigReplicas = 1
     , streamConfigDuplicateWindow = Nothing
+    , streamConfigDenyDelete = True
+    , streamConfigAllowRollup = True
     , streamConfigAllowDirect = False
+    , streamConfigCompression = S2Compression
     }
 
 streamConfigWithoutMaxMessageSizeJSON :: LBS.ByteString

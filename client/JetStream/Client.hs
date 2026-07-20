@@ -13,6 +13,7 @@ module JetStream.Client
 import qualified API                  as Nats
 import           JetStream.API        (JetStream)
 import qualified JetStream.Consumer   as Consumer
+import qualified JetStream.KeyValue   as KeyValue
 import qualified JetStream.Management as Management
 import qualified JetStream.Message    as Message
 import           JetStream.Options
@@ -32,11 +33,15 @@ import           JetStream.Types      (JetStreamRequestOption)
 newJetStream :: Nats.Client -> [JetStreamOption] -> Either JetStreamConfigError JetStream
 newJetStream client options = do
   ctx <- tryNewJetStreamContext client options
-  let consumerAPI = Consumer.consumerAPI ctx
+  let streamAPI = Stream.streamAPI ctx
+      consumerAPI = Consumer.consumerAPI ctx
+      publishAPI = Publish.publishAPI ctx
+      messageAPI = Message.messageAPI ctx consumerAPI
   pure JetStream
-    { streams = Stream.streamAPI ctx
+    { streams = streamAPI
     , consumers = consumerAPI
-    , publisher = Publish.publishAPI ctx
-    , messages = Message.messageAPI ctx consumerAPI
+    , publisher = publishAPI
+    , messages = messageAPI
     , management = Management.managementAPI ctx
+    , keyValues = KeyValue.keyValueAPI streamAPI publishAPI messageAPI
     }

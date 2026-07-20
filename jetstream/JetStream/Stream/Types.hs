@@ -6,6 +6,7 @@ module JetStream.Stream.Types
   , RetentionPolicy (..)
   , StorageType (..)
   , DiscardPolicy (..)
+  , StreamCompression (..)
   , StreamConfig (..)
   , StreamConfigOption
   , StreamConfigRequest
@@ -14,13 +15,19 @@ module JetStream.Stream.Types
   , withRetention
   , withStorage
   , withDiscard
+  , withDescription
+  , withMaxConsumers
   , withMaxMessages
+  , withMaxMessagesPerSubject
   , withMaxBytes
   , withMaxAge
   , withMaxMessageSize
   , withReplicas
   , withDuplicateWindow
+  , withDenyDelete
+  , withAllowRollup
   , withAllowDirect
+  , withCompression
   , PurgeStreamOption
   , purgeStreamRequest
   , withPurgeSubject
@@ -56,6 +63,7 @@ import qualified Data.ByteString        as BS
 import qualified Data.ByteString.Base64 as Base64
 import           Data.Int               (Int32)
 import           Data.Maybe             (catMaybes)
+import qualified Data.Text              as T
 import           Data.Time.Clock        (NominalDiffTime, UTCTime)
 import           Data.Word              (Word64)
 import           JetStream.Error        (JetStreamError (JetStreamDecodeError))
@@ -97,16 +105,22 @@ newtype Stream = Stream { streamName :: StreamName }
 data StreamConfigRequest = StreamConfigRequest
                              { streamConfigRequestName :: StreamName
                              , streamConfigRequestSubjects :: [Subject]
+                             , streamConfigRequestDescription :: Maybe BS.ByteString
                              , streamConfigRequestRetention :: Maybe RetentionPolicy
                              , streamConfigRequestStorage :: Maybe StorageType
                              , streamConfigRequestDiscard :: Maybe DiscardPolicy
+                             , streamConfigRequestMaxConsumers :: Maybe Int
                              , streamConfigRequestMaxMessages :: Maybe Integer
+                             , streamConfigRequestMaxMessagesPerSubject :: Maybe Integer
                              , streamConfigRequestMaxBytes :: Maybe Integer
                              , streamConfigRequestMaxAge :: Maybe NominalDiffTime
                              , streamConfigRequestMaxMessageSize :: Maybe Int32
                              , streamConfigRequestReplicas :: Maybe Int
                              , streamConfigRequestDuplicateWindow :: Maybe NominalDiffTime
+                             , streamConfigRequestDenyDelete :: Maybe Bool
+                             , streamConfigRequestAllowRollup :: Maybe Bool
                              , streamConfigRequestAllowDirect :: Maybe Bool
+                             , streamConfigRequestCompression :: Maybe StreamCompression
                              }
   deriving (Eq, Show)
 
@@ -118,26 +132,44 @@ streamConfigRequest name subjects options =
     StreamConfigRequest
       { streamConfigRequestName = name
       , streamConfigRequestSubjects = subjects
+      , streamConfigRequestDescription = Nothing
       , streamConfigRequestRetention = Nothing
       , streamConfigRequestStorage = Nothing
       , streamConfigRequestDiscard = Nothing
+      , streamConfigRequestMaxConsumers = Nothing
       , streamConfigRequestMaxMessages = Nothing
+      , streamConfigRequestMaxMessagesPerSubject = Nothing
       , streamConfigRequestMaxBytes = Nothing
       , streamConfigRequestMaxAge = Nothing
       , streamConfigRequestMaxMessageSize = Nothing
       , streamConfigRequestReplicas = Nothing
       , streamConfigRequestDuplicateWindow = Nothing
+      , streamConfigRequestDenyDelete = Nothing
+      , streamConfigRequestAllowRollup = Nothing
       , streamConfigRequestAllowDirect = Nothing
+      , streamConfigRequestCompression = Nothing
       }
 
 validateStreamConfigRequest :: StreamConfigRequest -> Either JetStreamError ()
 validateStreamConfigRequest config =
-  case streamConfigRequestMaxMessageSize config of
-    Just maxMessageSize
-      | maxMessageSize < (-1) ->
-          Left (JetStreamDecodeError "stream max message size must be -1 or greater")
-    _ ->
-      Right ()
+  validateLowerBound "stream max consumers" (streamConfigRequestMaxConsumers config) >>
+    validateLowerBound "stream max messages" (streamConfigRequestMaxMessages config) >>
+    validateLowerBound "stream max messages per subject" (streamConfigRequestMaxMessagesPerSubject config) >>
+    validateLowerBound "stream max bytes" (streamConfigRequestMaxBytes config) >>
+    case streamConfigRequestMaxMessageSize config of
+      Just maxMessageSize
+        | maxMessageSize < (-1) ->
+            Left (JetStreamDecodeError "stream max message size must be -1 or greater")
+      _ ->
+        Right ()
+  where
+    validateLowerBound label value =
+      case value of
+        Just number
+          | number < (-1) ->
+              Left (JetStreamDecodeError (label ++ " must be -1 or greater"))
+        _ ->
+          Right ()
 
 withRetention :: RetentionPolicy -> StreamConfigOption
 withRetention retention config =
@@ -151,9 +183,21 @@ withDiscard :: DiscardPolicy -> StreamConfigOption
 withDiscard discard config =
   config { streamConfigRequestDiscard = Just discard }
 
+withDescription :: BS.ByteString -> StreamConfigOption
+withDescription description config =
+  config { streamConfigRequestDescription = Just description }
+
+withMaxConsumers :: Int -> StreamConfigOption
+withMaxConsumers maxConsumers config =
+  config { streamConfigRequestMaxConsumers = Just maxConsumers }
+
 withMaxMessages :: Integer -> StreamConfigOption
 withMaxMessages maxMessages config =
   config { streamConfigRequestMaxMessages = Just maxMessages }
+
+withMaxMessagesPerSubject :: Integer -> StreamConfigOption
+withMaxMessagesPerSubject maxMessages config =
+  config { streamConfigRequestMaxMessagesPerSubject = Just maxMessages }
 
 withMaxBytes :: Integer -> StreamConfigOption
 withMaxBytes maxBytes config =
@@ -177,23 +221,46 @@ withDuplicateWindow :: NominalDiffTime -> StreamConfigOption
 withDuplicateWindow window config =
   config { streamConfigRequestDuplicateWindow = Just window }
 
+withDenyDelete :: Bool -> StreamConfigOption
+withDenyDelete denyDelete config =
+  config { streamConfigRequestDenyDelete = Just denyDelete }
+
+withAllowRollup :: Bool -> StreamConfigOption
+withAllowRollup allowRollup config =
+  config { streamConfigRequestAllowRollup = Just allowRollup }
+
 withAllowDirect :: Bool -> StreamConfigOption
 withAllowDirect allowDirect config =
   config { streamConfigRequestAllowDirect = Just allowDirect }
 
+withCompression :: StreamCompression -> StreamConfigOption
+withCompression compression config =
+  config { streamConfigRequestCompression = Just compression }
+
+data StreamCompression = NoCompression
+                       | S2Compression
+                       | StreamCompressionUnknown T.Text
+  deriving (Eq, Show)
+
 data StreamConfig = StreamConfig
-                      { streamConfigName            :: StreamName
-                      , streamConfigSubjects        :: Maybe [Subject]
-                      , streamConfigRetention       :: RetentionPolicy
-                      , streamConfigStorage         :: StorageType
-                      , streamConfigDiscard         :: DiscardPolicy
-                      , streamConfigMaxMessages     :: Integer
-                      , streamConfigMaxBytes        :: Integer
-                      , streamConfigMaxAge          :: NominalDiffTime
-                      , streamConfigMaxMessageSize  :: Int32
-                      , streamConfigReplicas        :: Int
+                      { streamConfigName :: StreamName
+                      , streamConfigSubjects :: Maybe [Subject]
+                      , streamConfigDescription :: Maybe BS.ByteString
+                      , streamConfigRetention :: RetentionPolicy
+                      , streamConfigStorage :: StorageType
+                      , streamConfigDiscard :: DiscardPolicy
+                      , streamConfigMaxConsumers :: Int
+                      , streamConfigMaxMessages :: Integer
+                      , streamConfigMaxMessagesPerSubject :: Integer
+                      , streamConfigMaxBytes :: Integer
+                      , streamConfigMaxAge :: NominalDiffTime
+                      , streamConfigMaxMessageSize :: Int32
+                      , streamConfigReplicas :: Int
                       , streamConfigDuplicateWindow :: Maybe NominalDiffTime
-                      , streamConfigAllowDirect     :: Bool
+                      , streamConfigDenyDelete :: Bool
+                      , streamConfigAllowRollup :: Bool
+                      , streamConfigAllowDirect :: Bool
+                      , streamConfigCompression :: StreamCompression
                       }
   deriving (Eq, Show)
 
@@ -380,16 +447,22 @@ instance ToJSON StreamConfigRequest where
       [ byteStringPair "name" (streamConfigRequestName config)
       , byteStringListPair "subjects" (streamConfigRequestSubjects config)
       ] ++ catMaybes
-        [ maybePair "retention" (streamConfigRequestRetention config)
+        [ maybeByteStringPair "description" (streamConfigRequestDescription config)
+        , maybePair "retention" (streamConfigRequestRetention config)
         , maybePair "storage" (streamConfigRequestStorage config)
         , maybePair "discard" (streamConfigRequestDiscard config)
+        , maybePair "max_consumers" (streamConfigRequestMaxConsumers config)
         , maybePair "max_msgs" (streamConfigRequestMaxMessages config)
+        , maybePair "max_msgs_per_subject" (streamConfigRequestMaxMessagesPerSubject config)
         , maybePair "max_bytes" (streamConfigRequestMaxBytes config)
         , maybeDurationPair "max_age" (streamConfigRequestMaxAge config)
         , maybePair "max_msg_size" (streamConfigRequestMaxMessageSize config)
         , maybePair "num_replicas" (streamConfigRequestReplicas config)
         , maybeDurationPair "duplicate_window" (streamConfigRequestDuplicateWindow config)
+        , maybePair "deny_delete" (streamConfigRequestDenyDelete config)
+        , maybePair "allow_rollup_hdrs" (streamConfigRequestAllowRollup config)
         , maybePair "allow_direct" (streamConfigRequestAllowDirect config)
+        , maybePair "compression" (streamConfigRequestCompression config)
         ]
 
 instance ToJSON StreamConfig where
@@ -397,16 +470,22 @@ instance ToJSON StreamConfig where
     object . catMaybes $
       [ Just (byteStringPair "name" (streamConfigName config))
       , maybeByteStringListPair "subjects" (streamConfigSubjects config)
+      , maybeByteStringPair "description" (streamConfigDescription config)
       , Just ("retention" .= streamConfigRetention config)
       , Just ("storage" .= streamConfigStorage config)
       , Just ("discard" .= streamConfigDiscard config)
+      , Just ("max_consumers" .= streamConfigMaxConsumers config)
       , Just ("max_msgs" .= streamConfigMaxMessages config)
+      , Just ("max_msgs_per_subject" .= streamConfigMaxMessagesPerSubject config)
       , Just ("max_bytes" .= streamConfigMaxBytes config)
       , Just ("max_age" .= durationToNanoseconds (streamConfigMaxAge config))
       , Just ("max_msg_size" .= streamConfigMaxMessageSize config)
       , Just ("num_replicas" .= streamConfigReplicas config)
       , maybeDurationPair "duplicate_window" (streamConfigDuplicateWindow config)
+      , Just ("deny_delete" .= streamConfigDenyDelete config)
+      , Just ("allow_rollup_hdrs" .= streamConfigAllowRollup config)
       , Just ("allow_direct" .= streamConfigAllowDirect config)
+      , Just ("compression" .= streamConfigCompression config)
       ]
 
 instance FromJSON StreamConfig where
@@ -415,16 +494,37 @@ instance FromJSON StreamConfig where
       StreamConfig
         <$> parseByteStringField value "name"
         <*> parseOptionalByteStringListField value "subjects"
+        <*> parseOptionalByteStringField value "description"
         <*> value .: "retention"
         <*> value .: "storage"
         <*> value .: "discard"
+        <*> value .:? "max_consumers" .!= (-1)
         <*> value .: "max_msgs"
+        <*> value .:? "max_msgs_per_subject" .!= (-1)
         <*> value .: "max_bytes"
         <*> parseDurationField value "max_age"
         <*> value .:? "max_msg_size" .!= (-1)
         <*> value .: "num_replicas"
         <*> parseOptionalDurationField value "duplicate_window"
+        <*> value .:? "deny_delete" .!= False
+        <*> value .:? "allow_rollup_hdrs" .!= False
         <*> value .: "allow_direct"
+        <*> value .:? "compression" .!= NoCompression
+
+instance ToJSON StreamCompression where
+  toJSON compression =
+    String $
+      case compression of
+        NoCompression                 -> "none"
+        S2Compression                 -> "s2"
+        StreamCompressionUnknown name -> name
+
+instance FromJSON StreamCompression where
+  parseJSON = withText "StreamCompression" $ \value ->
+    case value of
+      "none" -> pure NoCompression
+      "s2"   -> pure S2Compression
+      _      -> pure (StreamCompressionUnknown value)
 
 instance ToJSON PurgeStreamRequest where
   toJSON request =

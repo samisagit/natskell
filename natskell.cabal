@@ -63,6 +63,7 @@ library
     Client
     JetStream.API
     JetStream.API.Consumer
+    JetStream.API.KeyValue
     JetStream.API.Management
     JetStream.API.Message
     JetStream.API.Publish
@@ -89,6 +90,9 @@ library jetstream-internal
     JetStream.Consumer.API
     JetStream.Consumer.Types
     JetStream.Error
+    JetStream.KeyValue
+    JetStream.KeyValue.API
+    JetStream.KeyValue.Types
     JetStream.Message
     JetStream.Message.API
     JetStream.Message.Types
@@ -253,6 +257,7 @@ test-suite unit-test
     SubscriptionStoreSpec
     WaitGroupSpec
     JetStream.ConsumerSpec
+    JetStream.KeyValueSpec
     JetStream.MessageSpec
     JetStream.ProtocolSpec
     JetStream.PublishSpec
