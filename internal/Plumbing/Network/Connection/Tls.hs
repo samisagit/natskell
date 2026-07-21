@@ -1,10 +1,12 @@
 module Network.Connection.Tls
   ( configureTransport
+  , receiveExactly
   , upgradeTcp
   ) where
 
 import           Control.Exception
 import           Control.Monad
+import qualified Data.ByteString            as BS
 import qualified Data.ByteString.Char8      as BC
 import qualified Data.ByteString.Lazy       as LBS
 import           Data.Maybe                 (fromMaybe)
@@ -46,7 +48,7 @@ upgradeTcp :: NS.Socket -> TLS.ClientParams -> IO (Either String Transport)
 upgradeTcp sock params = mask $ \restore -> do
   let backend = TLS.Backend
         { TLS.backendSend = NSB.sendAll sock
-        , TLS.backendRecv = NSB.recv sock
+        , TLS.backendRecv = receiveExactly (NSB.recv sock)
         , TLS.backendFlush = pure ()
         , TLS.backendClose = NS.close sock
         }
@@ -58,6 +60,19 @@ upgradeTcp sock params = mask $ \restore -> do
   case result of
     Left err        -> return $ Left (show err)
     Right transport -> return $ Right transport
+
+receiveExactly :: (Int -> IO BS.ByteString) -> Int -> IO BS.ByteString
+receiveExactly receive =
+  go []
+  where
+    go chunks remaining
+      | remaining <= 0 =
+          pure (BS.concat (reverse chunks))
+      | otherwise = do
+          chunk <- receive remaining
+          if BS.null chunk
+            then pure (BS.concat (reverse chunks))
+            else go (chunk : chunks) (remaining - BS.length chunk)
 
 upgradeToTLS :: Conn -> TLS.ClientParams -> IO (Either String ())
 upgradeToTLS conn params = mask_ $ do

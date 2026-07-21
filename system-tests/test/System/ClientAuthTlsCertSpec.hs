@@ -6,7 +6,11 @@ import           API
 import           Client
 import           Control.Concurrent     (forkIO)
 import           Control.Concurrent.STM
+import           Control.Exception      (finally)
+import           Control.Monad          (void)
+import qualified Data.ByteString        as BS
 import           NatsServerConfig
+import           System.Timeout         (timeout)
 import           Test.Hspec
 import           TestSupport
 
@@ -56,6 +60,25 @@ spec =
           atomically (putTMVar pinged ())
           result <- atomically $ readTMVar exitResult
           result `shouldBe` ExitClosedByUser
+        it "receives large messages intact across partial tls reads" $ \(Endpoints natsHost natsPort) -> do
+          received <- newEmptyTMVarIO
+          let body = BS.replicate (128 * 1024) 120
+              clientOptions =
+                [ withConnectName "auth-tls-large-message"
+                , withTLSCert (clientCert, clientKey)
+                , withTLSRootCA tlsRoot
+                , withConnectionAttempts 1
+                ]
+                ++ loggerOptions
+          client <- newTestClient [(natsHost, natsPort)] clientOptions
+          (do
+              void (subscribe client "TLS.LARGE" [] (atomically . putTMVar received . payload))
+              flush client []
+              void (publish client "TLS.LARGE" body [])
+              flush client []
+              result <- timeout (5 * 1000000) (atomically (takeTMVar received))
+              result `shouldBe` Just body)
+            `finally` close client []
         it "rejects tls client without required certificate" $ \(Endpoints natsHost natsPort) -> do
           exitResult <- newEmptyTMVarIO
           let clientOptions =
