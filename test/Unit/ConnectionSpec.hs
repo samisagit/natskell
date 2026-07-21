@@ -24,6 +24,7 @@ import           Lib.Logger
     )
 import           Network.Connection        (connectionApi)
 import           Network.Connection.Core   (Transport (..), pointTransport)
+import           Network.Connection.Tls    (receiveExactly)
 import           Network.ConnectionAPI
     ( ConnectionAPI (..)
     , ReaderAPI (..)
@@ -174,6 +175,27 @@ spec = do
       show config `shouldNotContain` "private-key"
       show config `shouldNotContain` "private-root"
       show config `shouldContain` "tlsRootCertificates = 1 configured"
+
+    it "fills each TLS backend receive across partial socket reads" $ do
+      chunks <- newMVar ["ab", "c", "de"]
+      requested <- newMVar []
+      let receive count = do
+            modifyMVar_ requested (pure . (<> [count]))
+            modifyMVar chunks $ \case
+              []           -> pure ([], BS.empty)
+              next : rest -> pure (rest, next)
+
+      receiveExactly receive 5 `shouldReturn` "abcde"
+      readMVar requested `shouldReturn` [5, 3, 2]
+
+    it "returns a partial receive only when the socket reaches EOF" $ do
+      chunks <- newMVar ["ab"]
+      let receive _ =
+            modifyMVar chunks $ \case
+              []           -> pure ([], BS.empty)
+              next : rest -> pure (rest, next)
+
+      receiveExactly receive 5 `shouldReturn` "ab"
 
   describe "Connection reader" $ do
     it "unblocks a blocking read when closeReader is called" $ do
