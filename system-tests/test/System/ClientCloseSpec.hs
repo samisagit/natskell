@@ -7,7 +7,12 @@ import           Client
 import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Exception      (finally)
-import           Control.Monad          (void)
+import           Control.Monad          (void, when)
+import           Data.IORef
+    ( atomicModifyIORef'
+    , newIORef
+    , readIORef
+    )
 import           System.Timeout
 import           Test.Hspec
 import           TestSupport
@@ -70,4 +75,44 @@ spec = do
         finished `shouldBe` Just ()
         result <- atomically $ readTMVar exitResult
         result `shouldBe` ExitClosedByUser)
+      `finally` cleanup
+  clientSystemTest "344ff959-8ef6-469a-beb1-8dee4e06a7dc" "drain fences future deliveries and waits for accepted callbacks" $ \loggerOptions (Endpoints natsHost natsPort) -> do
+    let topic = "DRAIN.FENCE"
+    callbackStarted <- newEmptyMVar
+    releaseCallback <- newEmptyMVar
+    callbackCount <- newIORef (0 :: Int)
+    drainReturned <- newEmptyMVar
+    subscriber <- newTestClient [(natsHost, natsPort)] $
+      withConnectName "drain-fence-subscriber"
+        : loggerOptions
+    publisher <- newTestClient [(natsHost, natsPort)] $
+      withConnectName "drain-fence-publisher"
+        : loggerOptions
+    let cleanup = do
+          _ <- tryPutMVar releaseCallback ()
+          close subscriber []
+          close publisher []
+    (do
+        Right subscription <- subscribe subscriber topic [] $ \_ -> do
+          invocation <- atomicModifyIORef' callbackCount $ \count ->
+            let next = count + 1
+            in (next, next)
+          when (invocation == 1) $ do
+            putMVar callbackStarted ()
+            takeMVar releaseCallback
+        flush subscriber []
+        void (publish publisher topic "accepted-before-drain" [])
+        flush publisher []
+        timeout (5 * 1000000) (takeMVar callbackStarted) `shouldReturn` Just ()
+        _ <- forkIO $
+          drainSubscriptions subscriber [subscription] [withFlushTimeout 5]
+            >>= putMVar drainReturned
+        timeout 300000 (takeMVar drainReturned) `shouldReturn` Nothing
+        putMVar releaseCallback ()
+        timeout (5 * 1000000) (takeMVar drainReturned)
+          `shouldReturn` Just (Right ())
+        void (publish publisher topic "after-drain" [])
+        flush publisher []
+        threadDelay 300000
+        readIORef callbackCount `shouldReturn` 1)
       `finally` cleanup

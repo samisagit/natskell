@@ -62,6 +62,8 @@ data Client = Client
                   -- ^ Publish a request and wait for one response.
                 , unsubscribe :: Subscription -> [UnsubscribeOption] -> IO (Either NatsError ())
                   -- ^ Unsubscribe a subscription created by this client.
+                , drainSubscriptions :: [Subscription] -> [FlushOption] -> IO (Either NatsError ())
+                  -- ^ Stop server delivery, then wait for callbacks already accepted.
                 , newInbox :: IO Subject
                   -- ^ Create a unique inbox subject for replies.
                 , ping :: [PingOption] -> IO (Either NatsError ())

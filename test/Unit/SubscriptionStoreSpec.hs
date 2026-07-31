@@ -9,6 +9,7 @@ import           Control.Monad
 import           Data.IORef
 import           Subscription.Store
 import           Subscription.Types
+import           System.Timeout
 import           Test.Hspec
 import           Types.Msg
 
@@ -218,6 +219,52 @@ spec = do
         `shouldReturn` DispatchDropped True
       atomically ((,) <$> readTVar accepted <*> readTVar rejected)
         `shouldReturn` (True, True)
+
+  describe "subscription drain" $ do
+    it "waits only for deliveries accepted by the selected subscription" $ do
+      firstStarted <- newEmptyMVar
+      firstRelease <- newEmptyMVar
+      secondStarted <- newEmptyMVar
+      secondRelease <- newEmptyMVar
+      stopping <- newTVarIO False
+      store <- newSubscriptionStore defaultPendingLimits (pure ())
+      register
+        store
+        "first"
+        (SubscriptionMeta "FIRST" Nothing StandardSubscription)
+        (SubscribeConfig Nothing Nothing)
+        (const (putMVar firstStarted () >> takeMVar firstRelease))
+        (pure ())
+      register
+        store
+        "second"
+        (SubscriptionMeta "SECOND" Nothing StandardSubscription)
+        (SubscribeConfig Nothing Nothing)
+        (const (putMVar secondStarted () >> takeMVar secondRelease))
+        (pure ())
+      _ <- startWorkers
+        2
+        store
+        (readTVar stopping >>= check)
+        (const (pure ()))
+
+      dispatchMessage store (message "first" "one") `shouldReturn` DispatchQueued
+      dispatchMessage store (message "second" "two") `shouldReturn` DispatchQueued
+      takeMVar firstStarted
+      takeMVar secondStarted
+      retire store "first"
+      map fst <$> active store `shouldReturn` ["second"]
+      firstPending <- timeout 100000 (atomically (awaitSubscriptionDrain store "first"))
+      firstPending `shouldBe` Nothing
+
+      putMVar firstRelease ()
+      timeout 1000000 (atomically (awaitSubscriptionDrain store "first"))
+        `shouldReturn` Just ()
+      secondPending <- timeout 100000 (atomically (awaitSubscriptionDrain store "second"))
+      secondPending `shouldBe` Nothing
+      putMVar secondRelease ()
+      atomically (awaitCallbackDrain store)
+      atomically (writeTVar stopping True)
 
 registerSubscription
   :: SubscriptionStore

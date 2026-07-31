@@ -474,6 +474,33 @@ spec = do
 
         timeout 500000 (takeMVar resultVar)
           `shouldReturn` Just (Left NatsRequestTimedOut)
+      it "drains deliveries accepted before the unsubscribe fence" $ \(serv, client, _, _) -> do
+        callbackStarted <- newEmptyMVar
+        releaseCallback <- newEmptyMVar
+        drained <- newEmptyMVar
+        Right subscription <-
+          subscribe client "DRAIN.FENCE" [] $ \_ -> do
+            putMVar callbackStarted ()
+            takeMVar releaseCallback
+        let sid = subscriptionSid subscription
+            unsubscribeCommand = BS.concat ["UNSUB ", sid, "\r\n"]
+        expectClientCommand serv (BS.concat ["SUB DRAIN.FENCE ", sid, "\r\n"])
+        void . forkIO $
+          drainSubscriptions client [subscription] [withFlushTimeout 1]
+            >>= putMVar drained
+        fence <-
+          expectClientBytes
+            serv
+            (\bytes -> BS.isInfixOf unsubscribeCommand bytes && BS.isInfixOf "PING\r\n" bytes)
+            "client did not send unsubscribe fence"
+        unless (appearsBefore unsubscribeCommand "PING\r\n" fence) $
+          expectationFailure "drain PING was sent before UNSUB"
+        sendAll serv (msgFrame "DRAIN.FENCE" sid "accepted-before-fence" <> "PONG\r\n")
+        expectMVar "accepted callback did not run" callbackStarted
+        timeout 200000 (takeMVar drained) `shouldReturn` Nothing
+        putMVar releaseCallback ()
+        expectMVar "drain did not await callback completion" drained
+          `shouldReturn` Right ()
       it "reports the terminal close reason to a pending ping" $ \(serv, client, _, _) -> do
         resultVar <- newEmptyMVar
         void . forkIO $ ping client [withPingTimeout 5] >>= putMVar resultVar

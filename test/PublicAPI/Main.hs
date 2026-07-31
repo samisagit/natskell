@@ -63,7 +63,7 @@ coreOperations client = do
   case subscription of
     Left _       -> pure ()
     Right handle -> do
-      _ <- Nats.unsubscribe client handle []
+      _ <- Nats.drainSubscriptions client [handle] [Nats.withFlushTimeout 1]
       pure ()
   _ <- Nats.request
     client
