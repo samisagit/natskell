@@ -100,6 +100,7 @@ import           Client.API
     , ResetConfig (..)
     , Subscription (..)
     , UnsubscribeConfig (..)
+    , subscriptionSid
     )
 import           Control.Concurrent
     ( forkIOWithUnmask
@@ -209,12 +210,14 @@ import           Subscription.Store
     ( SubscriptionStore
     , awaitCallbackDrain
     , awaitNoTrackedExpiries
+    , awaitSubscriptionDrain
     , closeStore
     , enqueueControl
     , hasTrackedExpiries
     , newSubscriptionStore
     , register
     , registerWithDispatchHooks
+    , retire
     , startExpiryWorker
     , startWorkers
     , unregister
@@ -417,6 +420,22 @@ newClient servers configOptions = mask $ \restoreInitialWait -> do
         , unsubscribe = \subscription options ->
             case applyCallOptions options UnsubscribeConfig of
               UnsubscribeConfig -> unsubscribeClient clientState store subscription
+        , drainSubscriptions = \subscriptions options ->
+            case applyCallOptions options defaultFlushConfig of
+              FlushConfig ->
+                drainSubscriptionsClient
+                  connectionApi
+                  clientState
+                  store
+                  subscriptions
+                  defaultRoundTripTimeout
+              FlushConfigTimeout timeoutSeconds ->
+                drainSubscriptionsClient
+                  connectionApi
+                  clientState
+                  store
+                  subscriptions
+                  timeoutSeconds
         , newInbox = nextInbox clientState
         , ping = \options ->
             case applyCallOptions options defaultPingConfig of
@@ -1116,6 +1135,75 @@ unsubscribeClient client store (Subscription sid) =
       Right UnsubscribeReset     -> do
         interruptConnection connectionApi client
         pure (Right ())
+
+-- | A drain keeps callbacks registered until NATS confirms every preceding
+-- @UNSUB@. The PONG is an ordering fence: all messages the server could have
+-- delivered before the unsubscribe are now queued locally, so waiting on their
+-- subscriptions cannot race a reply against connection close.
+drainSubscriptionsClient
+  :: ConnectionAPI
+  -> ClientState
+  -> SubscriptionStore
+  -> [Subscription]
+  -> NominalDiffTime
+  -> IO (Either NatsError ())
+drainSubscriptionsClient _ _ _ [] _ =
+  pure (Right ())
+drainSubscriptionsClient connectionApi' client store subscriptions timeoutSeconds = do
+  fenced <- awaitFence
+  case fenced of
+    Left err ->
+      pure (Left err)
+    Right () -> do
+      atomically $
+        mapM_ (awaitSubscriptionDrain store . subscriptionSid) subscriptions
+      mapM_ (unregister store . subscriptionSid) subscriptions
+      pure (Right ())
+  where
+    commands =
+      QueueConnectionScoped . QueueBatch $
+        map unsubscribeCommand subscriptions
+
+    unsubscribeCommand (Subscription sid) =
+      QueueItem Unsub.Unsub { Unsub.sid = sid, Unsub.maxMsg = Nothing }
+
+    awaitFence = do
+      result <- withSubscriptionGate client $ do
+        status <- readStatus client
+        case status of
+          ConnectionConnected ->
+            Just <$> fenceConnected
+          ConnectionConnecting ->
+            pure Nothing
+          ConnectionReconnecting ->
+            pure Nothing
+          ConnectionClosing reason ->
+            pure (Just (Left (NatsConnectionClosed reason)))
+          ConnectionClosed reason ->
+            pure (Just (Left (NatsConnectionClosed reason)))
+      case result of
+        Just value ->
+          pure value
+        Nothing -> do
+          connected <- runningResult client
+          case connected of
+            Left err -> pure (Left err)
+            Right () -> awaitFence
+
+    fenceConnected = do
+      enqueueResult <- enqueue client commands
+      case enqueueResult of
+        Right () -> do
+          flushed <- flushClient connectionApi' client timeoutSeconds
+          case flushed of
+            Left err ->
+              pure (Left err)
+            Right () -> do
+              mapM_ (retire store . subscriptionSid) subscriptions
+              pure (Right ())
+        Left _ -> do
+          status <- readStatus client
+          pure (Left (closedError status))
 
 cleanupResumableSubscription
   :: ClientState

@@ -113,6 +113,7 @@ fakeClient =
     , Nats.subscribeOnce = \_ _ _ -> pure (Right (Nats.Subscription "0"))
     , Nats.request = \_ _ _ -> pure (Left Nats.NatsRequestTimedOut)
     , Nats.unsubscribe = \_ _ -> pure (Right ())
+    , Nats.drainSubscriptions = \_ _ -> pure (Right ())
     , Nats.newInbox = pure "_INBOX.TEST"
     , Nats.ping = \_ -> pure (Right ())
     , Nats.flush = \_ -> pure (Right ())

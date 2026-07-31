@@ -311,6 +311,7 @@ fakeClient publishCalls unsubscribeCalls callbackRef =
     , Nats.unsubscribe = \(Nats.Subscription sid) _ -> do
         modifyIORef' unsubscribeCalls (++ [sid])
         pure (Right ())
+    , Nats.drainSubscriptions = \_ _ -> pure (Right ())
     , Nats.newInbox = pure "_INBOX.batch"
     , Nats.ping = \_ -> pure (Right ())
     , Nats.flush = \_ -> pure (Right ())
@@ -380,6 +381,7 @@ persistentPullFakeClient publishCalls subscribeCalls unsubscribeCalls callbackRe
     , Nats.unsubscribe = \(Nats.Subscription sid) _ -> do
         modifyIORef' unsubscribeCalls (++ [sid])
         pure (Right ())
+    , Nats.drainSubscriptions = \_ _ -> pure (Right ())
     , Nats.newInbox = pure "_INBOX.persistent"
     , Nats.ping = \_ -> pure (Right ())
     , Nats.flush = \_ -> pure (Right ())
@@ -405,6 +407,7 @@ silentFakeClient publishCalls unsubscribeCalls =
     , Nats.unsubscribe = \(Nats.Subscription sid) _ -> do
         modifyIORef' unsubscribeCalls (++ [sid])
         pure (Right ())
+    , Nats.drainSubscriptions = \_ _ -> pure (Right ())
     , Nats.newInbox = pure "_INBOX.timeout"
     , Nats.ping = \_ -> pure (Right ())
     , Nats.flush = \_ -> pure (Right ())
@@ -448,6 +451,7 @@ ackFakeClient publishCalls requestCalls response =
         modifyIORef' requestCalls (++ [(subject, body)])
         pure response
     , Nats.unsubscribe = \_ _ -> pure (Right ())
+    , Nats.drainSubscriptions = \_ _ -> pure (Right ())
     , Nats.newInbox = pure "_INBOX.ack"
     , Nats.ping = \_ -> pure (Right ())
     , Nats.flush = \_ -> pure (Right ())

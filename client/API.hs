@@ -27,6 +27,7 @@ module API
   , subscribeOnce
   , request
   , unsubscribe
+  , drainSubscriptions
   , newInbox
   , ping
   , flush
@@ -68,6 +69,7 @@ import           Client.API
     , UnsubscribeOption
     , close
     , connectionState
+    , drainSubscriptions
     , flush
     , headers
     , newInbox

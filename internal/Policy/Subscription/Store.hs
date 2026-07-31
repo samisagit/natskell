@@ -6,11 +6,13 @@ module Subscription.Store
   , registerWithAcceptance
   , registerWithDispatchHooks
   , unregister
+  , retire
   , dispatchMessage
   , active
   , closeStore
   , startWorkers
   , awaitCallbackDrain
+  , awaitSubscriptionDrain
   , enqueueControl
   , startExpiryWorker
   , awaitNoTrackedExpiries
@@ -53,14 +55,15 @@ data DispatchResult = DispatchMissing
   deriving (Eq, Show)
 
 data SubscriptionStore = SubscriptionStore
-                           { storeState           :: TVar SubscriptionState
-                           , storeCallbackQueue   :: TQueue (IO ())
-                           , storeCallbackPending :: TVar Int
-                           , storeDeliveryPending :: TVar Int
-                           , storeDeliveryBytes   :: TVar Int
-                           , storeSlowConsumer    :: TVar Bool
-                           , storePendingLimits   :: PendingLimits
-                           , storeSlowAction      :: IO ()
+                           { storeState               :: TVar SubscriptionState
+                           , storeCallbackQueue       :: TQueue (IO ())
+                           , storeCallbackPending     :: TVar Int
+                           , storeSubscriptionPending :: TVar (Map.Map SID Int)
+                           , storeDeliveryPending     :: TVar Int
+                           , storeDeliveryBytes       :: TVar Int
+                           , storeSlowConsumer        :: TVar Bool
+                           , storePendingLimits       :: PendingLimits
+                           , storeSlowAction          :: IO ()
                            }
 
 newSubscriptionStore :: PendingLimits -> IO () -> IO SubscriptionStore
@@ -69,6 +72,7 @@ newSubscriptionStore limits slowAction =
     <$> newTVarIO emptySubscriptionState
     <*> newTQueueIO
     <*> newTVarIO 0
+    <*> newTVarIO Map.empty
     <*> newTVarIO 0
     <*> newTVarIO 0
     <*> newTVarIO False
@@ -138,6 +142,13 @@ unregister store sid =
   atomically $
     modifyTVar' (storeState store) (removeSubscriptionLocal sid)
 
+-- | Stop a subscription being resumed while preserving callbacks that the
+-- server accepted before its unsubscribe fence.
+retire :: SubscriptionStore -> SID -> IO ()
+retire store sid =
+  atomically $
+    modifyTVar' (storeState store) (retireSubscriptionLocal sid)
+
 dispatchMessage :: SubscriptionStore -> M.Msg -> IO DispatchResult
 dispatchMessage store msg = do
   (result, onDropped) <- atomically $ do
@@ -159,7 +170,7 @@ dispatchMessage store msg = do
         writeTVar (storeState store) nextState
         if canQueue
           then do
-            enqueueDeliverySTM store messageBytes (deliverMessage callback (Just msg))
+            enqueueDeliverySTM store sid messageBytes (deliverMessage callback (Just msg))
             pure (DispatchQueued, pure ())
           else do
             rejectMessage callback
@@ -186,6 +197,11 @@ startWorkers concurrency store =
 awaitCallbackDrain :: SubscriptionStore -> STM ()
 awaitCallbackDrain store = do
   pending <- readTVar (storeCallbackPending store)
+  check (pending == 0)
+
+awaitSubscriptionDrain :: SubscriptionStore -> SID -> STM ()
+awaitSubscriptionDrain store sid = do
+  pending <- Map.findWithDefault 0 sid <$> readTVar (storeSubscriptionPending store)
   check (pending == 0)
 
 enqueueControl :: SubscriptionStore -> IO () -> IO ()
@@ -219,18 +235,22 @@ enqueueControlCallbackSTM store action = do
         action `finally` atomically (modifyTVar' (storeCallbackPending store) (subtract 1))
   writeTQueue (storeCallbackQueue store) wrapped
 
-enqueueDeliverySTM :: SubscriptionStore -> Int -> IO () -> STM ()
-enqueueDeliverySTM store messageBytes action = do
+enqueueDeliverySTM :: SubscriptionStore -> SID -> Int -> IO () -> STM ()
+enqueueDeliverySTM store sid messageBytes action = do
   modifyTVar' (storeCallbackPending store) (+1)
+  modifyTVar'
+    (storeSubscriptionPending store)
+    (Map.insertWith (+) sid 1)
   modifyTVar' (storeDeliveryPending store) (+1)
   modifyTVar' (storeDeliveryBytes store) (+ messageBytes)
   let wrapped =
-        action `finally` atomically (releaseDeliverySTM store messageBytes)
+        action `finally` atomically (releaseDeliverySTM store sid messageBytes)
   writeTQueue (storeCallbackQueue store) wrapped
 
-releaseDeliverySTM :: SubscriptionStore -> Int -> STM ()
-releaseDeliverySTM store messageBytes = do
+releaseDeliverySTM :: SubscriptionStore -> SID -> Int -> STM ()
+releaseDeliverySTM store sid messageBytes = do
   modifyTVar' (storeCallbackPending store) (subtract 1)
+  modifyTVar' (storeSubscriptionPending store) (Map.update decrement sid)
   modifyTVar' (storeDeliveryPending store) (subtract 1)
   modifyTVar' (storeDeliveryBytes store) (subtract messageBytes)
   pendingMessages <- readTVar (storeDeliveryPending store)
@@ -241,6 +261,9 @@ releaseDeliverySTM store messageBytes = do
           && pendingBytes <= pendingByteLimit limits `div` 2
   when belowLowWater $
     writeTVar (storeSlowConsumer store) False
+  where
+    decrement 1     = Nothing
+    decrement count = Just (count - 1)
 
 hasDeliveryCapacity :: SubscriptionStore -> Int -> STM Bool
 hasDeliveryCapacity store messageBytes = do
@@ -269,9 +292,13 @@ trackSubscriptionExpiry sid expiry state =
 
 removeSubscriptionLocal :: SID -> SubscriptionState -> SubscriptionState
 removeSubscriptionLocal sid state =
+  (retireSubscriptionLocal sid state)
+    { subscriptionCallbacks = Map.delete sid (subscriptionCallbacks state) }
+
+retireSubscriptionLocal :: SID -> SubscriptionState -> SubscriptionState
+retireSubscriptionLocal sid state =
   state
-    { subscriptionCallbacks = Map.delete sid (subscriptionCallbacks state)
-    , subscriptionTrackedExpiries = Map.delete sid (subscriptionTrackedExpiries state)
+    { subscriptionTrackedExpiries = Map.delete sid (subscriptionTrackedExpiries state)
     , subscriptionMeta = Map.delete sid (subscriptionMeta state)
     }
 

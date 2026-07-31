@@ -49,6 +49,20 @@ reply <- Nats.request client "service.echo" "hello" [Nats.withRequestTimeout 2]
 reply, and cleans up the subscription on replies, timeouts, connection closure,
 and exceptions.
 
+### Graceful subscription drain
+
+`drainSubscriptions` is for service shutdown. It sends `UNSUB` for the supplied
+subscriptions and waits for the server acknowledgement before removing local
+callbacks. Messages accepted before that acknowledgement run to completion;
+later messages are not delivered to the draining service.
+
+```haskell
+result <- Nats.drainSubscriptions client [handle] [Nats.withFlushTimeout 5]
+```
+
+It is intentionally separate from `unsubscribe`, which removes the local
+callback immediately and is appropriate when in-flight work need not finish.
+
 ### Authentication and TLS
 
 Static authentication is available through `withAuthToken`, `withUserPass`,
