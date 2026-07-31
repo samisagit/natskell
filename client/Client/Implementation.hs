@@ -27,6 +27,7 @@ module Client.Implementation
   , withTLSRootCA
   , withTLSServerName
   , withTLSInsecure
+  , withTLSConfigSource
   , withMinimumLogLevel
   , withLogAction
   , withConnectionAttempts
@@ -56,6 +57,8 @@ module Client.Implementation
   , TLSPrivateKey
   , TLSCertData
   , TLSConfig (..)
+  , TLSConfigSource
+  , TLSConfigSourceFailure (..)
   , ClientExitReason (..)
   , ConnectionEvent (..)
   , ServerError
@@ -194,6 +197,8 @@ import           State.Types
     , ServerErrorKind (..)
     , TLSCertData
     , TLSConfig (..)
+    , TLSConfigSource
+    , TLSConfigSourceFailure (..)
     , TLSPrivateKey
     , TLSPublicKey
     , defaultTLSConfig
@@ -235,6 +240,7 @@ data ClientOptions = ClientOptions
                        { optionConnectConfig :: Connect.Connect
                        , optionAuth :: Auth
                        , optionTlsConfig :: Maybe TLSConfig
+                       , optionTlsConfigSource :: Maybe TLSConfigSource
                        , optionLoggerConfig :: LoggerConfig
                        , optionConnectionAttempts :: Int
                        , optionConnectTimeoutMicros :: Int
@@ -294,6 +300,7 @@ newClient servers configOptions = mask $ \restoreInitialWait -> do
         { optionConnectConfig = defaultConnect
         , optionAuth = AuthNone.auth
         , optionTlsConfig = Nothing
+        , optionTlsConfigSource = Nothing
         , optionLoggerConfig = loggerConfig'
         , optionConnectionAttempts = 5
         , optionConnectTimeoutMicros = 2 * 1000000
@@ -315,6 +322,7 @@ newClient servers configOptions = mask $ \restoreInitialWait -> do
           , connectConfig = optionConnectConfig defaultOptions
           , loggerConfig = optionLoggerConfig defaultOptions
           , tlsConfig = optionTlsConfig defaultOptions
+          , tlsConfigSource = optionTlsConfigSource defaultOptions
           , serverErrorHandler = optionServerErrorHandler defaultOptions
           , connectionEventHandler = optionConnectionEventHandler defaultOptions
           , exitAction = optionExitAction defaultOptions
@@ -533,11 +541,23 @@ withTLSInsecure :: ConfigOption
 withTLSInsecure =
   modifyTLSConfig $ \tls -> tls { tlsInsecure = True }
 
+-- | Fetch complete mutual-TLS configuration before every TLS handshake.
+--
+-- This is intended for renewable identities such as SPIFFE SVIDs. It replaces
+-- static TLS options; applying a static TLS option afterwards replaces source.
+withTLSConfigSource :: TLSConfigSource -> ConfigOption
+withTLSConfigSource source config =
+  config
+    { optionTlsConfig = Nothing
+    , optionTlsConfigSource = Just source
+    }
+
 modifyTLSConfig :: (TLSConfig -> TLSConfig) -> ConfigOption
 modifyTLSConfig update config =
   config
     { optionTlsConfig =
         Just (update (fromMaybe defaultTLSConfig (optionTlsConfig config)))
+    , optionTlsConfigSource = Nothing
     }
 
 withMinimumLogLevel :: LogLevel -> ConfigOption
@@ -659,10 +679,10 @@ logStaticConfiguration client options =
       [] -> logMessage Info "no authentication method provided"
       methods -> forM_ methods $ \method ->
         logMessage Info ("using " ++ method)
-    case optionTlsConfig options of
-      Nothing ->
-        pure ()
-      Just tls -> do
+    case (optionTlsConfig options, optionTlsConfigSource options) of
+      (Nothing, Nothing) -> pure ()
+      (Nothing, Just _) -> logMessage Info "using renewable tls configuration"
+      (Just tls, _) -> do
         logMessage Info "using tls"
         when (tlsInsecure tls) $
           logMessage Warn "tls certificate verification is disabled"

@@ -24,6 +24,7 @@ module Client
   , withTLSRootCA
   , withTLSServerName
   , withTLSInsecure
+  , withTLSConfigSource
   , withMinimumLogLevel
   , withLogAction
   , withConnectionAttempts
@@ -53,6 +54,8 @@ module Client
   , TLSPrivateKey
   , TLSCertData
   , TLSConfig (..)
+  , TLSConfigSource
+  , TLSConfigSourceFailure (..)
   , ClientExitReason (..)
   , ConnectionEvent (..)
   , ServerError

@@ -88,6 +88,13 @@ enables TLS without additional material.
 `withTLSInsecure` disables verification and should only be used in controlled
 test environments.
 
+`withTLSConfigSource` reads a complete mutual-TLS `TLSConfig` immediately
+before every TLS connection and reconnection. Source configurations require a
+client certificate, at least one root, a server name, and verification enabled.
+They replace static TLS options; the last TLS option wins. A source failure is
+reported as `ConnectTLSConfigSourceFailure` without including certificate or
+key material in diagnostics.
+
 ### JetStream
 
 JetStream is part of the main `natskell` library. No separate package is

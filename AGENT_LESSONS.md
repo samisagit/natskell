@@ -6,6 +6,7 @@ Workarounds in this environment:
 - System tests require Docker/network access; rerun with escalated permissions if sandboxed.
 - `stylish-haskell -ri -c stylish.yaml .` sometimes exits 1 with no output here; rerun with `-v` (`stylish-haskell -rvi -c stylish.yaml .`) to get diagnostics.
 - `stylish-haskell` may not be on the ambient PATH under `rtk`; run it through the dev shell, e.g. `rtk nix develop -c stylish-haskell -rvi -c stylish.yaml .`.
+- Pass only Haskell source paths to `stylish-haskell`; including Markdown makes it parse the document as Haskell and fail.
 - `nix flake check` can exceed the default command timeout; rerun with a longer timeout in this harness.
 - GHC 8.8 / older `bytestring` does not expose `Data.ByteString.dropWhileEnd`; use a local compatibility helper built from `BS.reverse . BS.dropWhile predicate . BS.reverse`.
 - nix commands only sees tracked files; new modules must live under tracked paths or be added by the user.

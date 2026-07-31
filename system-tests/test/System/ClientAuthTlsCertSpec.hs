@@ -9,6 +9,11 @@ import           Control.Concurrent.STM
 import           Control.Exception      (finally)
 import           Control.Monad          (void)
 import qualified Data.ByteString        as BS
+import           Data.IORef
+    ( atomicModifyIORef'
+    , newIORef
+    , readIORef
+    )
 import           NatsServerConfig
 import           System.Timeout         (timeout)
 import           Test.Hspec
@@ -60,6 +65,42 @@ spec =
           atomically (putTMVar pinged ())
           result <- atomically $ readTMVar exitResult
           result `shouldBe` ExitClosedByUser
+        it "refreshes renewable TLS configuration after client reset" $ \(Endpoints natsHost natsPort) -> do
+          sourceCalls <- newIORef (0 :: Int)
+          let tlsSource = do
+                atomicModifyIORef' sourceCalls $ \calls -> (calls + 1, ())
+                pure . Right $
+                  TLSConfig
+                    { tlsClientCertificate = Just (clientCert, clientKey)
+                    , tlsRootCertificates = [tlsRoot]
+                    , tlsServerName = Just natsHost
+                    , tlsInsecure = False
+                    }
+              clientOptions =
+                [ withConnectName "auth-tls-source-reset"
+                , withTLSConfigSource tlsSource
+                , withConnectionAttempts 2
+                ]
+                ++ loggerOptions
+          client <- newTestClient [(natsHost, natsPort)] clientOptions
+          (do
+              reset client []
+              ping client [] `shouldReturn` Right ()
+              readIORef sourceCalls `shouldReturn` 2)
+            `finally` close client []
+        it "uses static TLS configuration after a source option" $ \(Endpoints natsHost natsPort) -> do
+          let unavailableSource = pure (Left TLSConfigSourceUnavailable)
+              clientOptions =
+                [ withConnectName "auth-tls-static-after-source"
+                , withTLSConfigSource unavailableSource
+                , withTLSCert (clientCert, clientKey)
+                , withTLSRootCA tlsRoot
+                , withConnectionAttempts 1
+                ]
+                ++ loggerOptions
+          client <- newTestClient [(natsHost, natsPort)] clientOptions
+          ping client [] `shouldReturn` Right ()
+          close client []
         it "receives large messages intact across partial tls reads" $ \(Endpoints natsHost natsPort) -> do
           received <- newEmptyTMVarIO
           let body = BS.replicate (128 * 1024) 120

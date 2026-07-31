@@ -321,11 +321,13 @@ runEngine connectionApi streamingApi broadcastingApi parserApi state store auth 
 
     handshakeFailure (HandshakeTransportError err) = ConnectTransportFailure err
     handshakeFailure (HandshakeTLSError err) = ConnectTLSFailure err
+    handshakeFailure (HandshakeTLSConfigSourceError err) = ConnectTLSConfigSourceFailure err
     handshakeFailure (HandshakeProtocolError err) = ConnectProtocolFailure err
     handshakeFailure (HandshakeAuthError err) = ConnectAuthenticationFailure (show err)
 
     failureCategory (ConnectTransportFailure _)      = "transport failure"
     failureCategory (ConnectTLSFailure _)            = "tls failure"
+    failureCategory (ConnectTLSConfigSourceFailure _) = "tls configuration source failure"
     failureCategory (ConnectProtocolFailure _)       = "protocol failure"
     failureCategory (ConnectAuthenticationFailure _) = "authentication failure"
     failureCategory ConnectHandshakeTimeout          = "handshake timeout"

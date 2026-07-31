@@ -5,6 +5,8 @@ module State.Types
   , TLSPrivateKey
   , TLSCertData
   , TLSConfig (..)
+  , TLSConfigSource
+  , TLSConfigSourceFailure (..)
   , defaultTLSConfig
   , ClientConfig (..)
   , ConnectError (..)
@@ -35,6 +37,7 @@ data ClientConfig = ClientConfig
                       , connectConfig          :: Connect
                       , loggerConfig           :: LoggerConfig
                       , tlsConfig              :: Maybe TLSConfig
+                      , tlsConfigSource        :: Maybe TLSConfigSource
                       , serverErrorHandler     :: ServerError -> IO ()
                       , connectionEventHandler :: ConnectionEvent -> IO ()
                       , exitAction             :: ClientExitReason -> IO ()
@@ -56,6 +59,7 @@ data ConnectAttemptError = ConnectAttemptError
 -- | The stage at which a connection attempt failed.
 data ConnectFailure = ConnectTransportFailure String
                     | ConnectTLSFailure String
+                    | ConnectTLSConfigSourceFailure TLSConfigSourceFailure
                     | ConnectProtocolFailure String
                     | ConnectAuthenticationFailure String
                     | ConnectHandshakeTimeout
