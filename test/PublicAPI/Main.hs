@@ -35,6 +35,12 @@ configuredServer =
     Left err       -> error (show err)
     Right endpoint -> endpoint
 
+tlsSource :: Client.TLSConfigSource
+tlsSource = pure (Left Client.TLSConfigSourceUnavailable)
+
+tlsSourceOption :: Client.ConfigOption
+tlsSourceOption = Client.withTLSConfigSource tlsSource
+
 serverBuilders
   :: ( Either Client.ServerConfigError Client.Server
      , Either Client.ServerConfigError Client.Server
@@ -266,4 +272,5 @@ main =
     `seq` jetStreamOperations
     `seq` messageOperations
     `seq` inspectJetStreamApiError
+    `seq` tlsSourceOption
     `seq` pure ()

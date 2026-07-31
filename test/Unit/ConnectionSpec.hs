@@ -11,9 +11,10 @@ import           Control.Exception         (finally, throwIO)
 import           Control.Monad             (replicateM_, void, when)
 import qualified Data.ByteString           as BS
 import qualified Data.ByteString.Lazy      as LBS
+import           Data.IORef                (newIORef, readIORef, writeIORef)
 import           Engine                    (runEngine)
 import           Handshake.Nats
-    ( HandshakeError (HandshakeAuthError, HandshakeProtocolError, HandshakeTLSError)
+    ( HandshakeError (HandshakeAuthError, HandshakeProtocolError, HandshakeTLSConfigSourceError, HandshakeTLSError)
     , performHandshake
     )
 import           Lib.Logger
@@ -103,7 +104,12 @@ import           Types.Info                (Info (..))
 import           Types.Ping                (Ping (Ping))
 import           Types.Pong                (Pong (Pong))
 import qualified Types.Pub                 as Pub
-import           Types.TLS                 (TLSConfig (..), defaultTLSConfig)
+import           Types.TLS
+    ( TLSConfig (..)
+    , TLSConfigSourceFailure (..)
+    , defaultTLSConfig
+    , readTLSConfigSource
+    )
 
 spec :: Spec
 spec = do
@@ -175,6 +181,14 @@ spec = do
       show config `shouldNotContain` "private-key"
       show config `shouldNotContain` "private-root"
       show config `shouldContain` "tlsRootCertificates = 1 configured"
+
+    it "rejects incomplete renewable TLS snapshots" $ do
+      readTLSConfigSource (pure (Right defaultTLSConfig))
+        `shouldReturn` Left TLSConfigSourceIncomplete
+
+    it "redacts renewable TLS source exceptions" $ do
+      readTLSConfigSource (throwIO (userError "private certificate path"))
+        `shouldReturn` Left TLSConfigSourceUnavailable
 
     it "fills each TLS backend receive across partial socket reads" $ do
       chunks <- newMVar ["ab", "c", "de"]
@@ -993,6 +1007,24 @@ spec = do
         Left (HandshakeTLSError _) -> pure ()
         other -> expectationFailure ("expected TLS error, got: " ++ show other)
 
+    it "reads renewable TLS configuration before each TLS handshake" $ do
+      sourceCalls <- newIORef (0 :: Int)
+      state <- newTestStateWithConfig $ \cfg ->
+        cfg
+          { tlsConfigSource = Just $ do
+              writeIORef sourceCalls 1
+              pure (Left TLSConfigSourceUnavailable)
+          }
+      conn <- newConn connectionApi
+      writes <- newTVarIO []
+      transport <- newScriptedTransport [tlsInfoFrame] writes
+      pointTransport conn transport
+
+      result <- performHandshake connectionApi Attoparsec.parserApi state auth conn "127.0.0.1"
+
+      result `shouldBe` Left (HandshakeTLSConfigSourceError TLSConfigSourceUnavailable)
+      readIORef sourceCalls `shouldReturn` 1
+
 newTestState = do
   newTestStateWithConfig id
 
@@ -1033,6 +1065,7 @@ testConfig logger =
     , connectConfig = testConnect
     , loggerConfig = logger
     , tlsConfig = Nothing
+    , tlsConfigSource = Nothing
     , serverErrorHandler = const (pure ())
     , connectionEventHandler = const (pure ())
     , exitAction = const (pure ())
@@ -1136,6 +1169,10 @@ oversizedHandshakeChunks = replicate 17 (BS.replicate 4096 73)
 infoFrame :: BS.ByteString
 infoFrame =
   "INFO {\"server_id\":\"srv\",\"version\":\"1.0.0\",\"go\":\"go1\",\"host\":\"127.0.0.1\",\"port\":4222,\"max_payload\":1024,\"proto\":1}\r\n"
+
+tlsInfoFrame :: BS.ByteString
+tlsInfoFrame =
+  "INFO {\"server_id\":\"srv\",\"version\":\"1.0.0\",\"go\":\"go1\",\"host\":\"127.0.0.1\",\"port\":4222,\"max_payload\":1024,\"proto\":1,\"tls_available\":true}\r\n"
 
 newScriptedTransport :: [BS.ByteString] -> TVar [BS.ByteString] -> IO Transport
 newScriptedTransport chunks writes = do

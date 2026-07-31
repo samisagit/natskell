@@ -42,10 +42,15 @@ import qualified Types.Err                 as Err
 import qualified Types.Info                as I
 import           Types.Ping                (Ping (Ping))
 import           Types.Pong                (Pong (Pong))
-import           Types.TLS                 (defaultTLSConfig)
+import           Types.TLS
+    ( TLSConfigSourceFailure
+    , defaultTLSConfig
+    , readTLSConfigSource
+    )
 
 data HandshakeError = HandshakeTransportError String
                     | HandshakeTLSError String
+                    | HandshakeTLSConfigSourceError TLSConfigSourceFailure
                     | HandshakeProtocolError String
                     | HandshakeAuthError AuthError
   deriving (Eq, Show)
@@ -63,53 +68,63 @@ performHandshake connectionApi parserApi state auth conn host = handshake
           pure (Left err)
         Right (info, rest) -> do
           let cfg = config state
-              tlsRequested = isJust (tlsConfig cfg) || Connect.tls_required (connectConfig cfg)
+              tlsRequested =
+                isJust (tlsConfig cfg)
+                  || isJust (tlsConfigSource cfg)
+                  || Connect.tls_required (connectConfig cfg)
               tlsRequired = fromMaybe False (I.tls_required info)
               tlsAvailable = fromMaybe False (I.tls_available info)
               useTls = tlsRequired || (tlsRequested && tlsAvailable)
-              transportOption =
-                TransportOption
-                  { transportHost = host
-                  , transportTlsRequired = tlsRequired
-                  , transportTlsRequested = tlsRequested && tlsAvailable
-                  , transportTlsConfig =
-                      if useTls
-                        then Just (fromMaybe defaultTLSConfig (tlsConfig cfg))
-                        else Nothing
-                  , transportInitialBytes = rest
-                  }
           if tlsRequested && not (tlsRequired || tlsAvailable)
             then pure (Left (HandshakeTLSError "server does not offer TLS"))
             else do
-              transportResult <- configure connectionApi conn transportOption
-              case transportResult of
-                Left err ->
-                  pure (Left (HandshakeTLSError err))
-                Right () -> do
-                  setServerInfo state info
-                  updateLogContextFromInfo state info
-                  let authContext = AuthContext { authNonce = I.nonce info }
-                      connectPayload =
-                        (connectConfig cfg)
-                          { Connect.tls_required = useTls
+              tlsResult <- resolveTlsConfig cfg useTls
+              case tlsResult of
+                Left err -> pure (Left (HandshakeTLSConfigSourceError err))
+                Right tls -> do
+                  let transportOption =
+                        TransportOption
+                          { transportHost = host
+                          , transportTlsRequired = tlsRequired
+                          , transportTlsRequested = tlsRequested && tlsAvailable
+                          , transportTlsConfig = tls
+                          , transportInitialBytes = rest
                           }
-                  authResult <- buildAuthPatch auth authContext
-                  case authResult of
+                  transportResult <- configure connectionApi conn transportOption
+                  case transportResult of
                     Left err ->
-                      pure (Left (HandshakeAuthError err))
-                    Right patch -> do
-                      writeResult <-
-                        writeDataLazy
-                          (writer connectionApi)
-                          conn
-                          ( transform (applyAuthPatch patch connectPayload)
-                              <> transform Ping
-                          )
-                      case writeResult of
+                      pure (Left (HandshakeTLSError err))
+                    Right () -> do
+                      setServerInfo state info
+                      updateLogContextFromInfo state info
+                      let authContext = AuthContext { authNonce = I.nonce info }
+                          connectPayload =
+                            (connectConfig cfg)
+                              { Connect.tls_required = useTls
+                              }
+                      authResult <- buildAuthPatch auth authContext
+                      case authResult of
                         Left err ->
-                          pure (Left (HandshakeTransportError err))
-                        Right () ->
-                          awaitPong mempty
+                          pure (Left (HandshakeAuthError err))
+                        Right patch -> do
+                          writeResult <-
+                            writeDataLazy
+                              (writer connectionApi)
+                              conn
+                              ( transform (applyAuthPatch patch connectPayload)
+                                  <> transform Ping
+                              )
+                          case writeResult of
+                            Left err ->
+                              pure (Left (HandshakeTransportError err))
+                            Right () ->
+                              awaitPong mempty
+
+    resolveTlsConfig _ False = pure (Right Nothing)
+    resolveTlsConfig cfg True =
+      case tlsConfigSource cfg of
+        Just source -> fmap Just <$> readTLSConfigSource source
+        Nothing -> pure (Right (Just (fromMaybe defaultTLSConfig (tlsConfig cfg))))
 
     readInitialInfo :: IO (Either HandshakeError (I.Info, BS.ByteString))
     readInitialInfo = readMore mempty
